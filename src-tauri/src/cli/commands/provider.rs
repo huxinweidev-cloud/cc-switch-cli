@@ -111,6 +111,14 @@ pub enum ProviderCommand {
         /// Provider ID to query
         id: String,
     },
+    /// Query provider quota or usage
+    Quota {
+        /// Provider ID to query
+        id: String,
+        /// Output raw quota result as JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Export a Claude provider to a standalone settings file
     Export {
         /// Provider ID to export
@@ -144,6 +152,9 @@ pub fn execute(cmd: ProviderCommand, app: Option<AppType>) -> Result<(), AppErro
         }
         ProviderCommand::FetchModels { id } => {
             provider_inspect::fetch_models_provider(app_type, &id)
+        }
+        ProviderCommand::Quota { id, json } => {
+            provider_inspect::quota_provider(app_type, &id, json)
         }
         ProviderCommand::Export { id, output } => export_provider(app_type, &id, output),
     }

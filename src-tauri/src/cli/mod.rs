@@ -10,6 +10,7 @@ pub(crate) mod failover_policy;
 pub mod i18n;
 pub mod interactive;
 pub(crate) mod openclaw_form_normalization;
+pub(crate) mod provider_quota;
 pub(crate) mod proxy_settings;
 pub mod terminal;
 pub mod tui;
@@ -43,7 +44,7 @@ pub enum Commands {
     #[command(subcommand)]
     Auth(commands::auth::AuthCommand),
 
-    /// Manage providers (list, switch, export, speedtest, stream-check, fetch-models)
+    /// Manage providers (list, switch, export, speedtest, stream-check, fetch-models, quota)
     #[command(subcommand)]
     Provider(commands::provider::ProviderCommand),
 
@@ -720,6 +721,38 @@ mod tests {
                 assert_eq!(id, "demo");
             }
             _ => panic!("expected provider fetch-models command"),
+        }
+    }
+
+    #[test]
+    fn parses_provider_quota_subcommand() {
+        let cli = Cli::parse_from(["cc-switch", "provider", "quota", "demo"]);
+
+        match cli.command {
+            Some(Commands::Provider(super::commands::provider::ProviderCommand::Quota {
+                id,
+                json,
+            })) => {
+                assert_eq!(id, "demo");
+                assert!(!json);
+            }
+            _ => panic!("expected provider quota command"),
+        }
+    }
+
+    #[test]
+    fn parses_provider_quota_json_subcommand() {
+        let cli = Cli::parse_from(["cc-switch", "provider", "quota", "demo", "--json"]);
+
+        match cli.command {
+            Some(Commands::Provider(super::commands::provider::ProviderCommand::Quota {
+                id,
+                json,
+            })) => {
+                assert_eq!(id, "demo");
+                assert!(json);
+            }
+            _ => panic!("expected provider quota json command"),
         }
     }
 
