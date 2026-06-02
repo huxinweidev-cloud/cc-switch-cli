@@ -5479,6 +5479,66 @@ fn import_openclaw_providers_from_live_skips_existing_ids_without_overwriting() 
 
 #[test]
 #[serial]
+fn remove_from_live_config_rejects_current_hermes_provider() {
+    let temp_home = TempDir::new().expect("create temp home");
+    let _env = EnvGuard::set_home(temp_home.path());
+
+    let hermes_dir = crate::hermes_config::get_hermes_dir();
+    std::fs::create_dir_all(&hermes_dir).expect("create hermes dir");
+    std::fs::write(
+        hermes_dir.join("config.yaml"),
+        r#"model:
+  provider: p1
+custom_providers:
+  - name: p1
+    base_url: https://hermes.example.com/v1
+    api_key: sk-demo
+    models:
+      main:
+        context_length: 128000
+"#,
+    )
+    .expect("seed hermes live config");
+
+    let mut config = MultiAppConfig::default();
+    config.ensure_app(&AppType::Hermes);
+    {
+        let manager = config
+            .get_manager_mut(&AppType::Hermes)
+            .expect("hermes manager");
+        manager.providers.insert(
+            "p1".to_string(),
+            Provider::with_id(
+                "p1".to_string(),
+                "Hermes Provider".to_string(),
+                json!({
+                    "base_url": "https://hermes.example.com/v1",
+                    "api_key": "sk-demo",
+                    "models": [{"id": "main", "name": "Main"}]
+                }),
+                None,
+            ),
+        );
+    }
+    let state = state_from_config(config);
+
+    let err = ProviderService::remove_from_live_config(&state, AppType::Hermes, "p1")
+        .expect_err("current Hermes provider should not be removable from live config");
+
+    assert!(matches!(
+        err,
+        AppError::Localized {
+            key: "provider.remove_from_config.hermes_current",
+            ..
+        }
+    ));
+    assert!(crate::hermes_config::get_providers()
+        .expect("read hermes providers after failed remove")
+        .contains_key("p1"));
+}
+
+#[test]
+#[serial]
 fn delete_rejects_last_failover_queue_provider_while_active() {
     let temp_home = TempDir::new().expect("create temp home");
     let _env = EnvGuard::set_home(temp_home.path());

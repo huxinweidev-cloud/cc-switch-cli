@@ -2157,15 +2157,7 @@ impl ProviderService {
             ));
         }
 
-        if matches!(app_type, AppType::OpenClaw)
-            && Self::openclaw_default_model_references_provider(provider_id)?
-        {
-            return Err(AppError::localized(
-                "provider.remove_from_config.openclaw_default",
-                "不能从配置中移除被当前默认模型引用的 OpenClaw 供应商",
-                "Cannot remove the OpenClaw provider referenced by the current default model from config",
-            ));
-        }
+        Self::guard_additive_default_provider_removal(&app_type, provider_id)?;
 
         let original = {
             let config = state.config.read().map_err(AppError::from)?;
@@ -2334,6 +2326,32 @@ impl ProviderService {
                     .is_some_and(|(default_provider_id, _)| default_provider_id == provider_id)
             }),
         )
+    }
+
+    fn guard_additive_default_provider_removal(
+        app_type: &AppType,
+        provider_id: &str,
+    ) -> Result<(), AppError> {
+        match app_type {
+            AppType::Hermes
+                if crate::hermes_config::get_current_provider_id()?.as_deref()
+                    == Some(provider_id) =>
+            {
+                Err(AppError::localized(
+                    "provider.remove_from_config.hermes_current",
+                    "不能从配置中移除 Hermes 当前默认供应商",
+                    "Cannot remove the current default Hermes provider from config",
+                ))
+            }
+            AppType::OpenClaw if Self::openclaw_default_model_references_provider(provider_id)? => {
+                Err(AppError::localized(
+                    "provider.remove_from_config.openclaw_default",
+                    "不能从配置中移除被当前默认模型引用的 OpenClaw 供应商",
+                    "Cannot remove the OpenClaw provider referenced by the current default model from config",
+                ))
+            }
+            _ => Ok(()),
+        }
     }
 
     fn openclaw_provider_model_ids(provider_value: &Value) -> Vec<String> {
