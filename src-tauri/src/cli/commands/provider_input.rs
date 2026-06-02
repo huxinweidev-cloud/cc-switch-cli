@@ -939,15 +939,121 @@ mod tests {
             .expect("seed base URL should exist");
 
         let cfg = build_claude_settings_config_from_prompt(
+            None,
             "",
             base_url,
             Vec::<(&str, Option<String>)>::new(),
+            false,
         );
 
         assert_eq!(cfg["env"]["ANTHROPIC_BASE_URL"], "https://www.packyapi.com");
         assert!(
             cfg["env"].get("ANTHROPIC_AUTH_TOKEN").is_none(),
             "Claude sponsor prompt should match TUI by omitting blank API keys"
+        );
+    }
+
+    #[test]
+    fn cli_claude_prompt_writes_hide_attribution_upstream_shape() {
+        let cfg = build_claude_settings_config_from_prompt(
+            None,
+            "sk-test",
+            "https://api.anthropic.com",
+            Vec::<(&str, Option<String>)>::new(),
+            true,
+        );
+
+        assert_eq!(
+            cfg["attribution"],
+            json!({
+                "commit": "",
+                "pr": ""
+            })
+        );
+    }
+
+    #[test]
+    fn cli_claude_prompt_preserves_custom_attribution_when_hide_is_disabled() {
+        let current = json!({
+            "env": {
+                "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-4-20250514"
+            },
+            "attribution": {
+                "commit": "custom",
+                "pr": "custom"
+            },
+            "extra": "keep"
+        });
+
+        let cfg = build_claude_settings_config_from_prompt(
+            Some(&current),
+            "sk-updated",
+            "https://api.example.com",
+            Vec::<(&str, Option<String>)>::new(),
+            false,
+        );
+
+        assert_eq!(cfg["attribution"]["commit"], "custom");
+        assert_eq!(cfg["attribution"]["pr"], "custom");
+        assert_eq!(cfg["extra"], "keep");
+        assert_eq!(
+            cfg["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"], "claude-sonnet-4-20250514",
+            "model env fields should survive when the CLI model prompt is skipped"
+        );
+    }
+
+    #[test]
+    fn cli_claude_prompt_preserves_existing_hidden_attribution_when_kept_enabled() {
+        let current = json!({
+            "env": {},
+            "attribution": {
+                "commit": "",
+                "pr": "",
+                "extra": "keep"
+            }
+        });
+
+        let cfg = build_claude_settings_config_from_prompt(
+            Some(&current),
+            "sk-test",
+            "https://api.example.com",
+            Vec::<(&str, Option<String>)>::new(),
+            true,
+        );
+
+        assert_eq!(
+            cfg["attribution"],
+            json!({
+                "commit": "",
+                "pr": "",
+                "extra": "keep"
+            })
+        );
+    }
+
+    #[test]
+    fn cli_claude_prompt_removes_hidden_attribution_when_disabled() {
+        let current = json!({
+            "env": {},
+            "attribution": {
+                "commit": "",
+                "pr": "",
+                "extra": "drop when disabled"
+            }
+        });
+
+        let cfg = build_claude_settings_config_from_prompt(
+            Some(&current),
+            "sk-test",
+            "https://api.example.com",
+            Vec::<(&str, Option<String>)>::new(),
+            false,
+        );
+
+        assert!(
+            cfg.as_object()
+                .is_some_and(|settings| !settings.contains_key("attribution")),
+            "disabling hide attribution should remove the upstream hidden-attribution marker"
         );
     }
 
@@ -2899,32 +3005,80 @@ fn prompt_claude_config(current: Option<&Value>) -> Result<Value, AppError> {
         ]);
     }
 
+    let hide_attribution = Confirm::new(texts::tui_label_claude_hide_attribution())
+        .with_default(claude_hide_attribution_enabled(current))
+        .prompt()
+        .map_err(|e| AppError::Message(texts::input_failed_error(&e.to_string())))?;
+
     Ok(build_claude_settings_config_from_prompt(
+        current,
         &api_key,
         &base_url,
         model_fields,
+        hide_attribution,
     ))
 }
 
+fn claude_hide_attribution_enabled(settings_config: Option<&Value>) -> bool {
+    let Some(attribution) = settings_config
+        .and_then(|settings| settings.get("attribution"))
+        .and_then(Value::as_object)
+    else {
+        return false;
+    };
+
+    attribution.get("commit").and_then(Value::as_str) == Some("")
+        && attribution.get("pr").and_then(Value::as_str) == Some("")
+}
+
 fn build_claude_settings_config_from_prompt<'a>(
+    current: Option<&Value>,
     api_key: &str,
     base_url: &str,
     model_fields: impl IntoIterator<Item = (&'a str, Option<String>)>,
+    hide_attribution: bool,
 ) -> Value {
-    let mut env = Map::new();
-    set_or_remove_trimmed(&mut env, "ANTHROPIC_AUTH_TOKEN", api_key);
-    set_or_remove_trimmed(&mut env, "ANTHROPIC_BASE_URL", base_url);
+    let mut settings = current
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_else(Map::new);
+    let env_value = settings
+        .entry("env".to_string())
+        .or_insert_with(|| json!({}));
+    if !env_value.is_object() {
+        *env_value = json!({});
+    }
+    let env = env_value
+        .as_object_mut()
+        .expect("Claude env settings must be an object");
+
+    set_or_remove_trimmed(env, "ANTHROPIC_AUTH_TOKEN", api_key);
+    set_or_remove_trimmed(env, "ANTHROPIC_BASE_URL", base_url);
 
     for (key, value) in model_fields {
         match value {
-            Some(value) => set_or_remove_trimmed(&mut env, key, &value),
+            Some(value) => set_or_remove_trimmed(env, key, &value),
             None => {
                 env.remove(key);
             }
         }
     }
 
-    json!({ "env": env })
+    let hidden_attribution_already_enabled =
+        claude_hide_attribution_enabled(Some(&Value::Object(settings.clone())));
+    if hide_attribution && !hidden_attribution_already_enabled {
+        settings.insert(
+            "attribution".to_string(),
+            json!({
+                "commit": "",
+                "pr": ""
+            }),
+        );
+    } else if !hide_attribution && hidden_attribution_already_enabled {
+        settings.remove("attribution");
+    }
+
+    Value::Object(settings)
 }
 
 /// Codex 配置输入（第三方/自定义：需要 API Key）
