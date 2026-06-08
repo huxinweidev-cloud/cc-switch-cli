@@ -2,10 +2,11 @@ use chrono::{Local, TimeZone};
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
+    symbols,
     text::{Line, Span},
     widgets::{
-        Block, BorderType, Borders, Cell, Clear, Gauge, List, ListItem, ListState, Paragraph, Row,
-        Table, TableState, Wrap,
+        Axis, Block, BorderType, Borders, Cell, Chart, Clear, Dataset, Gauge, GraphType, LineGauge,
+        List, ListItem, ListState, Paragraph, Row, Table, TableState, Wrap,
     },
     Frame,
 };
@@ -39,12 +40,14 @@ mod forms;
 mod main_page;
 mod mcp;
 mod overlay;
+mod pricing;
 mod prompts;
 mod providers;
 mod proxy_wave;
 mod sessions;
 mod shared;
 mod skills;
+mod usage;
 
 #[cfg(test)]
 mod header_tests;
@@ -59,12 +62,14 @@ use forms::*;
 use main_page::*;
 use mcp::*;
 use overlay::*;
+use pricing::*;
 use prompts::*;
 use providers::*;
 use proxy_wave::*;
 use sessions::*;
 use shared::*;
 use skills::*;
+use usage::*;
 
 pub fn render(frame: &mut Frame<'_>, app: &App, data: &UiData) {
     let theme = theme_for(&app.app_type);
@@ -97,8 +102,13 @@ pub fn render(frame: &mut Frame<'_>, app: &App, data: &UiData) {
     render_content(frame, app, data, body[1], &theme);
     render_footer(frame, app, data, root[2], &theme);
 
-    render_overlay(frame, app, data, &theme);
-    render_toast(frame, app, &theme);
+    if should_render_toast_below_overlay(app) {
+        render_toast(frame, app, &theme);
+        render_overlay(frame, app, data, &theme);
+    } else {
+        render_overlay(frame, app, data, &theme);
+        render_toast(frame, app, &theme);
+    }
 }
 
 pub(super) fn proxy_open_flash_effect(area: Rect) -> tachyonfx::Effect {
@@ -110,6 +120,15 @@ pub(super) fn proxy_open_flash_effect(area: Rect) -> tachyonfx::Effect {
         .with_area(area);
 
     fx::ping_pong(radial_hsl_xform)
+}
+
+fn should_render_toast_below_overlay(app: &App) -> bool {
+    app.toast.as_ref().is_some_and(|toast| toast.persistent)
+        && matches!(
+            &app.overlay,
+            Overlay::Confirm(confirm)
+                if matches!(confirm.action, ConfirmAction::ManagedAuthCancelLogin)
+        )
 }
 
 fn render_content(
@@ -141,6 +160,12 @@ fn render_content(
         Route::ProviderDetail { id } => {
             render_provider_detail(frame, app, data, content_area, theme, id)
         }
+        Route::Usage => render_usage(frame, app, data, content_area, theme),
+        Route::UsageLogs => render_usage_logs(frame, app, data, content_area, theme),
+        Route::UsageLogDetail { request_id } => {
+            render_usage_log_detail(frame, app, data, content_area, theme, request_id)
+        }
+        Route::Pricing => render_pricing(frame, app, data, content_area, theme),
         Route::Sessions => render_sessions(frame, app, data, content_area, theme),
         Route::Mcp => render_mcp(frame, app, data, content_area, theme),
         Route::Prompts => render_prompts(frame, app, data, content_area, theme),

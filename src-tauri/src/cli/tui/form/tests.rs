@@ -23,8 +23,16 @@ fn cubence_template_index(app_type: AppType) -> usize {
     template_index_by_label(app_type, "* Cubence")
 }
 
+fn runapi_template_index(app_type: AppType) -> usize {
+    template_index_by_label(app_type, "* RunAPI")
+}
+
 fn dds_template_index(app_type: AppType) -> usize {
     template_index_by_label(app_type, "* DDS")
+}
+
+fn deepseek_template_index(app_type: AppType) -> usize {
+    template_index_by_label(app_type, "DeepSeek")
 }
 
 fn normalize_template_provider_json(mut value: serde_json::Value) -> serde_json::Value {
@@ -88,8 +96,9 @@ fn provider_add_form_template_labels_follow_explicit_support_matrix() {
             "Claude Official",
             "Codex",
             "* PackyCode",
-            "* AICodeMirror",
             "* Cubence",
+            "* RunAPI",
+            "* AICodeMirror",
             "* DDS",
         ]
     );
@@ -101,9 +110,11 @@ fn provider_add_form_template_labels_follow_explicit_support_matrix() {
             "Custom",
             "OpenAI Official",
             "* PackyCode",
-            "* AICodeMirror",
             "* Cubence",
+            "* RunAPI",
+            "* AICodeMirror",
             "* DDS",
+            "DeepSeek",
         ]
     );
 
@@ -114,15 +125,15 @@ fn provider_add_form_template_labels_follow_explicit_support_matrix() {
             "Custom",
             "Google OAuth",
             "* PackyCode",
-            "* AICodeMirror",
             "* Cubence",
+            "* AICodeMirror",
         ]
     );
 
     let opencode_labels = ProviderAddFormState::new(AppType::OpenCode).template_labels();
     assert_eq!(
         opencode_labels,
-        vec!["Custom", "* AICodeMirror", "* Cubence"]
+        vec!["Custom", "* Cubence", "* RunAPI", "* AICodeMirror"]
     );
     assert!(
         !opencode_labels.contains(&"* PackyCode"),
@@ -130,12 +141,12 @@ fn provider_add_form_template_labels_follow_explicit_support_matrix() {
     );
 
     let hermes_labels = ProviderAddFormState::new(AppType::Hermes).template_labels();
-    assert_eq!(hermes_labels, vec!["Custom", "* Cubence"]);
+    assert_eq!(hermes_labels, vec!["Custom", "* Cubence", "* RunAPI"]);
 
     let openclaw_labels = ProviderAddFormState::new(AppType::OpenClaw).template_labels();
     assert_eq!(
         openclaw_labels,
-        vec!["Custom", "* AICodeMirror", "* Cubence"]
+        vec!["Custom", "* Cubence", "* RunAPI", "* AICodeMirror"]
     );
     assert!(
         !openclaw_labels.contains(&"* PackyCode"),
@@ -172,6 +183,8 @@ fn cli_provider_templates_match_tui_serializer_output() {
             ProviderAddTemplate::Aicodemirror,
             "* AICodeMirror",
         ),
+        (AppType::Codex, ProviderAddTemplate::Runapi, "* RunAPI"),
+        (AppType::Codex, ProviderAddTemplate::Deepseek, "DeepSeek"),
         (AppType::Gemini, ProviderAddTemplate::Cubence, "* Cubence"),
         (AppType::Claude, ProviderAddTemplate::Dds, "* DDS"),
         (
@@ -180,16 +193,97 @@ fn cli_provider_templates_match_tui_serializer_output() {
             "* AICodeMirror",
         ),
         (AppType::OpenCode, ProviderAddTemplate::Cubence, "* Cubence"),
+        (AppType::OpenCode, ProviderAddTemplate::Runapi, "* RunAPI"),
         (AppType::Hermes, ProviderAddTemplate::Cubence, "* Cubence"),
+        (AppType::Hermes, ProviderAddTemplate::Runapi, "* RunAPI"),
         (
             AppType::OpenClaw,
             ProviderAddTemplate::Aicodemirror,
             "* AICodeMirror",
         ),
         (AppType::OpenClaw, ProviderAddTemplate::Cubence, "* Cubence"),
+        (AppType::OpenClaw, ProviderAddTemplate::Runapi, "* RunAPI"),
     ] {
         assert_cli_template_matches_tui_serializer(app_type, template, label);
     }
+}
+
+#[test]
+fn provider_add_form_codex_deepseek_template_matches_upstream_preset_values() {
+    let mut form = ProviderAddFormState::new(AppType::Codex);
+    let existing_ids = Vec::<String>::new();
+
+    form.apply_template(deepseek_template_index(AppType::Codex), &existing_ids);
+
+    assert_eq!(form.id.value, "deepseek");
+    assert_eq!(form.name.value, "DeepSeek");
+    assert_eq!(form.website_url.value, "https://platform.deepseek.com");
+    assert_eq!(form.codex_base_url.value, "https://api.deepseek.com");
+    assert_eq!(form.codex_model.value, "deepseek-v4-flash");
+    assert_eq!(form.codex_wire_api, CodexWireApi::Responses);
+    assert!(form.codex_requires_openai_auth);
+
+    let labels = ProviderAddFormState::new(AppType::Codex).template_labels();
+    assert_eq!(
+        labels.last().copied(),
+        Some("DeepSeek"),
+        "DeepSeek should stay after all partner presets"
+    );
+
+    let fields = form.fields();
+    assert!(fields.contains(&ProviderAddField::CodexBaseUrl));
+    assert!(fields.contains(&ProviderAddField::CodexModel));
+    assert!(fields.contains(&ProviderAddField::CodexApiKey));
+
+    let provider = form.to_provider_json_value();
+    assert_eq!(provider["category"], "cn_official");
+    assert_eq!(provider["icon"], "deepseek");
+    assert_eq!(provider["iconColor"], "#1E88E5");
+    assert_eq!(provider["meta"]["apiFormat"], "openai_chat");
+    assert_eq!(
+        provider["meta"]["codexChatReasoning"],
+        json!({
+            "supportsThinking": true,
+            "supportsEffort": true,
+            "thinkingParam": "thinking",
+            "effortParam": "reasoning_effort",
+            "effortValueMode": "deepseek",
+            "outputFormat": "reasoning_content",
+        })
+    );
+
+    let cfg = provider["settingsConfig"]["config"]
+        .as_str()
+        .expect("settingsConfig.config should be TOML string");
+    assert!(cfg.contains("model_provider = \"custom\""));
+    assert!(cfg.contains("model = \"deepseek-v4-flash\""));
+    assert!(cfg.contains("disable_response_storage = true"));
+    assert!(cfg.contains("[model_providers.custom]"));
+    assert!(cfg.contains("name = \"deepseek\""));
+    assert!(cfg.contains("base_url = \"https://api.deepseek.com\""));
+    assert!(cfg.contains("wire_api = \"responses\""));
+    assert!(cfg.contains("requires_openai_auth = true"));
+    assert!(
+        !cfg.contains("https://api.deepseek.com/v1"),
+        "DeepSeek Codex preset should match upstream base URL without /v1"
+    );
+    assert_eq!(
+        provider["settingsConfig"]["modelCatalog"],
+        json!({
+            "models": [
+                {
+                    "model": "deepseek-v4-flash",
+                    "displayName": "DeepSeek V4 Flash",
+                    "contextWindow": 1000000,
+                },
+                {
+                    "model": "deepseek-v4-pro",
+                    "displayName": "DeepSeek V4 Pro",
+                    "contextWindow": 1000000,
+                },
+            ],
+        })
+    );
 }
 
 #[test]
@@ -339,6 +433,17 @@ fn provider_add_form_cubence_preset_keeps_affiliate_register_url_in_metadata() {
         cubence.register_url(),
         "https://cubence.com/signup?code=SC3M1CAH&source=ccscli"
     );
+}
+
+#[test]
+fn provider_add_form_runapi_preset_keeps_affiliate_register_url_in_metadata() {
+    let claude_presets = super::provider_templates::provider_sponsor_presets(&AppType::Claude);
+    let runapi = claude_presets
+        .iter()
+        .find(|preset| preset.id() == "runapi")
+        .expect("expected RunAPI sponsor preset for Claude");
+
+    assert_eq!(runapi.register_url(), "https://runapi.co/register?aff=kTlB");
 }
 
 #[test]
@@ -541,6 +646,149 @@ fn provider_add_form_cubence_template_openclaw_sets_base_url_and_partner_meta() 
     assert_eq!(provider["settingsConfig"]["api"], "openai-completions");
     assert_eq!(provider["meta"]["isPartner"], true);
     assert_eq!(provider["meta"]["partnerPromotionKey"], "cubence");
+}
+
+#[test]
+fn provider_add_form_runapi_template_claude_sets_upstream_partner_shape() {
+    let mut form = ProviderAddFormState::new(AppType::Claude);
+
+    form.apply_template(runapi_template_index(AppType::Claude), &[]);
+
+    let provider = form.to_provider_json_value();
+    assert_eq!(provider["name"], "RunAPI");
+    assert_eq!(provider["websiteUrl"], "https://runapi.co");
+    assert_eq!(provider["category"], "aggregator");
+    assert_eq!(provider["icon"], "runapi");
+    assert_eq!(
+        provider["settingsConfig"]["env"]["ANTHROPIC_BASE_URL"],
+        "https://runapi.co"
+    );
+    assert_eq!(provider["meta"]["isPartner"], true);
+    assert_eq!(provider["meta"]["partnerPromotionKey"], "runapi");
+}
+
+#[test]
+fn provider_add_form_runapi_template_codex_sets_v1_base_url() {
+    let mut form = ProviderAddFormState::new(AppType::Codex);
+
+    form.apply_template(runapi_template_index(AppType::Codex), &[]);
+
+    let provider = form.to_provider_json_value();
+    let cfg = provider["settingsConfig"]["config"]
+        .as_str()
+        .expect("settingsConfig.config should be string");
+    assert_eq!(provider["name"], "RunAPI");
+    assert_eq!(provider["category"], "aggregator");
+    assert_eq!(provider["icon"], "runapi");
+    assert!(cfg.contains("model_provider = \"runapi\""));
+    assert!(cfg.contains("[model_providers.runapi]"));
+    assert!(cfg.contains("base_url = \"https://runapi.co/v1\""));
+    assert!(cfg.contains("model = \"gpt-5.4\""));
+    assert!(cfg.contains("wire_api = \"responses\""));
+    assert_eq!(provider["meta"]["partnerPromotionKey"], "runapi");
+}
+
+#[test]
+fn provider_add_form_runapi_template_opencode_matches_upstream_anthropic_shape() {
+    let mut form = ProviderAddFormState::new(AppType::OpenCode);
+
+    form.apply_template(runapi_template_index(AppType::OpenCode), &[]);
+
+    let provider = form.to_provider_json_value();
+    let settings = &provider["settingsConfig"];
+    assert_eq!(provider["name"], "RunAPI");
+    assert_eq!(provider["category"], "aggregator");
+    assert_eq!(provider["icon"], "runapi");
+    assert_eq!(settings["npm"], "@ai-sdk/anthropic");
+    assert_eq!(settings["name"], "RunAPI");
+    assert_eq!(settings["options"]["baseURL"], "https://runapi.co");
+    assert_eq!(settings["options"]["setCacheKey"], true);
+    assert!(
+        settings["options"].get("apiKey").is_none(),
+        "blank OpenCode API keys should be omitted on save"
+    );
+    assert_eq!(
+        settings["models"]["claude-sonnet-4-6"]["name"],
+        "Claude Sonnet 4.6"
+    );
+    assert_eq!(
+        settings["models"]["claude-opus-4-8"]["name"],
+        "Claude Opus 4.8"
+    );
+    assert_eq!(
+        settings["models"]["claude-haiku-4-5"]["name"],
+        "Claude Haiku 4.5"
+    );
+    assert_eq!(provider["meta"]["partnerPromotionKey"], "runapi");
+}
+
+#[test]
+fn provider_add_form_runapi_template_hermes_matches_upstream_anthropic_shape() {
+    let mut form = ProviderAddFormState::new(AppType::Hermes);
+
+    form.apply_template(runapi_template_index(AppType::Hermes), &[]);
+
+    let provider = form.to_provider_json_value();
+    let settings = &provider["settingsConfig"];
+    assert_eq!(provider["name"], "RunAPI");
+    assert_eq!(provider["category"], "aggregator");
+    assert_eq!(provider["icon"], "runapi");
+    assert_eq!(settings["name"], "runapi");
+    assert_eq!(settings["base_url"], "https://runapi.co");
+    assert_eq!(settings["api_mode"], "anthropic_messages");
+    assert!(
+        settings.get("api_key").is_none(),
+        "blank Hermes API keys should be omitted on save"
+    );
+    assert_eq!(
+        settings["models"],
+        json!([
+            { "id": "claude-opus-4-8", "name": "Claude Opus 4.8" },
+            { "id": "claude-sonnet-4-6", "name": "Claude Sonnet 4.6" },
+            { "id": "claude-haiku-4-5", "name": "Claude Haiku 4.5" },
+        ])
+    );
+    assert_eq!(provider["meta"]["partnerPromotionKey"], "runapi");
+}
+
+#[test]
+fn provider_add_form_runapi_template_openclaw_matches_upstream_anthropic_shape() {
+    let mut form = ProviderAddFormState::new(AppType::OpenClaw);
+
+    form.apply_template(runapi_template_index(AppType::OpenClaw), &[]);
+
+    let provider = form.to_provider_json_value();
+    let settings = &provider["settingsConfig"];
+    assert_eq!(provider["name"], "RunAPI");
+    assert_eq!(provider["category"], "aggregator");
+    assert_eq!(provider["icon"], "runapi");
+    assert_eq!(settings["baseUrl"], "https://runapi.co");
+    assert_eq!(settings["api"], "anthropic-messages");
+    assert!(
+        settings.get("apiKey").is_none(),
+        "blank OpenClaw API keys should be omitted on save"
+    );
+    assert_eq!(
+        settings["models"],
+        json!([
+            {
+                "id": "claude-opus-4-8",
+                "name": "Claude Opus 4.8",
+                "contextWindow": 1000000,
+            },
+            {
+                "id": "claude-sonnet-4-6",
+                "name": "Claude Sonnet 4.6",
+                "contextWindow": 1000000,
+            },
+            {
+                "id": "claude-haiku-4-5",
+                "name": "Claude Haiku 4.5",
+                "contextWindow": 200000,
+            },
+        ])
+    );
+    assert_eq!(provider["meta"]["partnerPromotionKey"], "runapi");
 }
 
 #[test]
@@ -2484,7 +2732,10 @@ fn provider_add_form_opencode_exposes_supported_sponsor_presets() {
     let form = ProviderAddFormState::new(AppType::OpenCode);
     let labels = form.template_labels();
 
-    assert_eq!(labels, vec!["Custom", "* AICodeMirror", "* Cubence"]);
+    assert_eq!(
+        labels,
+        vec!["Custom", "* Cubence", "* RunAPI", "* AICodeMirror"]
+    );
     assert!(
         !labels.contains(&"* PackyCode"),
         "OpenCode should expose only explicitly supported sponsor presets"
@@ -2501,7 +2752,7 @@ fn provider_add_form_openclaw_uses_dedicated_template_defs() {
 
     assert_eq!(
         openclaw_labels,
-        vec!["Custom", "* AICodeMirror", "* Cubence"]
+        vec!["Custom", "* Cubence", "* RunAPI", "* AICodeMirror"]
     );
     assert!(
         !std::ptr::eq(openclaw_defs, opencode_defs),

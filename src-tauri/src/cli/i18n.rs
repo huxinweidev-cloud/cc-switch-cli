@@ -576,18 +576,18 @@ pub mod texts {
 
     pub fn tui_help_text() -> &'static str {
         if is_chinese() {
-            "[ ]  切换应用\n←→  切换菜单/内容焦点\n↑↓  移动\n/   过滤\nEsc  返回\n?   显示/关闭帮助\n\n文本输入：Ctrl+A/E 行首/行尾，Ctrl+U/K 删除行片段，Ctrl+W 删除前词，Alt+B/F 按词移动\n\n页面快捷键（在页面内容区顶部显示）：\n- 供应商：Enter 详情，Space 切换，a 新增，e 编辑，d 删除，t 测试，r 刷新，o 临时启动，f 管理故障转移，x 设为默认\n- 供应商详情：Space 切换，e 编辑，t 测试，r 刷新，o 临时启动，f 管理故障转移，x 设为默认\n- MCP：x 启用/禁用(当前应用)，m 选择应用，a 添加，e 编辑，i 导入已有，d 删除\n- 提示词：Space 启用/禁用，a 新增，Enter 查看，e 编辑，d 删除\n- 技能：Enter 详情，x 启用/禁用(当前应用)，m 选择应用，d 卸载，i 导入已有\n- 配置：Enter 打开/执行，e 编辑片段\n- 设置：Enter 应用"
+            "[ ]  切换应用\n←→  切换菜单/内容焦点\n↑↓ 或 h/j/k/l  移动\n/   过滤\nEsc  返回\n?   显示/关闭帮助\n\n文本输入：Ctrl+A/E 行首/行尾，Ctrl+U/K 删除行片段，Ctrl+W 删除前词，Alt+B/F 按词移动\n\n页面快捷键（在页面内容区顶部显示）：\n- 供应商：Enter 详情，Space 切换，a 新增，e 编辑，d 删除，t 测试，r 刷新，o 临时启动，f 管理故障转移，x 设为默认\n- 供应商详情：Space 切换，e 编辑，t 测试，r 刷新，o 临时启动，f 管理故障转移，x 设为默认\n- MCP：x 启用/禁用(当前应用)，m 选择应用，a 添加，e 编辑，i 导入已有，d 删除\n- 提示词：Space 启用/禁用，a 新增，Enter 查看，e 编辑，d 删除\n- 技能：Enter 详情，x 启用/禁用(当前应用)，m 选择应用，d 卸载，i 导入已有\n- 配置：Enter 打开/执行，e 编辑片段\n- 设置：Enter 应用"
         } else {
-            "[ ]  switch app\n←→  focus menu/content\n↑↓  move\n/   filter\nEsc  back\n?   toggle help\n\nText input: Ctrl+A/E move line, Ctrl+U/K delete line parts, Ctrl+W delete word, Alt+B/F move word\n\nPage keys (shown at the top of each page):\n- Providers: Enter details, Space switch, a add, e edit, d delete, t test, r refresh, o launch temp, f manage failover, x set default\n- Provider Detail: Space switch, e edit, t test, r refresh, o launch temp, f manage failover, x set default\n- MCP: x toggle current, m select apps, a add, e edit, i import existing, d delete\n- Prompts: Space toggle, a add, Enter view, e edit, d delete\n- Skills: Enter details, x toggle current, m select apps, d uninstall, i import existing\n- Config: Enter open/run, e edit snippet\n- Settings: Enter apply"
+            "[ ]  switch app\n←→  focus menu/content\n↑↓ or h/j/k/l  move\n/   filter\nEsc  back\n?   toggle help\n\nText input: Ctrl+A/E move line, Ctrl+U/K delete line parts, Ctrl+W delete word, Alt+B/F move word\n\nPage keys (shown at the top of each page):\n- Providers: Enter details, Space switch, a add, e edit, d delete, t test, r refresh, o launch temp, f manage failover, x set default\n- Provider Detail: Space switch, e edit, t test, r refresh, o launch temp, f manage failover, x set default\n- MCP: x toggle current, m select apps, a add, e edit, i import existing, d delete\n- Prompts: Space toggle, a add, Enter view, e edit, d delete\n- Skills: Enter details, x toggle current, m select apps, d uninstall, i import existing\n- Config: Enter open/run, e edit snippet\n- Settings: Enter apply"
         }
     }
 
     pub fn tui_help_text_for_app(app_type: &crate::app_config::AppType) -> &'static str {
         if matches!(app_type, crate::app_config::AppType::Hermes) {
             if is_chinese() {
-                "[ ]  切换应用\n←→  切换菜单/内容焦点\n↑↓  移动\n/   过滤\nEsc  返回\n?   显示/关闭帮助\n\n文本输入：Ctrl+A/E 行首/行尾，Ctrl+U/K 删除行片段，Ctrl+W 删除前词，Alt+B/F 按词移动\n\n页面快捷键（在页面内容区顶部显示）：\n- 供应商：Enter 详情，Space 添加/移除，a 新增，e 编辑，d 删除，t 测试，r 刷新，f 管理故障转移，x 启用\n- 供应商详情：Space 添加/移除，e 编辑，t 测试，r 刷新，f 管理故障转移，x 启用\n- MCP：x 启用/禁用(当前应用)，m 选择应用，a 添加，e 编辑，i 导入已有，d 删除\n- 记忆管理：Enter 编辑，Space/x 启用/禁用，o 打开目录\n- 技能：Enter 详情，x 启用/禁用(当前应用)，m 选择应用，d 卸载，i 导入已有\n- 设置：Enter 应用"
+                "[ ]  切换应用\n←→  切换菜单/内容焦点\n↑↓ 或 h/j/k/l  移动\n/   过滤\nEsc  返回\n?   显示/关闭帮助\n\n文本输入：Ctrl+A/E 行首/行尾，Ctrl+U/K 删除行片段，Ctrl+W 删除前词，Alt+B/F 按词移动\n\n页面快捷键（在页面内容区顶部显示）：\n- 供应商：Enter 详情，Space 添加/移除，a 新增，e 编辑，d 删除，t 测试，r 刷新，f 管理故障转移，x 启用\n- 供应商详情：Space 添加/移除，e 编辑，t 测试，r 刷新，f 管理故障转移，x 启用\n- MCP：x 启用/禁用(当前应用)，m 选择应用，a 添加，e 编辑，i 导入已有，d 删除\n- 记忆管理：Enter 编辑，Space/x 启用/禁用，o 打开目录\n- 技能：Enter 详情，x 启用/禁用(当前应用)，m 选择应用，d 卸载，i 导入已有\n- 设置：Enter 应用"
             } else {
-                "[ ]  switch app\n←→  focus menu/content\n↑↓  move\n/   filter\nEsc  back\n?   toggle help\n\nText input: Ctrl+A/E move line, Ctrl+U/K delete line parts, Ctrl+W delete word, Alt+B/F move word\n\nPage keys (shown at the top of each page):\n- Providers: Enter details, Space add/remove, a add, e edit, d delete, t test, r refresh, f manage failover, x enable\n- Provider Detail: Space add/remove, e edit, t test, r refresh, f manage failover, x enable\n- MCP: x toggle current, m select apps, a add, e edit, i import existing, d delete\n- Memory: Enter edit, Space/x toggle, o open directory\n- Skills: Enter details, x toggle current, m select apps, d uninstall, i import existing\n- Settings: Enter apply"
+                "[ ]  switch app\n←→  focus menu/content\n↑↓ or h/j/k/l  move\n/   filter\nEsc  back\n?   toggle help\n\nText input: Ctrl+A/E move line, Ctrl+U/K delete line parts, Ctrl+W delete word, Alt+B/F move word\n\nPage keys (shown at the top of each page):\n- Providers: Enter details, Space add/remove, a add, e edit, d delete, t test, r refresh, f manage failover, x enable\n- Provider Detail: Space add/remove, e edit, t test, r refresh, f manage failover, x enable\n- MCP: x toggle current, m select apps, a add, e edit, i import existing, d delete\n- Memory: Enter edit, Space/x toggle, o open directory\n- Skills: Enter details, x toggle current, m select apps, d uninstall, i import existing\n- Settings: Enter apply"
             }
         } else {
             tui_help_text()
@@ -1223,6 +1223,30 @@ pub mod texts {
             "额度"
         } else {
             "Quota"
+        }
+    }
+
+    pub fn tui_label_provider_proxy() -> &'static str {
+        if is_chinese() {
+            "代理"
+        } else {
+            "Proxy"
+        }
+    }
+
+    pub fn tui_provider_needs_proxy_label() -> &'static str {
+        if is_chinese() {
+            "需要代理"
+        } else {
+            "Needs Proxy"
+        }
+    }
+
+    pub fn tui_provider_no_proxy_support_label() -> &'static str {
+        if is_chinese() {
+            "不支持代理"
+        } else {
+            "No Proxy Support"
         }
     }
 
@@ -3302,6 +3326,14 @@ pub mod texts {
         }
     }
 
+    pub fn tui_key_add_account() -> &'static str {
+        if is_chinese() {
+            "新增账号"
+        } else {
+            "add account"
+        }
+    }
+
     pub fn tui_key_copy() -> &'static str {
         if is_chinese() {
             "复制"
@@ -3448,9 +3480,9 @@ pub mod texts {
 
     pub fn tui_key_pane() -> &'static str {
         if is_chinese() {
-            "切换区域"
+            "切换面板"
         } else {
-            "pane"
+            "switch panel"
         }
     }
 
@@ -3579,6 +3611,22 @@ pub mod texts {
             "取消"
         } else {
             "cancel"
+        }
+    }
+
+    pub fn tui_key_cancel_login() -> &'static str {
+        if is_chinese() {
+            "取消登录"
+        } else {
+            "cancel login"
+        }
+    }
+
+    pub fn tui_key_keep_waiting() -> &'static str {
+        if is_chinese() {
+            "继续等待"
+        } else {
+            "keep waiting"
         }
     }
 
@@ -3914,6 +3962,44 @@ pub mod texts {
         }
     }
 
+    pub fn tui_managed_accounts_summary_loading() -> &'static str {
+        if is_chinese() {
+            "ChatGPT · 正在加载"
+        } else {
+            "ChatGPT · loading"
+        }
+    }
+
+    pub fn tui_managed_accounts_summary_not_loaded() -> &'static str {
+        if is_chinese() {
+            "ChatGPT · 未加载"
+        } else {
+            "ChatGPT · not loaded"
+        }
+    }
+
+    pub fn tui_managed_accounts_summary_empty() -> &'static str {
+        if is_chinese() {
+            "ChatGPT · 未认证 · 按 a 新增账号"
+        } else {
+            "ChatGPT · not authenticated · press a to add account"
+        }
+    }
+
+    pub fn tui_managed_accounts_summary_loaded(count: usize, default_account: &str) -> String {
+        if is_chinese() {
+            format!(
+                "ChatGPT · {} · 默认: {default_account}",
+                tui_managed_accounts_count(count)
+            )
+        } else {
+            format!(
+                "ChatGPT · {} · default: {default_account}",
+                tui_managed_accounts_count(count)
+            )
+        }
+    }
+
     pub fn tui_managed_accounts_chatgpt_provider() -> &'static str {
         if is_chinese() {
             "ChatGPT"
@@ -3927,6 +4013,14 @@ pub mod texts {
             "服务"
         } else {
             "Service"
+        }
+    }
+
+    pub fn tui_managed_accounts_list_title() -> &'static str {
+        if is_chinese() {
+            "账号列表"
+        } else {
+            "Accounts"
         }
     }
 
@@ -3986,6 +4080,14 @@ pub mod texts {
         }
     }
 
+    pub fn tui_managed_accounts_authenticated_at_label() -> &'static str {
+        if is_chinese() {
+            "认证时间"
+        } else {
+            "Authenticated At"
+        }
+    }
+
     pub fn tui_managed_accounts_login_with_chatgpt() -> &'static str {
         if is_chinese() {
             "登录 ChatGPT"
@@ -4031,6 +4133,22 @@ pub mod texts {
             "未进行登录。"
         } else {
             "No login in progress."
+        }
+    }
+
+    pub fn tui_confirm_managed_auth_cancel_title() -> &'static str {
+        if is_chinese() {
+            "取消登录？"
+        } else {
+            "Cancel Login?"
+        }
+    }
+
+    pub fn tui_confirm_managed_auth_cancel_message() -> &'static str {
+        if is_chinese() {
+            "当前 ChatGPT 登录流程仍在等待浏览器确认。按 Enter 确认取消，按 Esc 返回继续等待。"
+        } else {
+            "The ChatGPT login flow is still waiting for browser confirmation. Press Enter to cancel, or Esc to keep waiting."
         }
     }
 
@@ -6590,6 +6708,22 @@ pub mod texts {
         }
     }
 
+    pub fn tui_toast_managed_auth_login_in_progress(code: &str, url: &str) -> String {
+        if is_chinese() {
+            format!("ChatGPT 登录中\n代码: {code}\n验证地址: {url}\n按 Esc 取消")
+        } else {
+            format!("ChatGPT login in progress\nCode: {code}\nVerification URL: {url}\nPress Esc to cancel")
+        }
+    }
+
+    pub fn tui_toast_managed_auth_login_cancelled() -> &'static str {
+        if is_chinese() {
+            "ChatGPT 登录已取消。"
+        } else {
+            "ChatGPT login cancelled."
+        }
+    }
+
     pub fn tui_toast_managed_auth_login_failed(err: &str) -> String {
         if is_chinese() {
             format!("ChatGPT 登录失败: {err}")
@@ -7369,6 +7503,32 @@ pub mod texts {
 
     pub fn menu_manage_providers_variants() -> (&'static str, &'static str) {
         ("🔑 Providers", "🔑 供应商")
+    }
+
+    pub fn menu_usage() -> &'static str {
+        let (en, zh) = menu_usage_variants();
+        if is_chinese() {
+            zh
+        } else {
+            en
+        }
+    }
+
+    pub fn menu_usage_variants() -> (&'static str, &'static str) {
+        ("📊 Usage", "📊 使用统计")
+    }
+
+    pub fn menu_pricing() -> &'static str {
+        let (en, zh) = menu_pricing_variants();
+        if is_chinese() {
+            zh
+        } else {
+            en
+        }
+    }
+
+    pub fn menu_pricing_variants() -> (&'static str, &'static str) {
+        ("💵 Pricing", "💵 模型定价")
     }
 
     pub fn menu_manage_sessions() -> &'static str {

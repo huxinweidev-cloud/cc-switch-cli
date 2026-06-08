@@ -42,6 +42,9 @@ impl App {
                     }
                     ConfirmAction::McpDelete { id } => Action::McpDelete { id: id.clone() },
                     ConfirmAction::PromptDelete { id } => Action::PromptDelete { id: id.clone() },
+                    ConfirmAction::PricingDelete { model_id } => Action::PricingDelete {
+                        model_id: model_id.clone(),
+                    },
                     ConfirmAction::SessionDelete {
                         key,
                         provider_id,
@@ -85,6 +88,10 @@ impl App {
                     ConfirmAction::ProviderApiFormatProxyNotice => Action::None,
                     ConfirmAction::CommonConfigNotice => Action::ConfirmCommonConfigNotice,
                     ConfirmAction::UsageQueryNotice => Action::ConfirmUsageQueryNotice,
+                    ConfirmAction::ManagedAuthCancelLogin => {
+                        self.cancel_managed_auth_login();
+                        Action::None
+                    }
                     ConfirmAction::ProxyEnableAndAutoFailover { app_type } => {
                         Action::EnableProxyAndAutoFailover {
                             app_type: app_type.clone(),
@@ -329,6 +336,28 @@ impl App {
             TextSubmit::OpenClawToolsRule { section, row } => {
                 self.handle_openclaw_tools_rule_submit(section, row, raw, data)
             }
+            TextSubmit::UsageCustomRange => match data::parse_usage_custom_range(&raw) {
+                Ok(range) => Action::UsageCustomRange { range },
+                Err(err) => {
+                    self.push_toast(format!("Invalid custom range: {err}"), ToastKind::Warning);
+                    self.overlay = Overlay::TextInput(TextInputState {
+                        title: if crate::cli::i18n::is_chinese() {
+                            "自定义时间区间".to_string()
+                        } else {
+                            "Custom Range".to_string()
+                        },
+                        prompt: if crate::cli::i18n::is_chinese() {
+                            "格式：YYYY-MM-DD..YYYY-MM-DD".to_string()
+                        } else {
+                            "Format: YYYY-MM-DD..YYYY-MM-DD".to_string()
+                        },
+                        input: TextInput::new(raw),
+                        submit: TextSubmit::UsageCustomRange,
+                        secret: false,
+                    });
+                    Action::None
+                }
+            },
             TextSubmit::CodexModelCatalogField { row, field } => {
                 self.handle_codex_model_catalog_field_submit(row, field, raw)
             }

@@ -74,6 +74,8 @@ impl App {
             usage_query_notice_confirmed: true,
             local_env_results: Vec::new(),
             local_env_loading: true,
+            usage: UsageState::default(),
+            pricing: PricingState::default(),
             sessions: SessionsState::default(),
             provider_idx: 0,
             mcp_idx: 0,
@@ -121,6 +123,9 @@ impl App {
         match route {
             Route::Main => NavItem::Main,
             Route::Providers | Route::ProviderDetail { .. } => NavItem::Providers,
+            Route::Usage | Route::UsageLogs | Route::UsageLogDetail { .. } | Route::Pricing => {
+                NavItem::Usage
+            }
             Route::Sessions => NavItem::Sessions,
             Route::Mcp => NavItem::Mcp,
             Route::Prompts => NavItem::Prompts,
@@ -249,10 +254,10 @@ impl App {
         self.tick = self.tick.wrapping_add(1);
         self.expire_managed_auth_login_if_needed();
         if let Some(toast) = &mut self.toast {
-            if toast.remaining_ticks > 0 {
+            if !toast.persistent && toast.remaining_ticks > 0 {
                 toast.remaining_ticks -= 1;
             }
-            if toast.remaining_ticks == 0 {
+            if !toast.persistent && toast.remaining_ticks == 0 {
                 self.toast = None;
             }
         }
@@ -274,6 +279,7 @@ impl App {
 
         self.managed_auth_login = None;
         self.managed_auth_loading = false;
+        self.clear_managed_auth_cancel_confirm();
         self.push_toast(
             texts::tui_toast_managed_auth_login_expired(),
             ToastKind::Warning,
@@ -363,6 +369,47 @@ impl App {
         self.toast = Some(Toast::new(message, kind));
     }
 
+    pub fn push_persistent_toast(&mut self, message: impl Into<String>, kind: ToastKind) {
+        self.toast = Some(Toast::persistent(message, kind));
+    }
+
+    pub(crate) fn clear_managed_auth_login_toast(&mut self) {
+        if self.toast.as_ref().is_some_and(|toast| toast.persistent) {
+            self.toast = None;
+        }
+    }
+
+    pub(crate) fn clear_managed_auth_cancel_confirm(&mut self) {
+        if matches!(
+            &self.overlay,
+            Overlay::Confirm(ConfirmOverlay {
+                action: ConfirmAction::ManagedAuthCancelLogin,
+                ..
+            })
+        ) {
+            self.close_overlay();
+        }
+    }
+
+    pub(crate) fn cancel_managed_auth_login(&mut self) {
+        if self.managed_auth_login.take().is_some() {
+            self.managed_auth_loading = false;
+            self.clear_managed_auth_login_toast();
+            self.push_toast(
+                texts::tui_toast_managed_auth_login_cancelled(),
+                ToastKind::Info,
+            );
+        }
+    }
+
+    fn confirm_managed_auth_login_cancel(&mut self) {
+        self.overlay = Overlay::Confirm(ConfirmOverlay {
+            title: texts::tui_confirm_managed_auth_cancel_title().to_string(),
+            message: texts::tui_confirm_managed_auth_cancel_message().to_string(),
+            action: ConfirmAction::ManagedAuthCancelLogin,
+        });
+    }
+
     pub(crate) fn prompt_visible_apps_auto_detection(&mut self) {
         if self.overlay.is_active() || self.pending_overlay.is_some() {
             self.pending_overlay = Some(Overlay::Confirm(ConfirmOverlay {
@@ -379,8 +426,53 @@ impl App {
         }
     }
 
-    pub fn open_help(&mut self) {
-        self.overlay = Overlay::Help;
+    pub fn open_help(&mut self, data: &UiData) {
+        if self.help_should_open_proxy_view() {
+            self.open_proxy_help_view(data, None);
+            return;
+        }
+
+        let help = Overlay::Help(crate::cli::tui::help::HelpState::new(
+            crate::cli::tui::help::context_help_for_app(self),
+        ));
+        if self.overlay.can_be_covered_by_help() {
+            let previous = std::mem::replace(&mut self.overlay, help);
+            self.pending_overlay = Some(previous);
+        } else if !self.overlay.is_active() {
+            self.overlay = help;
+        }
+    }
+
+    fn help_shortcut_is_available(&self) -> bool {
+        if self.editor.is_some() || self.filter.active || self.form_text_input_is_active() {
+            return false;
+        }
+        if matches!(self.overlay, Overlay::Help(_)) || self.overlay_text_input_is_active() {
+            return false;
+        }
+        !self.overlay.is_active()
+            || (self.pending_overlay.is_none() && self.overlay.can_be_covered_by_help())
+    }
+
+    fn help_should_open_proxy_view(&self) -> bool {
+        if self.overlay.is_active() {
+            return false;
+        }
+        if matches!(self.route, Route::SettingsProxy) {
+            return true;
+        }
+        if matches!(self.route, Route::Settings) && matches!(self.focus, Focus::Content) {
+            return matches!(
+                SettingsItem::ALL.get(self.settings_idx),
+                Some(SettingsItem::Proxy)
+            );
+        }
+        if matches!(self.route, Route::Config) && matches!(self.focus, Focus::Content) {
+            return visible_config_items(&self.filter, &self.app_type)
+                .get(self.config_idx)
+                .is_some_and(|item| matches!(item, ConfigItem::Proxy));
+        }
+        false
     }
 
     pub fn close_overlay(&mut self) {
@@ -434,6 +526,15 @@ impl App {
             return Action::Quit;
         }
 
+        if self.managed_auth_login.is_some()
+            && !self.overlay.is_active()
+            && !self.text_input_is_active()
+            && matches!(key.code, KeyCode::Esc)
+        {
+            self.confirm_managed_auth_login_cancel();
+            return Action::None;
+        }
+
         if key.modifiers.contains(KeyModifiers::CONTROL)
             && matches!(key.code, KeyCode::Char(','))
             && !self.overlay.is_active()
@@ -444,6 +545,11 @@ impl App {
         }
 
         let key = self.normalize_vim_navigation_key(key);
+
+        if matches!(key.code, KeyCode::Char('?')) && self.help_shortcut_is_available() {
+            self.open_help(data);
+            return Action::None;
+        }
 
         if self.overlay.is_active() {
             return self.on_overlay_key(key, data);
@@ -467,10 +573,6 @@ impl App {
 
         // Global actions.
         match key.code {
-            KeyCode::Char('?') => {
-                self.open_help();
-                return Action::None;
-            }
             KeyCode::Char('/') => {
                 self.filter.active = true;
                 self.prepare_filter_focus();
@@ -516,8 +618,18 @@ impl App {
                     self.move_sessions_focus_right(data)
                 };
             }
+            KeyCode::Tab
+                if matches!(self.route, Route::Usage) && matches!(self.focus, Focus::Content) =>
+            {
+                return self.on_usage_key(key, data);
+            }
             KeyCode::BackTab if matches!(self.route, Route::Sessions) => {
                 return self.move_sessions_focus_left();
+            }
+            KeyCode::BackTab
+                if matches!(self.route, Route::Usage) && matches!(self.focus, Focus::Content) =>
+            {
+                return self.on_usage_key(key, data);
             }
             KeyCode::Char('q') | KeyCode::Esc => {
                 return self.on_back_key();
@@ -630,6 +742,10 @@ impl App {
         match self.route.clone() {
             Route::Providers => self.on_providers_key(key, data),
             Route::ProviderDetail { id } => self.on_provider_detail_key(key, data, &id),
+            Route::Usage => self.on_usage_key(key, data),
+            Route::UsageLogs => self.on_usage_logs_key(key, data),
+            Route::UsageLogDetail { request_id } => self.on_usage_log_detail_key(key, &request_id),
+            Route::Pricing => self.on_pricing_key(key, data),
             Route::Sessions => self.on_sessions_key(key, data),
             Route::Mcp => self.on_mcp_key(key, data),
             Route::Prompts => self.on_prompts_key(key, data),
@@ -732,6 +848,26 @@ impl App {
             self.sessions.clear_detail();
         }
         clamp_session_message_selection(&mut self.sessions);
+
+        let usage_len = usage_active_pane_len(&self.usage.pane, self.usage.range, data);
+        if usage_len == 0 {
+            self.usage.selected_idx = 0;
+        } else {
+            self.usage.selected_idx = self.usage.selected_idx.min(usage_len - 1);
+        }
+        let usage_logs_len = data.usage.recent_logs_for(self.usage.range).len();
+        if usage_logs_len == 0 {
+            self.usage.logs_idx = 0;
+        } else {
+            self.usage.logs_idx = self.usage.logs_idx.min(usage_logs_len - 1);
+        }
+
+        let pricing_len = visible_pricing_rows(&self.filter, data).len();
+        if pricing_len == 0 {
+            self.pricing.selected_idx = 0;
+        } else {
+            self.pricing.selected_idx = self.pricing.selected_idx.min(pricing_len - 1);
+        }
 
         let skills_len = visible_skills_installed(&self.filter, data).len();
         if skills_len == 0 {
