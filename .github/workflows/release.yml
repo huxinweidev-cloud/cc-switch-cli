@@ -377,6 +377,7 @@ jobs:
           name: CC Switch CLI ${{ github.ref_name }}
           draft: false
           prerelease: false
+          generate_release_notes: true
           body: |
             ## CC Switch CLI ${{ github.ref_name }}
 
