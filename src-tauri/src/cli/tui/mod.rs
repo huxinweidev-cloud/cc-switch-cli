@@ -1197,7 +1197,11 @@ fn handle_tui_action(
     usage_pricing_req_tx: Option<&mpsc::Sender<UsagePricingReq>>,
     action: Action,
 ) -> Result<(), AppError> {
-    match action {
+    let should_queue_sessions_refresh = matches!(
+        &action,
+        Action::SwitchRoute(route::Route::Sessions) | Action::SetAppType(_)
+    );
+    let result = match action {
         Action::None => Ok(()),
         Action::ProviderQuotaRefresh { id } => {
             queue_provider_quota_refresh(app, data, quota_req_tx, &id);
@@ -1273,7 +1277,13 @@ fn handle_tui_action(
                 invalidation,
             )
         }
+    };
+
+    if result.is_ok() && should_queue_sessions_refresh {
+        queue_sessions_refresh_if_needed(app, session_req_tx);
     }
+
+    result
 }
 
 fn queue_sessions_refresh_if_needed(

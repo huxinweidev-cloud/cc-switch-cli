@@ -662,6 +662,143 @@ fn no_op_reload_candidate_preserves_pending_app_data_load() {
 }
 
 #[test]
+fn switch_to_sessions_queues_scan_without_waiting_for_next_tick() {
+    let mut terminal = TuiTerminal::new_for_test().expect("create terminal");
+    let mut app = App::new(Some(AppType::Codex));
+    let mut data = UiData::default();
+    let mut cache = UiDataByAppCache::default();
+    let mut proxy_loading = RequestTracker::default();
+    let mut webdav_loading = RequestTracker::default();
+    let mut update_check = RequestTracker::default();
+    let (tx, rx) = mpsc::channel();
+
+    handle_tui_action(
+        &mut terminal,
+        &mut app,
+        &mut data,
+        &mut cache,
+        None,
+        None,
+        None,
+        None,
+        None,
+        &mut proxy_loading,
+        None,
+        Some(&tx),
+        None,
+        &mut webdav_loading,
+        None,
+        &mut update_check,
+        None,
+        None,
+        None,
+        None,
+        Action::SwitchRoute(route::Route::Sessions),
+    )
+    .expect("switching to sessions should queue a scan");
+
+    assert!(matches!(app.route, route::Route::Sessions));
+    assert!(app.sessions.loading);
+    assert_eq!(app.sessions.provider_id.as_deref(), Some("codex"));
+    let request_id = app.sessions.scan_active.expect("scan should be active");
+    match rx.try_recv().expect("scan request should be queued") {
+        SessionReq::Refresh {
+            request_id: queued_request_id,
+            provider_id,
+        } => {
+            assert_eq!(queued_request_id, request_id);
+            assert_eq!(provider_id, "codex");
+        }
+        other => panic!("unexpected sessions request: {other:?}"),
+    }
+
+    handle_tui_action(
+        &mut terminal,
+        &mut app,
+        &mut data,
+        &mut cache,
+        None,
+        None,
+        None,
+        None,
+        None,
+        &mut proxy_loading,
+        None,
+        Some(&tx),
+        None,
+        &mut webdav_loading,
+        None,
+        &mut update_check,
+        None,
+        None,
+        None,
+        None,
+        Action::SwitchRoute(route::Route::Sessions),
+    )
+    .expect("switching to an already-loading sessions route should not queue another scan");
+
+    assert!(rx.try_recv().is_err());
+}
+
+#[test]
+fn switching_app_on_sessions_route_queues_scan_for_next_app() {
+    let mut terminal = TuiTerminal::new_for_test().expect("create terminal");
+    let mut app = App::new(Some(AppType::Claude));
+    app.route = route::Route::Sessions;
+    let mut data = UiData::default();
+    let mut cache = UiDataByAppCache::default();
+    cache.by_app.insert(AppType::Codex, UiData::default());
+    let mut proxy_loading = RequestTracker::default();
+    let mut webdav_loading = RequestTracker::default();
+    let mut update_check = RequestTracker::default();
+    let (session_tx, session_rx) = mpsc::channel();
+
+    handle_tui_action(
+        &mut terminal,
+        &mut app,
+        &mut data,
+        &mut cache,
+        None,
+        None,
+        None,
+        None,
+        None,
+        &mut proxy_loading,
+        None,
+        Some(&session_tx),
+        None,
+        &mut webdav_loading,
+        None,
+        &mut update_check,
+        None,
+        None,
+        None,
+        None,
+        Action::SetAppType(AppType::Codex),
+    )
+    .expect("switching app on sessions route should queue a scan");
+
+    assert_eq!(app.app_type, AppType::Codex);
+    assert!(matches!(app.route, route::Route::Sessions));
+    assert!(app.sessions.loading);
+    assert_eq!(app.sessions.provider_id.as_deref(), Some("codex"));
+    let request_id = app.sessions.scan_active.expect("scan should be active");
+    match session_rx
+        .try_recv()
+        .expect("scan request should be queued")
+    {
+        SessionReq::Refresh {
+            request_id: queued_request_id,
+            provider_id,
+        } => {
+            assert_eq!(queued_request_id, request_id);
+            assert_eq!(provider_id, "codex");
+        }
+        other => panic!("unexpected sessions request: {other:?}"),
+    }
+}
+
+#[test]
 fn initial_app_data_result_restores_startup_overlay_and_caches_loaded_data() {
     let mut app = App::new(Some(AppType::Claude));
     let mut data = UiData::default();

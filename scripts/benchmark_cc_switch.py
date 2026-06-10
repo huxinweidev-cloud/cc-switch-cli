@@ -1074,6 +1074,7 @@ class TuiSession:
 
     def clear(self) -> None:
         self.buffer = ""
+        self.screen_state.reset()
         while True:
             ready, _, _ = select.select([self.master], [], [], 0)
             if not ready:
@@ -1090,19 +1091,21 @@ class TuiSession:
         if delay > 0:
             time.sleep(delay)
 
-    def read_some(self, wait: float = 0.05) -> None:
+    def read_some(self, wait: float = 0.05) -> bool:
         ready, _, _ = select.select([self.master], [], [], wait)
         if not ready:
-            return
+            return False
         try:
             chunk = os.read(self.master, 65536)
         except OSError:
-            return
+            return False
         if chunk:
             decoded = chunk.decode("utf-8", errors="replace")
             self.buffer += decoded
             self.buffer = self.buffer[-200000:]
             self.screen_state.feed(decoded)
+            return True
+        return False
 
     def screen(self) -> str:
         screen = self.screen_state.text()
@@ -1355,18 +1358,38 @@ def benchmark_cli(metrics: Metrics, binary: Path, paths: Paths, iterations: int,
             reset_provider_cli(binary, app, a)
 
 
-def tui_goto(session: TuiSession, current_idx: int, target_idx: int, marker: Callable[[str], bool]) -> tuple[int, float]:
+def tui_wait_until_quiet(session: TuiSession, quiet: float = 0.25, timeout: float = 2.0) -> None:
+    deadline = time.time() + timeout
+    quiet_deadline = time.time() + quiet
+    while time.time() < deadline:
+        if session.read_some(0.02):
+            quiet_deadline = time.time() + quiet
+        elif time.time() >= quiet_deadline:
+            return
+
+
+def tui_prepare_nav(session: TuiSession, target_idx: int) -> None:
     session.clear()
-    start = time.perf_counter()
     session.key(b"\x1b[D", 0.12)  # Left: nav focus, or sessions pane back toward nav.
     for _ in range(20):
         session.key(b"\x1b[A", 0.01)
     for _ in range(max(0, target_idx)):
         session.key(b"\x1b[B", 0.08)
+    tui_wait_until_quiet(session)
+
+
+def tui_open_prepared_route(session: TuiSession, marker: Callable[[str], bool]) -> float:
     session.clear()
+    start = time.perf_counter()
     session.send(b"\r")
     session.wait_for(marker, timeout=20)
-    return target_idx, (time.perf_counter() - start) * 1000
+    return (time.perf_counter() - start) * 1000
+
+
+def tui_goto(session: TuiSession, current_idx: int, target_idx: int, marker: Callable[[str], bool]) -> tuple[int, float]:
+    _ = current_idx
+    tui_prepare_nav(session, target_idx)
+    return target_idx, tui_open_prepared_route(session, marker)
 
 
 def tui_clear_filter(session: TuiSession) -> None:
@@ -1424,7 +1447,9 @@ def tui_providers_marker(screen: str) -> bool:
     )
 
 
-def tui_sessions_marker(screen: str) -> bool:
+def tui_sessions_loaded_marker(screen: str, app: str | None = None) -> bool:
+    if app is not None and f"{BENCH}-session-{app}" not in screen:
+        return False
     return (
         (
             "Sessions" in screen
@@ -1438,6 +1463,14 @@ def tui_sessions_marker(screen: str) -> bool:
             and "时间" in screen
             and "消息" in screen
         )
+    )
+
+
+def tui_sessions_route_marker(screen: str, app: str) -> bool:
+    return (
+        "Scanning local sessions" in screen
+        or "正在扫描本地会话" in screen
+        or tui_sessions_loaded_marker(screen, app)
     )
 
 
@@ -1516,18 +1549,30 @@ def benchmark_tui(metrics: Metrics, binary: Path, paths: Paths, iterations: int,
 
             run_tui_op(
                 app,
-                "open_sessions",
+                "open_sessions_route",
                 record,
                 lambda session: tui_goto(
                     session,
                     0,
                     nav["sessions"],
-                    tui_sessions_marker,
+                    lambda s: tui_sessions_route_marker(s, app),
+                )[1],
+            )
+
+            run_tui_op(
+                app,
+                "open_sessions_loaded",
+                record,
+                lambda session: tui_goto(
+                    session,
+                    0,
+                    nav["sessions"],
+                    lambda s: tui_sessions_loaded_marker(s, app),
                 )[1],
             )
 
             def detail_body(session: TuiSession) -> float:
-                tui_goto(session, 0, nav["sessions"], tui_sessions_marker)
+                tui_goto(session, 0, nav["sessions"], lambda s: tui_sessions_loaded_marker(s, app))
                 session.wait_for(
                     lambda s: f"{BENCH}-session" in s
                     and ("sessions" in s or "个会话" in s or "Sessions" in s or "会话" in s),
