@@ -171,6 +171,24 @@ impl AppState {
             }
         }
 
+        match crate::codex_history_migration::maybe_migrate_codex_official_history_to_unified_bucket(
+        ) {
+            Ok(outcome) => {
+                if let Some(reason) = outcome.skipped_reason {
+                    log::debug!("○ Codex official history unify migration skipped: {reason}");
+                } else {
+                    log::info!(
+                        "✓ Codex official history unify migration completed: jsonl_files={}, state_rows={}",
+                        outcome.migrated_jsonl_files,
+                        outcome.migrated_state_rows
+                    );
+                }
+            }
+            Err(error) => {
+                log::warn!("✗ Codex official history unify migration failed: {error}");
+            }
+        }
+
         if let Err(error) = self.refresh_config_from_db() {
             log::warn!("✗ Failed to refresh config after Codex provider bucket migration: {error}");
         }
@@ -253,6 +271,10 @@ impl AppState {
         persist_multi_app_config_to_db(&self.db, &config)
     }
 
+    pub(crate) fn save_config_snapshot(&self, config: &MultiAppConfig) -> Result<(), AppError> {
+        persist_multi_app_config_to_db(&self.db, config)
+    }
+
     /// 将内存中的 config 快照持久化到 SQLite，但保留指定应用当前供应商的 DB 选择。
     pub fn save_preserving_current_providers(
         &self,
@@ -260,6 +282,14 @@ impl AppState {
     ) -> Result<(), AppError> {
         let config = self.config.read().map_err(AppError::from)?;
         persist_multi_app_config_to_db_preserving_current_providers(&self.db, &config, app_types)
+    }
+
+    pub(crate) fn save_config_snapshot_preserving_current_providers(
+        &self,
+        config: &MultiAppConfig,
+        app_types: &[crate::app_config::AppType],
+    ) -> Result<(), AppError> {
+        persist_multi_app_config_to_db_preserving_current_providers(&self.db, config, app_types)
     }
 
     /// 用数据库中的最新快照重建内存配置，供导入/恢复后的 live 同步流程复用。
