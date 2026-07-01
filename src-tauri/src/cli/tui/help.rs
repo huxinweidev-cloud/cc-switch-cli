@@ -149,6 +149,34 @@ fn current_help_target(app: &App) -> HelpTarget {
         };
     }
 
+    if matches!(provider.page, ProviderFormPage::ClaudeQuickConfig) {
+        return match provider.focus {
+            FormFocus::Fields => {
+                provider
+                    .selected_claude_quick_config_field()
+                    .map_or(HelpTarget::Empty, |field| HelpTarget::ProviderField {
+                        app_type: provider.app_type.clone(),
+                        field,
+                    })
+            }
+            _ => HelpTarget::Empty,
+        };
+    }
+
+    if matches!(provider.page, ProviderFormPage::CodexQuickConfig) {
+        return match provider.focus {
+            FormFocus::Fields => {
+                provider
+                    .selected_codex_quick_config_field()
+                    .map_or(HelpTarget::Empty, |field| HelpTarget::ProviderField {
+                        app_type: provider.app_type.clone(),
+                        field,
+                    })
+            }
+            _ => HelpTarget::Empty,
+        };
+    }
+
     match provider.focus {
         FormFocus::Templates if matches!(provider.mode, FormMode::Add) => {
             HelpTarget::ProviderTemplate
@@ -272,10 +300,10 @@ fn provider_field_help(app_type: AppType, field: ProviderAddField) -> HelpConten
             ),
         ),
         ProviderAddField::CodexLocalRouting => HelpContent::new(
-            texts::tui_label_codex_local_routing(),
+            texts::tui_label_codex_model_mapping(),
             help_lines(
-                "打开 Codex 本地路由二级页面。供应商使用 OpenAI Chat Completions 或非 GPT 模型时，开启后 cc-switch 会通过本地代理做协议转换、模型路由和模型目录映射。\n开启后使用此供应商时需要保持本地代理运行。",
-                "Opens the Codex Local Routing secondary page. When the provider uses OpenAI Chat Completions or non-GPT models, enabling it lets cc-switch use the local proxy for protocol conversion, model routing, and model catalog mapping.\nKeep the local proxy running while using this provider.",
+                "打开模型映射二级页面。填了才生成模型目录：Chat Completions 会生成兼容路由（走本地代理转换），原生 Responses 会生成 model-catalogs.json 供 Codex 直连显示。留空则不生成。\n使用 Chat 格式时，这里还会显示「思考能力」开关。",
+                "Opens the model mapping page. A catalog is generated only when filled: Chat Completions produces compatibility routing (via the local proxy), while native Responses generates model-catalogs.json for Codex direct-connect. Left empty, nothing is generated.\nWith the Chat format, reasoning-capability toggles also appear here.",
             ),
         ),
         ProviderAddField::ClaudeModelConfig => HelpContent::new(
@@ -285,6 +313,15 @@ fn provider_field_help(app_type: AppType, field: ProviderAddField) -> HelpConten
                 "Configures Claude model tiers. Role-specific models are written into the live config for the client to select by task.",
             ),
         ),
+        ProviderAddField::ClaudeApiFormat if matches!(app_type, AppType::Codex) => {
+            HelpContent::new(
+                texts::tui_label_codex_upstream_format(),
+                help_lines(
+                    "选择上游供应商的 API 格式。供应商原生是 Responses API 就选 Responses（直连，不转换）；使用 Chat Completions 协议就选 Chat（需通过本地路由转换为 Chat Completions）。",
+                    "Select the upstream provider's API format. Choose Responses when the provider is natively Responses API (direct, no conversion); choose Chat when it uses Chat Completions (converted via local routing).",
+                ),
+            )
+        }
         ProviderAddField::ClaudeApiFormat => HelpContent::new(
             texts::tui_label_claude_api_format(),
             help_lines(
@@ -299,11 +336,60 @@ fn provider_field_help(app_type: AppType, field: ProviderAddField) -> HelpConten
                 "A fallback for requests that don't clearly map to a specific role model (Haiku, Sonnet, Opus, etc.). Recommended for third-party/relay endpoints—otherwise such requests (including Haiku background subtasks) are forwarded under their original Claude model name and may fail if the upstream doesn't host it. Safe to leave blank for official endpoints.",
             ),
         ),
+        ProviderAddField::ClaudeQuickConfig => HelpContent::new(
+            texts::tui_label_claude_quick_config(),
+            help_lines(
+                "打开 Claude 快捷配置菜单，集中管理隐藏 AI 署名、Teammates 模式、启用 Tool Search、禁用自动升级等开关。",
+                "Opens the Claude quick-config menu that groups the hide-AI-attribution, Teammates, Tool Search, and disable-auto-upgrade toggles.",
+            ),
+        ),
+        ProviderAddField::CodexQuickConfig => HelpContent::new(
+            texts::tui_label_codex_quick_config(),
+            help_lines(
+                "打开 Codex 快捷配置菜单，集中管理启用 Goal mode、启用远程压缩等开关。",
+                "Opens the Codex quick-config menu that groups the Goal-mode and remote-compaction toggles.",
+            ),
+        ),
+        ProviderAddField::CodexGoalMode => HelpContent::new(
+            texts::tui_label_codex_goal_mode(),
+            help_lines(
+                "启用 Codex 的 Goal mode，写入 config.toml 的 [features] goals = true；关闭时移除该项。",
+                "Enables Codex Goal mode by writing [features] goals = true to config.toml; turning it off removes it.",
+            ),
+        ),
+        ProviderAddField::CodexRemoteCompaction => HelpContent::new(
+            texts::tui_label_codex_remote_compaction(),
+            help_lines(
+                "开启后会将当前 model_providers 条目的 name 写为 OpenAI，使 Codex 尝试使用远程压缩；关闭时恢复原供应商名称。",
+                "When enabled, sets the current model_providers entry's name to \"OpenAI\" so Codex attempts remote compaction; turning it off restores the provider name.",
+            ),
+        ),
         ProviderAddField::ClaudeHideAttribution => HelpContent::new(
             texts::tui_label_claude_hide_attribution(),
             help_lines(
                 "控制 Claude Code 写入提交或拉取请求时是否附带署名信息。",
                 "Controls whether Claude Code adds attribution when writing commits or pull requests.",
+            ),
+        ),
+        ProviderAddField::ClaudeTeammates => HelpContent::new(
+            texts::tui_label_claude_teammates(),
+            help_lines(
+                "启用 Claude Code 的实验性 Teammates（多智能体协作）模式，写入 env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1；关闭时移除该变量。",
+                "Enables Claude Code's experimental Teammates (multi-agent) mode by writing env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1; turning it off removes the variable.",
+            ),
+        ),
+        ProviderAddField::ClaudeToolSearch => HelpContent::new(
+            texts::tui_label_claude_tool_search(),
+            help_lines(
+                "启用 Claude Code 的 Tool Search（工具搜索）能力，写入 env.ENABLE_TOOL_SEARCH=true；关闭时移除该变量。",
+                "Enables Claude Code's Tool Search capability by writing env.ENABLE_TOOL_SEARCH=true; turning it off removes the variable.",
+            ),
+        ),
+        ProviderAddField::ClaudeDisableAutoUpgrade => HelpContent::new(
+            texts::tui_label_claude_disable_auto_upgrade(),
+            help_lines(
+                "禁用 Claude Code 的自动升级，写入 env.DISABLE_AUTOUPDATER=1；关闭时移除该变量。",
+                "Disables Claude Code's auto-upgrade by writing env.DISABLE_AUTOUPDATER=1; turning it off removes the variable.",
             ),
         ),
         ProviderAddField::CodexOAuthAccount => HelpContent::new(
@@ -424,6 +510,7 @@ fn provider_field_help(app_type: AppType, field: ProviderAddField) -> HelpConten
         | ProviderAddField::CodexRequiresOpenaiAuth
         | ProviderAddField::CodexEnvKey
         | ProviderAddField::ClaudeAdvancedDivider
+        | ProviderAddField::CodexAdvancedDivider
         | ProviderAddField::HermesAdvancedDivider
         | ProviderAddField::CommonConfigDivider
         | ProviderAddField::UsageQueryDivider => HelpContent::empty(),
@@ -456,8 +543,8 @@ fn codex_local_routing_field_help(field: CodexLocalRoutingField) -> HelpContent 
         CodexLocalRoutingField::ModelCatalog => HelpContent::new(
             texts::tui_codex_model_catalog(),
             help_lines(
-                "打开模型映射列表。这里把供应商模型 ID 映射成 Codex 可见模型，并可设置显示名和上下文窗口。\n修改后通常需要重启 Codex，/model 列表才会刷新。",
-                "Opens the model mapping list. It maps provider model IDs into models visible to Codex, with optional display name and context window.\nRestart Codex after changes so the /model list refreshes.",
+                "在此把供应商模型映射成 Codex 可见模型。a 添加行，Enter 编辑单元格，←→ 切换列，f 拉取，Del 删除。\n三列：\n· 实际请求模型 —— 发给上游的模型 ID，不能为空（例：deepseek-chat）\n· 显示名 —— /model 菜单里显示的名字，留空用模型 ID（例：DeepSeek Chat）\n· 上下文窗口 —— 该模型的上下文长度，留空不覆盖（例：128000）\n修改后通常需要重启 Codex，/model 列表才会刷新。",
+                "Map provider models into models visible to Codex here. Press a to add a row, Enter to edit a cell, ←→ to switch columns, f to fetch, Del to delete.\nThree columns:\n· Request model — the model ID sent upstream, cannot be empty (e.g. deepseek-chat)\n· Display name — the name shown in the /model menu, empty uses the model ID (e.g. DeepSeek Chat)\n· Context window — this model's context length, empty to not override (e.g. 128000)\nRestart Codex after changes so the /model list refreshes.",
             ),
         ),
     }
@@ -621,6 +708,7 @@ fn provider_field_is_divider(field: ProviderAddField) -> bool {
     matches!(
         field,
         ProviderAddField::ClaudeAdvancedDivider
+            | ProviderAddField::CodexAdvancedDivider
             | ProviderAddField::HermesAdvancedDivider
             | ProviderAddField::CommonConfigDivider
             | ProviderAddField::UsageQueryDivider

@@ -254,8 +254,10 @@ fn provider_add_form_codex_deepseek_template_matches_upstream_preset_values() {
 
     let fields = form.fields();
     assert!(fields.contains(&ProviderAddField::CodexBaseUrl));
-    assert!(fields.contains(&ProviderAddField::CodexModel));
     assert!(fields.contains(&ProviderAddField::CodexApiKey));
+    // No standalone model field anymore (matches upstream); the model rides in
+    // the catalog / config.
+    assert!(!fields.contains(&ProviderAddField::CodexModel));
 
     let provider = form.to_provider_json_value();
     assert_eq!(provider["category"], "cn_official");
@@ -336,7 +338,8 @@ fn provider_add_form_codex_oauth_template_matches_upstream_contract() {
     assert!(fields.contains(&ProviderAddField::CodexOAuthAccount));
     assert!(fields.contains(&ProviderAddField::CodexFastMode));
     assert!(fields.contains(&ProviderAddField::ClaudeModelConfig));
-    assert!(fields.contains(&ProviderAddField::ClaudeHideAttribution));
+    assert!(fields.contains(&ProviderAddField::ClaudeQuickConfig));
+    assert!(!fields.contains(&ProviderAddField::ClaudeHideAttribution));
     assert!(!fields.contains(&ProviderAddField::ClaudeBaseUrl));
     assert!(!fields.contains(&ProviderAddField::ClaudeApiFormat));
     assert!(!fields.contains(&ProviderAddField::ClaudeApiKey));
@@ -887,38 +890,220 @@ fn provider_add_form_claude_fields_include_model_config_entry() {
 }
 
 #[test]
-fn provider_add_form_claude_fields_include_hide_attribution_entry() {
+fn provider_add_form_claude_places_quick_config_menu_below_common_config() {
     let form = ProviderAddFormState::new(AppType::Claude);
     let fields = form.fields();
-    let advanced_divider_idx = fields
-        .iter()
-        .position(|field| *field == ProviderAddField::ClaudeAdvancedDivider)
-        .expect("ClaudeAdvancedDivider field should exist");
-    let model_cfg_idx = fields
-        .iter()
-        .position(|field| *field == ProviderAddField::ClaudeModelConfig)
-        .expect("ClaudeModelConfig field should exist");
-    let hide_attribution_idx = fields
-        .iter()
-        .position(|field| *field == ProviderAddField::ClaudeHideAttribution)
-        .expect("ClaudeHideAttribution field should exist");
-    let common_divider_idx = fields
-        .iter()
-        .position(|field| *field == ProviderAddField::CommonConfigDivider)
-        .expect("CommonConfigDivider field should exist");
+    let pos = |field: ProviderAddField| {
+        fields
+            .iter()
+            .position(|candidate| *candidate == field)
+            .unwrap_or_else(|| panic!("{field:?} field should exist"))
+    };
+    let advanced_divider_idx = pos(ProviderAddField::ClaudeAdvancedDivider);
+    let model_cfg_idx = pos(ProviderAddField::ClaudeModelConfig);
+    let include_common_idx = pos(ProviderAddField::IncludeCommonConfig);
+    let quick_config_idx = pos(ProviderAddField::ClaudeQuickConfig);
+    let usage_divider_idx = pos(ProviderAddField::UsageQueryDivider);
 
-    assert!(
-        hide_attribution_idx < advanced_divider_idx,
-        "hide attribution is a basic field, before the advanced divider"
-    );
     assert!(
         advanced_divider_idx < model_cfg_idx,
         "model mapping should sit in the advanced section after the divider"
     );
     assert!(
-        hide_attribution_idx < common_divider_idx,
-        "hide attribution should stay with Claude-specific fields"
+        quick_config_idx == include_common_idx + 1,
+        "the quick-config menu should sit directly below the add-common-config toggle"
     );
+    assert!(
+        quick_config_idx < usage_divider_idx,
+        "the quick-config menu stays above the usage-query section"
+    );
+
+    // The four quick toggles are collapsed off the main field list into the
+    // sub-page, in upstream order.
+    for toggle in [
+        ProviderAddField::ClaudeHideAttribution,
+        ProviderAddField::ClaudeTeammates,
+        ProviderAddField::ClaudeToolSearch,
+        ProviderAddField::ClaudeDisableAutoUpgrade,
+    ] {
+        assert!(
+            !fields.contains(&toggle),
+            "{toggle:?} should not appear on the main field list"
+        );
+    }
+    assert_eq!(
+        form.claude_quick_config_fields(),
+        vec![
+            ProviderAddField::ClaudeHideAttribution,
+            ProviderAddField::ClaudeTeammates,
+            ProviderAddField::ClaudeToolSearch,
+            ProviderAddField::ClaudeDisableAutoUpgrade,
+        ]
+    );
+}
+
+#[test]
+fn provider_add_form_claude_quick_config_menu_opens_and_toggles() {
+    let mut form = ProviderAddFormState::new(AppType::Claude);
+    form.open_claude_quick_config_page();
+    assert!(matches!(
+        form.page,
+        super::ProviderFormPage::ClaudeQuickConfig
+    ));
+    assert_eq!(form.claude_quick_config_enabled_count(), 0);
+
+    // Toggle the first two entries (hide attribution + teammates).
+    form.toggle_claude_hide_attribution();
+    form.toggle_claude_teammates();
+    assert_eq!(form.claude_quick_config_enabled_count(), 2);
+
+    let provider = form.to_provider_json_value();
+    assert_eq!(
+        provider["settingsConfig"]["attribution"],
+        json!({ "commit": "", "pr": "" })
+    );
+    assert_eq!(
+        provider["settingsConfig"]["env"]["CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"],
+        json!("1")
+    );
+
+    form.close_claude_quick_config_page();
+    assert!(matches!(form.page, super::ProviderFormPage::Main));
+}
+
+#[test]
+fn provider_add_form_codex_collapses_quick_toggles_into_menu() {
+    let mut form = ProviderAddFormState::new(AppType::Codex);
+    form.id.set("myco");
+    form.name.set("My Codex");
+    form.codex_base_url.set("https://api.example.com/v1");
+
+    let fields = form.fields();
+    assert!(fields.contains(&ProviderAddField::CodexQuickConfig));
+
+    // The quick-config menu must sit directly below the add-common-config
+    // toggle, matching the Claude form layout.
+    let pos = |field: ProviderAddField| {
+        fields
+            .iter()
+            .position(|candidate| *candidate == field)
+            .unwrap_or_else(|| panic!("{field:?} field should exist"))
+    };
+    let include_common_idx = pos(ProviderAddField::IncludeCommonConfig);
+    let quick_config_idx = pos(ProviderAddField::CodexQuickConfig);
+    let usage_divider_idx = pos(ProviderAddField::UsageQueryDivider);
+    assert!(
+        quick_config_idx == include_common_idx + 1,
+        "the quick-config menu should sit directly below the add-common-config toggle"
+    );
+    assert!(
+        quick_config_idx < usage_divider_idx,
+        "the quick-config menu stays above the usage-query section"
+    );
+
+    // The two toggles live on the sub-page, not the main field list.
+    assert!(!fields.contains(&ProviderAddField::CodexGoalMode));
+    assert!(!fields.contains(&ProviderAddField::CodexRemoteCompaction));
+    assert_eq!(
+        form.codex_quick_config_fields(),
+        vec![
+            ProviderAddField::CodexGoalMode,
+            ProviderAddField::CodexRemoteCompaction,
+        ]
+    );
+}
+
+#[test]
+fn provider_add_form_codex_quick_config_menu_opens_and_writes_config() {
+    let mut form = ProviderAddFormState::new(AppType::Codex);
+    form.id.set("myco");
+    form.name.set("My Codex");
+    form.codex_base_url.set("https://api.example.com/v1");
+
+    form.open_codex_quick_config_page();
+    assert!(matches!(
+        form.page,
+        super::ProviderFormPage::CodexQuickConfig
+    ));
+    assert_eq!(form.codex_quick_config_enabled_count(), 0);
+
+    form.toggle_codex_goal_mode();
+    form.toggle_codex_remote_compaction();
+    assert_eq!(form.codex_quick_config_enabled_count(), 2);
+
+    let provider = form.to_provider_json_value();
+    let config = provider["settingsConfig"]["config"]
+        .as_str()
+        .expect("codex config should be a string");
+    assert!(config.contains("goals = true"), "{config}");
+    assert!(config.contains("name = \"OpenAI\""), "{config}");
+
+    form.close_codex_quick_config_page();
+    assert!(matches!(form.page, super::ProviderFormPage::Main));
+}
+
+#[test]
+fn provider_add_form_codex_quick_config_round_trips_from_config() {
+    let config = "model_provider = \"myco\"\nmodel = \"gpt-x\"\n\n[features]\ngoals = true\n\n[model_providers.myco]\nname = \"OpenAI\"\nbase_url = \"https://api.example.com/v1\"\nwire_api = \"responses\"\n";
+    let provider = Provider::with_id(
+        "myco".to_string(),
+        "My Codex".to_string(),
+        json!({ "config": config }),
+        None,
+    );
+
+    let form = ProviderAddFormState::from_provider(AppType::Codex, &provider);
+    assert!(form.codex_goal_mode);
+    assert!(form.codex_remote_compaction);
+    assert_eq!(form.codex_quick_config_enabled_count(), 2);
+}
+
+#[test]
+fn provider_add_form_codex_official_offers_goal_mode_only() {
+    let mut provider = Provider::with_id(
+        "official".to_string(),
+        "Codex Official".to_string(),
+        json!({ "config": "", "auth": {} }),
+        None,
+    );
+    provider.category = Some("official".to_string());
+
+    let mut form = ProviderAddFormState::from_provider(AppType::Codex, &provider);
+    assert!(form.is_codex_official_provider());
+
+    let fields = form.fields();
+    // The menu is reachable for official providers, but the custom-only Codex
+    // config rows are not.
+    assert!(fields.contains(&ProviderAddField::CodexQuickConfig));
+    assert!(!fields.contains(&ProviderAddField::CodexLocalRouting));
+    // Even for official providers the menu stays directly below the
+    // add-common-config toggle.
+    let include_common_idx = fields
+        .iter()
+        .position(|field| *field == ProviderAddField::IncludeCommonConfig)
+        .expect("common config toggle should exist");
+    let quick_config_idx = fields
+        .iter()
+        .position(|field| *field == ProviderAddField::CodexQuickConfig)
+        .expect("quick-config menu should exist");
+    assert!(
+        quick_config_idx == include_common_idx + 1,
+        "the quick-config menu should sit directly below the add-common-config toggle"
+    );
+    // Upstream shows remote compaction only for non-official providers.
+    assert_eq!(
+        form.codex_quick_config_fields(),
+        vec![ProviderAddField::CodexGoalMode]
+    );
+
+    // Goal mode is a top-level [features] setting and still persists for
+    // official providers.
+    form.toggle_codex_goal_mode();
+    let out = form.to_provider_json_value();
+    let config = out["settingsConfig"]["config"]
+        .as_str()
+        .expect("codex config should be a string");
+    assert!(config.contains("goals = true"), "{config}");
 }
 
 #[test]
@@ -940,7 +1125,7 @@ fn provider_add_form_claude_advanced_section_groups_model_fields() {
 }
 
 #[test]
-fn provider_add_form_claude_official_keeps_hide_attribution_field_visible() {
+fn provider_add_form_claude_official_keeps_quick_config_menu_visible() {
     let mut provider = Provider::with_id(
         "official".to_string(),
         "Claude Official".to_string(),
@@ -956,7 +1141,12 @@ fn provider_add_form_claude_official_keeps_hide_attribution_field_visible() {
     assert!(!fields.contains(&ProviderAddField::ClaudeApiFormat));
     assert!(!fields.contains(&ProviderAddField::ClaudeApiKey));
     assert!(!fields.contains(&ProviderAddField::ClaudeModelConfig));
-    assert!(fields.contains(&ProviderAddField::ClaudeHideAttribution));
+    // Quick-config menu (holding hide-attribution etc.) stays reachable even
+    // for official providers.
+    assert!(fields.contains(&ProviderAddField::ClaudeQuickConfig));
+    assert!(form
+        .claude_quick_config_fields()
+        .contains(&ProviderAddField::ClaudeHideAttribution));
 }
 
 #[test]
@@ -1003,6 +1193,132 @@ fn provider_add_form_claude_hide_attribution_round_trips_and_removes_when_toggle
             .as_object()
             .is_some_and(|settings| !settings.contains_key("attribution")),
         "unchecked hide attribution should remove the upstream attribution object"
+    );
+}
+
+#[test]
+fn provider_add_form_claude_teammates_writes_upstream_shape() {
+    let mut form = ProviderAddFormState::new(AppType::Claude);
+    form.id.set("p1");
+    form.name.set("Provider One");
+    form.toggle_claude_teammates();
+
+    let provider = form.to_provider_json_value();
+
+    assert_eq!(
+        provider["settingsConfig"]["env"]["CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"],
+        json!("1")
+    );
+}
+
+#[test]
+fn provider_add_form_claude_teammates_round_trips_and_removes_when_toggled_off() {
+    let provider = Provider::with_id(
+        "p1".to_string(),
+        "Provider One".to_string(),
+        json!({
+            "env": {
+                "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+            }
+        }),
+        None,
+    );
+
+    let mut form = ProviderAddFormState::from_provider(AppType::Claude, &provider);
+    assert!(form.claude_teammates);
+
+    form.toggle_claude_teammates();
+    let out = form.to_provider_json_value();
+
+    assert!(
+        out["settingsConfig"]["env"]
+            .as_object()
+            .is_some_and(|env| !env.contains_key("CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS")),
+        "unchecked teammates should remove the env flag"
+    );
+}
+
+#[test]
+fn provider_add_form_claude_tool_search_writes_upstream_shape() {
+    let mut form = ProviderAddFormState::new(AppType::Claude);
+    form.id.set("p1");
+    form.name.set("Provider One");
+    form.toggle_claude_tool_search();
+
+    let provider = form.to_provider_json_value();
+
+    assert_eq!(
+        provider["settingsConfig"]["env"]["ENABLE_TOOL_SEARCH"],
+        json!("true")
+    );
+}
+
+#[test]
+fn provider_add_form_claude_tool_search_round_trips_and_removes_when_toggled_off() {
+    let provider = Provider::with_id(
+        "p1".to_string(),
+        "Provider One".to_string(),
+        json!({
+            "env": {
+                "ENABLE_TOOL_SEARCH": "true"
+            }
+        }),
+        None,
+    );
+
+    let mut form = ProviderAddFormState::from_provider(AppType::Claude, &provider);
+    assert!(form.claude_tool_search);
+
+    form.toggle_claude_tool_search();
+    let out = form.to_provider_json_value();
+
+    assert!(
+        out["settingsConfig"]["env"]
+            .as_object()
+            .is_some_and(|env| !env.contains_key("ENABLE_TOOL_SEARCH")),
+        "unchecked tool search should remove the env flag"
+    );
+}
+
+#[test]
+fn provider_add_form_claude_disable_auto_upgrade_writes_upstream_shape() {
+    let mut form = ProviderAddFormState::new(AppType::Claude);
+    form.id.set("p1");
+    form.name.set("Provider One");
+    form.toggle_claude_disable_auto_upgrade();
+
+    let provider = form.to_provider_json_value();
+
+    assert_eq!(
+        provider["settingsConfig"]["env"]["DISABLE_AUTOUPDATER"],
+        json!("1")
+    );
+}
+
+#[test]
+fn provider_add_form_claude_disable_auto_upgrade_round_trips_and_removes_when_toggled_off() {
+    let provider = Provider::with_id(
+        "p1".to_string(),
+        "Provider One".to_string(),
+        json!({
+            "env": {
+                "DISABLE_AUTOUPDATER": "1"
+            }
+        }),
+        None,
+    );
+
+    let mut form = ProviderAddFormState::from_provider(AppType::Claude, &provider);
+    assert!(form.claude_disable_auto_upgrade);
+
+    form.toggle_claude_disable_auto_upgrade();
+    let out = form.to_provider_json_value();
+
+    assert!(
+        out["settingsConfig"]["env"]
+            .as_object()
+            .is_some_and(|env| !env.contains_key("DISABLE_AUTOUPDATER")),
+        "unchecked disable-auto-upgrade should remove the env flag"
     );
 }
 
@@ -1124,6 +1440,7 @@ fn provider_add_form_codex_template_switch_clears_local_routing_state() {
 
     assert!(!form.codex_local_routing_enabled());
     assert_eq!(form.codex_local_routing_field_idx, 0);
+    // Routing toggle off (no catalog): only the toggle row shows.
     assert_eq!(
         form.codex_local_routing_fields(),
         vec![CodexLocalRoutingField::Enabled]
@@ -1583,6 +1900,64 @@ requires_openai_auth = true
 }
 
 #[test]
+fn provider_add_form_codex_model_mapping_available_for_both_formats() {
+    let mut form = ProviderAddFormState::new(AppType::Codex);
+
+    // The routing toggle is the first field and gates everything; off by default.
+    assert_eq!(
+        form.codex_local_routing_fields(),
+        vec![CodexLocalRoutingField::Enabled]
+    );
+
+    // Enabled + Responses: model mapping only, no reasoning toggles.
+    form.codex_local_routing_enabled = true;
+    form.claude_api_format = ClaudeApiFormat::OpenAiResponses;
+    assert_eq!(
+        form.codex_local_routing_fields(),
+        vec![
+            CodexLocalRoutingField::Enabled,
+            CodexLocalRoutingField::ModelCatalog,
+        ]
+    );
+
+    // Enabled + Chat: reasoning toggles appear alongside model mapping.
+    form.claude_api_format = ClaudeApiFormat::OpenAiChat;
+    assert_eq!(
+        form.codex_local_routing_fields(),
+        vec![
+            CodexLocalRoutingField::Enabled,
+            CodexLocalRoutingField::SupportsThinking,
+            CodexLocalRoutingField::SupportsEffort,
+            CodexLocalRoutingField::ModelCatalog,
+        ]
+    );
+
+    // A native Responses provider with routing on persists its catalog.
+    let mut responses_form = ProviderAddFormState::new(AppType::Codex);
+    responses_form.id.set("custom");
+    responses_form.name.set("Custom");
+    responses_form
+        .codex_base_url
+        .set("https://api.example.com/v1");
+    responses_form.claude_api_format = ClaudeApiFormat::OpenAiResponses;
+    responses_form.codex_local_routing_enabled = true;
+    responses_form
+        .apply_codex_model_catalog_value(json!([{ "model": "MiniMax-M3" }]))
+        .expect("catalog should apply");
+    let saved = responses_form.to_provider_json_value();
+    assert_eq!(saved["meta"]["apiFormat"], "openai_responses");
+    assert_eq!(
+        saved["settingsConfig"]["modelCatalog"]["models"][0]["model"],
+        "MiniMax-M3"
+    );
+
+    // With routing off, the catalog is not persisted even if models were entered.
+    responses_form.codex_local_routing_enabled = false;
+    let saved_off = responses_form.to_provider_json_value();
+    assert!(saved_off["settingsConfig"].get("modelCatalog").is_none());
+}
+
+#[test]
 fn provider_add_form_codex_custom_includes_api_key_and_hides_advanced_fields() {
     let form = ProviderAddFormState::new(AppType::Codex);
     let fields = form.fields();
@@ -1593,11 +1968,15 @@ fn provider_add_form_codex_custom_includes_api_key_and_hides_advanced_fields() {
     );
     assert!(
         fields.contains(&ProviderAddField::CodexLocalRouting),
-        "custom Codex provider should expose Local Routing on its secondary page"
+        "custom Codex provider should expose the model-mapping secondary page"
     );
     assert!(
-        !fields.contains(&ProviderAddField::ClaudeApiFormat),
-        "custom Codex provider should not expose the old API Format selector"
+        fields.contains(&ProviderAddField::CodexAdvancedDivider),
+        "custom Codex provider should group advanced fields under a divider"
+    );
+    assert!(
+        fields.contains(&ProviderAddField::ClaudeApiFormat),
+        "custom Codex provider now exposes the upstream-format selector"
     );
     assert!(
         !fields.contains(&ProviderAddField::CodexWireApi),
@@ -1676,11 +2055,14 @@ requires_openai_auth = true
 
     let form = ProviderAddFormState::from_provider(AppType::Codex, &provider);
 
-    assert!(form.codex_local_routing_enabled());
+    // Chat format is restored (drives proxy conversion). The routing/mapping
+    // toggle stays off here since the provider carries no model catalog.
+    assert!(form.codex_is_chat_format());
+    assert!(!form.codex_local_routing_enabled());
 }
 
 #[test]
-fn provider_add_form_codex_legacy_chat_wire_api_loads_as_local_route_mapping() {
+fn provider_add_form_codex_legacy_chat_wire_api_loads_as_chat_format() {
     let provider = Provider::with_id(
         "custom".to_string(),
         "Custom".to_string(),
@@ -1705,7 +2087,9 @@ requires_openai_auth = true
         .as_str()
         .expect("Codex config should be serialized");
 
-    assert!(form.codex_local_routing_enabled());
+    // Legacy wire_api=chat → apiFormat openai_chat (proxy converts); wire_api
+    // normalizes to responses. No catalog, so the mapping toggle stays off.
+    assert!(!form.codex_local_routing_enabled());
     assert_eq!(saved["meta"]["apiFormat"], "openai_chat");
     assert!(config.contains("wire_api = \"responses\""));
     assert!(!config.contains("wire_api = \"chat\""));
@@ -1718,6 +2102,7 @@ fn provider_add_form_codex_local_routing_saves_normalized_reasoning() {
     form.name.set("Custom");
     form.codex_base_url.set("https://api.example.com/v1");
     form.claude_api_format = ClaudeApiFormat::OpenAiChat;
+    form.codex_local_routing_enabled = true;
 
     form.toggle_codex_reasoning_effort();
 
@@ -1733,7 +2118,7 @@ fn provider_add_form_codex_local_routing_saves_normalized_reasoning() {
 }
 
 #[test]
-fn provider_add_form_codex_responses_removes_reasoning_and_model_catalog() {
+fn provider_add_form_codex_responses_removes_reasoning_but_keeps_model_catalog() {
     let mut provider = Provider::with_id(
         "custom".to_string(),
         "Custom".to_string(),
@@ -1767,13 +2152,19 @@ requires_openai_auth = true
     });
 
     let mut form = ProviderAddFormState::from_provider(AppType::Codex, &provider);
-    form.toggle_codex_local_routing_enabled();
+    // Switch the upstream format to native Responses.
+    form.claude_api_format = ClaudeApiFormat::OpenAiResponses;
 
     let saved = form.to_provider_json_value();
 
     assert_eq!(saved["meta"]["apiFormat"], "openai_responses");
+    // Reasoning capability is Chat-only, so it drops on Responses...
     assert!(saved["meta"].get("codexChatReasoning").is_none());
-    assert!(saved["settingsConfig"].get("modelCatalog").is_none());
+    // ...but model mapping is decoupled and persists for native Responses.
+    let models = saved["settingsConfig"]["modelCatalog"]["models"]
+        .as_array()
+        .expect("native Responses should keep its model catalog");
+    assert_eq!(models[0]["model"], "deepseek-chat");
 }
 
 #[test]

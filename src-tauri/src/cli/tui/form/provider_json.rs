@@ -97,6 +97,30 @@ impl ProviderAddFormState {
                     );
                     env_obj.remove("ANTHROPIC_SMALL_FAST_MODEL");
                 }
+                if self.claude_teammates_touched {
+                    if self.claude_teammates {
+                        env_obj.insert(
+                            "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS".to_string(),
+                            json!("1"),
+                        );
+                    } else {
+                        env_obj.remove("CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS");
+                    }
+                }
+                if self.claude_tool_search_touched {
+                    if self.claude_tool_search {
+                        env_obj.insert("ENABLE_TOOL_SEARCH".to_string(), json!("true"));
+                    } else {
+                        env_obj.remove("ENABLE_TOOL_SEARCH");
+                    }
+                }
+                if self.claude_disable_auto_upgrade_touched {
+                    if self.claude_disable_auto_upgrade {
+                        env_obj.insert("DISABLE_AUTOUPDATER".to_string(), json!("1"));
+                    } else {
+                        env_obj.remove("DISABLE_AUTOUPDATER");
+                    }
+                }
                 settings_obj.remove("api_format");
                 settings_obj.remove("apiFormat");
                 settings_obj.remove("openrouter_compat_mode");
@@ -118,10 +142,19 @@ impl ProviderAddFormState {
                         .get("config")
                         .and_then(|value| value.as_str())
                         .unwrap_or("");
-                    let cleaned_config =
+                    let mut cleaned_config =
                         crate::codex_config::strip_codex_provider_config_text(existing_config)
                             .map_err(|_| ())
                             .unwrap_or_else(|_| existing_config.trim().to_string());
+                    // Goal mode is a top-level [features] setting, so it applies
+                    // to official providers too (remote compaction is custom-only
+                    // and its toggle is hidden here, hence not applied).
+                    if self.codex_goal_mode_touched {
+                        cleaned_config = crate::codex_config::set_codex_goal_mode(
+                            &cleaned_config,
+                            self.codex_goal_mode,
+                        );
+                    }
                     settings_obj.insert("config".to_string(), Value::String(cleaned_config));
 
                     let auth_value = settings_obj
@@ -135,8 +168,17 @@ impl ProviderAddFormState {
                     let provider_key =
                         clean_codex_provider_key(self.id.value.trim(), self.name.value.trim());
                     let base_url = self.codex_base_url.value.trim().trim_end_matches('/');
-                    let model_catalog = self.normalized_codex_model_catalog_for_save();
-                    let model = if self.codex_local_routing_enabled() && !model_catalog.is_empty() {
+                    // Model mapping (catalog) is gated by the independent
+                    // "需要本地路由映射" toggle (decoupled from the upstream
+                    // format). When on it persists for both Chat (proxy routing)
+                    // and native Responses (direct-connect catalog); its first
+                    // entry becomes the active config model.
+                    let model_catalog = if self.codex_local_routing_enabled() {
+                        self.normalized_codex_model_catalog_for_save()
+                    } else {
+                        Vec::new()
+                    };
+                    let model = if !model_catalog.is_empty() {
                         model_catalog[0]["model"].as_str().unwrap_or("gpt-5.4")
                     } else if self.codex_model.is_blank() {
                         "gpt-5.4"
@@ -158,7 +200,7 @@ impl ProviderAddFormState {
                     } else {
                         existing_config.to_string()
                     };
-                    let config_toml = update_codex_config_snippet(
+                    let mut config_toml = update_codex_config_snippet(
                         &base_config,
                         base_url,
                         model,
@@ -166,8 +208,28 @@ impl ProviderAddFormState {
                         self.codex_requires_openai_auth,
                         self.codex_env_key.value.trim(),
                     );
+                    // Quick-config toggles rewrite the config TOML in place,
+                    // mirroring upstream's CodexConfigSections. Only touched
+                    // toggles change the config so existing keys are preserved.
+                    if self.codex_goal_mode_touched {
+                        config_toml = crate::codex_config::set_codex_goal_mode(
+                            &config_toml,
+                            self.codex_goal_mode,
+                        );
+                    }
+                    if self.codex_remote_compaction_touched {
+                        // Empty fallback → the helper restores `name` to the
+                        // config's own active `model_provider` id (CC-Switch's
+                        // default name), which is correct even when the imported
+                        // config's provider id differs from our cleaned key.
+                        config_toml = crate::codex_config::set_codex_remote_compaction(
+                            &config_toml,
+                            self.codex_remote_compaction,
+                            "",
+                        );
+                    }
                     settings_obj.insert("config".to_string(), Value::String(config_toml));
-                    if self.codex_local_routing_enabled() && !model_catalog.is_empty() {
+                    if !model_catalog.is_empty() {
                         settings_obj.insert(
                             "modelCatalog".to_string(),
                             json!({ "models": model_catalog }),
@@ -593,7 +655,9 @@ impl ProviderAddFormState {
                     _ => "openai_responses",
                 };
                 meta_obj.insert("apiFormat".to_string(), json!(api_format));
-                if self.codex_local_routing_enabled() {
+                // Reasoning capability is persisted only when routing is enabled
+                // AND the upstream format is Chat (reasoning is Chat-only).
+                if self.codex_local_routing_enabled() && self.codex_is_chat_format() {
                     if let Some(reasoning) =
                         normalize_codex_chat_reasoning_for_save(&self.codex_chat_reasoning)
                     {
@@ -917,6 +981,36 @@ pub(crate) fn claude_hide_attribution_enabled(settings_config: &Value) -> bool {
 
     attribution.get("commit").and_then(Value::as_str) == Some("")
         && attribution.get("pr").and_then(Value::as_str) == Some("")
+}
+
+pub(crate) fn claude_teammates_enabled(settings_config: &Value) -> bool {
+    let Some(value) = settings_config
+        .get("env")
+        .and_then(|env| env.get("CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"))
+    else {
+        return false;
+    };
+    value.as_str() == Some("1") || value.as_i64() == Some(1)
+}
+
+pub(crate) fn claude_tool_search_enabled(settings_config: &Value) -> bool {
+    let Some(value) = settings_config
+        .get("env")
+        .and_then(|env| env.get("ENABLE_TOOL_SEARCH"))
+    else {
+        return false;
+    };
+    value.as_str() == Some("true") || value.as_str() == Some("1")
+}
+
+pub(crate) fn claude_disable_auto_upgrade_enabled(settings_config: &Value) -> bool {
+    let Some(value) = settings_config
+        .get("env")
+        .and_then(|env| env.get("DISABLE_AUTOUPDATER"))
+    else {
+        return false;
+    };
+    value.as_str() == Some("1") || value.as_i64() == Some(1)
 }
 
 pub(crate) fn should_hide_provider_field(key: &str) -> bool {

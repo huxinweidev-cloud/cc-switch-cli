@@ -20,7 +20,10 @@ pub(crate) use provider_json::strip_provider_internal_fields;
 
 pub(crate) use super::text_edit::TextInput;
 pub(crate) use codex_config::parse_codex_config_snippet;
+pub(crate) use provider_json::claude_disable_auto_upgrade_enabled;
 pub(crate) use provider_json::claude_hide_attribution_enabled;
+pub(crate) use provider_json::claude_teammates_enabled;
+pub(crate) use provider_json::claude_tool_search_enabled;
 pub(crate) use provider_json::strip_common_config_from_settings;
 pub(crate) use provider_json::{normalize_usage_interval, normalize_usage_timeout};
 pub(crate) use provider_state::resolve_provider_id_for_submit;
@@ -188,12 +191,24 @@ pub enum ProviderAddField {
     ClaudeModelConfig,
     ClaudeFallbackModel,
     ClaudeAdvancedDivider,
+    ClaudeQuickConfig,
     ClaudeHideAttribution,
+    ClaudeTeammates,
+    ClaudeToolSearch,
+    ClaudeDisableAutoUpgrade,
     CodexOAuthAccount,
     CodexFastMode,
     CodexBaseUrl,
+    // Retired from the form (matches upstream): the model is configured via the
+    // catalog / config, not a standalone row. Match arms + `codex_model` state
+    // (loaded from config, used as the serialization fallback) are kept.
+    #[allow(dead_code)]
     CodexModel,
+    CodexAdvancedDivider,
     CodexLocalRouting,
+    CodexQuickConfig,
+    CodexGoalMode,
+    CodexRemoteCompaction,
     #[allow(dead_code)]
     CodexWireApi,
     #[allow(dead_code)]
@@ -231,6 +246,8 @@ pub enum ProviderAddField {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProviderFormPage {
     Main,
+    ClaudeQuickConfig,
+    CodexQuickConfig,
     CodexLocalRouting,
     CodexModelCatalog,
     UsageQuery,
@@ -269,6 +286,7 @@ pub enum UsageQueryField {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CodexLocalRoutingField {
+    /// The "需要本地路由映射" toggle — an independent per-provider gate.
     Enabled,
     SupportsThinking,
     SupportsEffort,
@@ -303,24 +321,6 @@ pub struct CodexModelCatalogRow {
     pub model: String,
     pub display_name: String,
     pub context_window: String,
-}
-
-impl CodexModelCatalogRow {
-    pub(crate) fn summary_label(&self) -> String {
-        let model = self.model.trim();
-        let display_name = self.display_name.trim();
-        let mut label = if display_name.is_empty() || display_name == model {
-            model.to_string()
-        } else {
-            format!("{display_name} ({model})")
-        };
-
-        let context_window = codex_model_catalog_context_window_label(&self.context_window);
-        if !context_window.is_empty() {
-            label.push_str(&format!(" [{context_window}]"));
-        }
-        label
-    }
 }
 
 pub(crate) fn parse_codex_model_catalog_context_window(raw: &str) -> Option<u64> {
@@ -451,6 +451,18 @@ pub struct ProviderAddFormState {
     pub claude_opus_model: TextInput,
     pub claude_hide_attribution: bool,
     claude_hide_attribution_touched: bool,
+    pub claude_teammates: bool,
+    claude_teammates_touched: bool,
+    pub claude_tool_search: bool,
+    claude_tool_search_touched: bool,
+    pub claude_disable_auto_upgrade: bool,
+    claude_disable_auto_upgrade_touched: bool,
+    pub claude_quick_config_idx: usize,
+    pub codex_goal_mode: bool,
+    codex_goal_mode_touched: bool,
+    pub codex_remote_compaction: bool,
+    codex_remote_compaction_touched: bool,
+    pub codex_quick_config_idx: usize,
     pub codex_oauth_account_id: Option<String>,
     pub codex_fast_mode: bool,
 
@@ -462,6 +474,11 @@ pub struct ProviderAddFormState {
     pub codex_api_key: TextInput,
     pub codex_chat_reasoning: CodexChatReasoningConfig,
     pub codex_model_catalog: Vec<CodexModelCatalogRow>,
+    /// Independent "需要本地路由映射" toggle (decoupled from the upstream
+    /// format, mirroring upstream a4eb5f37). Gates model-mapping / reasoning
+    /// display and persistence; no dedicated stored field — initialized from
+    /// whether the provider already carries a catalog.
+    pub codex_local_routing_enabled: bool,
 
     pub gemini_auth_type: GeminiAuthType,
     pub gemini_api_key: TextInput,

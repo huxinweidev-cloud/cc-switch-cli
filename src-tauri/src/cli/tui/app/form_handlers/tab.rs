@@ -15,6 +15,17 @@ impl App {
 
         match form {
             FormState::ProviderAdd(provider) => {
+                if matches!(
+                    provider.page,
+                    form::ProviderFormPage::ClaudeQuickConfig
+                        | form::ProviderFormPage::CodexQuickConfig
+                ) {
+                    if is_backtab {
+                        return false;
+                    }
+                    provider.focus = FormFocus::Fields;
+                    return true;
+                }
                 if matches!(provider.page, form::ProviderFormPage::CodexLocalRouting) {
                     if is_backtab {
                         return false;

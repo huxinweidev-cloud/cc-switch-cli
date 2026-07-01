@@ -40,6 +40,8 @@ pub(crate) fn add_form_key_items(
                     }
                     Some(
                         ProviderAddField::ClaudeModelConfig
+                        | ProviderAddField::ClaudeQuickConfig
+                        | ProviderAddField::CodexQuickConfig
                         | ProviderAddField::CodexOAuthAccount
                         | ProviderAddField::CodexLocalRouting
                         | ProviderAddField::CommonSnippet
@@ -50,6 +52,11 @@ pub(crate) fn add_form_key_items(
                     Some(
                         ProviderAddField::GeminiAuthType
                         | ProviderAddField::ClaudeHideAttribution
+                        | ProviderAddField::ClaudeTeammates
+                        | ProviderAddField::ClaudeToolSearch
+                        | ProviderAddField::ClaudeDisableAutoUpgrade
+                        | ProviderAddField::CodexGoalMode
+                        | ProviderAddField::CodexRemoteCompaction
                         | ProviderAddField::CodexFastMode
                         | ProviderAddField::OpenClawApiProtocol
                         | ProviderAddField::OpenClawUserAgent
@@ -76,33 +83,50 @@ pub(crate) fn add_form_key_items(
     keys
 }
 
+pub(crate) fn quick_config_form_key_items() -> Vec<(&'static str, &'static str)> {
+    // Ctrl+S only saves from the outermost form page, so it is not advertised
+    // on this sub-page; Esc returns to the main page.
+    vec![
+        ("Esc", texts::tui_key_no()),
+        ("↑↓", texts::tui_key_select()),
+        ("Space", texts::tui_key_toggle()),
+        ("Enter", texts::tui_key_toggle()),
+    ]
+}
+
 pub(crate) fn codex_local_routing_form_key_items(
     selected_field: Option<super::form::CodexLocalRoutingField>,
 ) -> Vec<(&'static str, &'static str)> {
-    let mut keys = vec![
-        ("Ctrl+S", texts::tui_key_save()),
+    // Ctrl+S only saves from the outermost form page, so it is not advertised
+    // on this sub-page; Esc returns to the main page.
+    if matches!(
+        selected_field,
+        Some(super::form::CodexLocalRoutingField::ModelCatalog)
+    ) {
+        // Focus is on the inline model-catalog table.
+        return vec![
+            ("Esc", texts::tui_key_no()),
+            ("↑↓", texts::tui_key_select()),
+            ("←→", texts::tui_key_select()),
+            ("Enter", texts::tui_key_edit()),
+            ("a", texts::tui_key_add()),
+            ("f", texts::tui_key_fetch_model()),
+            ("Del", texts::tui_key_delete()),
+        ];
+    }
+
+    vec![
         ("Esc", texts::tui_key_no()),
         ("↑↓", texts::tui_key_select()),
-    ];
-
-    let enter_action = match selected_field {
-        Some(super::form::CodexLocalRoutingField::ModelCatalog) => texts::tui_key_open(),
-        Some(
-            super::form::CodexLocalRoutingField::Enabled
-            | super::form::CodexLocalRoutingField::SupportsThinking
-            | super::form::CodexLocalRoutingField::SupportsEffort,
-        ) => texts::tui_key_toggle(),
-        None => texts::tui_key_toggle(),
-    };
-    keys.push(("Enter", enter_action));
-    keys
+        ("Enter", texts::tui_key_toggle()),
+    ]
 }
 
 pub(crate) fn codex_model_catalog_form_key_items(
     has_rows: bool,
 ) -> Vec<(&'static str, &'static str)> {
+    // Ctrl+S only saves from the outermost form page (not this sub-page).
     let mut keys = vec![
-        ("Ctrl+S", texts::tui_key_save()),
         ("Esc", texts::tui_key_no()),
         ("f", texts::tui_key_fetch_model()),
         ("+", texts::tui_key_add()),
@@ -124,10 +148,8 @@ pub(crate) fn usage_query_form_key_items(
     selected_field: Option<super::form::UsageQueryField>,
     extractor_available: bool,
 ) -> Vec<(&'static str, &'static str)> {
-    let mut keys = vec![
-        ("Ctrl+S", texts::tui_key_save()),
-        ("Esc", texts::tui_key_no()),
-    ];
+    // Ctrl+S only saves from the outermost form page (not this sub-page).
+    let mut keys = vec![("Esc", texts::tui_key_no())];
     if extractor_available {
         keys.insert(0, ("Tab", texts::tui_key_focus()));
     }

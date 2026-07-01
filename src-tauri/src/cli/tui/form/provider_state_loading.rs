@@ -1,7 +1,8 @@
 use super::codex_config::parse_codex_config_snippet;
 use super::provider_state::codex_model_catalog_row_from_value;
 use super::{
-    claude_hide_attribution_enabled, detect_balance_provider_for_usage_query,
+    claude_disable_auto_upgrade_enabled, claude_hide_attribution_enabled, claude_teammates_enabled,
+    claude_tool_search_enabled, detect_balance_provider_for_usage_query,
     detect_coding_plan_provider_for_usage_query, ClaudeApiFormat, CodexWireApi,
     ProviderAddFormState, UsageQueryTemplate, OPENCLAW_DEFAULT_API_PROTOCOL,
 };
@@ -88,6 +89,10 @@ fn populate_claude_form(form: &mut ProviderAddFormState, provider: &Provider) {
         &provider.settings_config,
     );
     form.claude_hide_attribution = claude_hide_attribution_enabled(&provider.settings_config);
+    form.claude_teammates = claude_teammates_enabled(&provider.settings_config);
+    form.claude_tool_search = claude_tool_search_enabled(&provider.settings_config);
+    form.claude_disable_auto_upgrade =
+        claude_disable_auto_upgrade_enabled(&provider.settings_config);
     if provider
         .meta
         .as_ref()
@@ -191,6 +196,9 @@ fn populate_codex_form(form: &mut ProviderAddFormState, provider: &Provider) {
         if let Some(env_key) = parsed.env_key {
             form.codex_env_key.set(env_key);
         }
+        form.codex_goal_mode = crate::codex_config::is_codex_goal_mode_enabled(config);
+        form.codex_remote_compaction =
+            crate::codex_config::is_codex_remote_compaction_enabled(config);
     }
     if let Some(auth) = provider
         .settings_config
@@ -220,6 +228,9 @@ fn populate_codex_form(form: &mut ProviderAddFormState, provider: &Provider) {
                 .collect()
         })
         .unwrap_or_default();
+    // The routing/mapping toggle has no dedicated stored field: a provider that
+    // already carries a catalog is treated as having local routing enabled.
+    form.codex_local_routing_enabled = !form.codex_model_catalog.is_empty();
 }
 
 fn populate_gemini_form(form: &mut ProviderAddFormState, provider: &Provider) {

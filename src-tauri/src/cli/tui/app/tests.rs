@@ -2008,37 +2008,6 @@ mod tests {
     }
 
     #[test]
-    fn providers_enter_key_opens_detail() {
-        let mut app = App::new(Some(AppType::Claude));
-        app.route = Route::Providers;
-        app.focus = Focus::Content;
-
-        let mut data = UiData::default();
-        data.providers.rows.push(super::super::data::ProviderRow {
-            id: "p1".to_string(),
-            provider: crate::provider::Provider::with_id(
-                "p1".to_string(),
-                "Provider One".to_string(),
-                json!({"env":{"ANTHROPIC_BASE_URL":"https://example.com"}}),
-                None,
-            ),
-            api_url: Some("https://example.com".to_string()),
-            is_current: false,
-            is_in_config: true,
-            is_saved: true,
-            is_default_model: false,
-            primary_model_id: None,
-            default_model_id: None,
-        });
-
-        let action = app.on_key(key(KeyCode::Enter), &data);
-        assert!(matches!(
-            action,
-            Action::SwitchRoute(Route::ProviderDetail { id }) if id == "p1"
-        ));
-    }
-
-    #[test]
     fn providers_enter_key_imports_current_config_when_empty() {
         let mut app = App::new(Some(AppType::Claude));
         app.route = Route::Providers;
@@ -2884,426 +2853,6 @@ mod tests {
             Action::ProviderSetDefaultModel { provider_id, model_id }
                 if provider_id == "p1" && model_id == "primary-model"
         ));
-    }
-
-    #[test]
-    fn provider_detail_c_key_is_noop() {
-        let mut app = App::new(Some(AppType::Claude));
-        app.route = Route::ProviderDetail {
-            id: "p1".to_string(),
-        };
-        app.focus = Focus::Content;
-
-        let mut data = UiData::default();
-        data.providers.rows.push(claude_provider_row("p1"));
-
-        let action = app.on_key(key(KeyCode::Char('c')), &data);
-        assert!(matches!(action, Action::None));
-        assert!(matches!(app.overlay, Overlay::None));
-    }
-
-    #[test]
-    fn provider_detail_t_key_opens_test_menu() {
-        let mut app = App::new(Some(AppType::Claude));
-        app.route = Route::ProviderDetail {
-            id: "p1".to_string(),
-        };
-        app.focus = Focus::Content;
-
-        let mut data = UiData::default();
-        data.providers.rows.push(claude_provider_row("p1"));
-
-        let action = app.on_key(key(KeyCode::Char('t')), &data);
-
-        assert!(matches!(action, Action::None));
-        assert!(matches!(
-            app.overlay,
-            Overlay::ProviderTestMenu {
-                ref provider_id,
-                selected: 0
-            } if provider_id == "p1"
-        ));
-    }
-
-    #[test]
-    fn provider_detail_c_key_is_noop_for_openclaw() {
-        let mut app = App::new(Some(AppType::OpenClaw));
-        app.route = Route::ProviderDetail {
-            id: "p1".to_string(),
-        };
-        app.focus = Focus::Content;
-
-        let mut data = UiData::default();
-        data.providers.rows.push(super::super::data::ProviderRow {
-            id: "p1".to_string(),
-            provider: crate::provider::Provider::with_id(
-                "p1".to_string(),
-                "Provider One".to_string(),
-                json!({"apiKey":"sk-demo","baseUrl":"https://example.com"}),
-                None,
-            ),
-            api_url: Some("https://example.com".to_string()),
-            is_current: false,
-            is_in_config: false,
-            is_saved: true,
-            is_default_model: false,
-            primary_model_id: Some("claude-sonnet-4".to_string()),
-            default_model_id: None,
-        });
-
-        let action = app.on_key(key(KeyCode::Char('c')), &data);
-        assert!(matches!(action, Action::None));
-        assert!(matches!(app.overlay, Overlay::None));
-    }
-
-    #[test]
-    fn openclaw_provider_detail_x_key_sets_default_model() {
-        let mut app = App::new(Some(AppType::OpenClaw));
-        app.route = Route::ProviderDetail {
-            id: "p1".to_string(),
-        };
-        app.focus = Focus::Content;
-
-        let mut data = UiData::default();
-        data.providers.rows.push(super::super::data::ProviderRow {
-            id: "p1".to_string(),
-            provider: crate::provider::Provider::with_id(
-                "p1".to_string(),
-                "Provider One".to_string(),
-                json!({"apiKey":"sk-demo","baseUrl":"https://example.com"}),
-                None,
-            ),
-            api_url: Some("https://example.com".to_string()),
-            is_current: false,
-            is_in_config: true,
-            is_saved: true,
-            is_default_model: false,
-            primary_model_id: Some("claude-sonnet-4".to_string()),
-            default_model_id: None,
-        });
-
-        let action = app.on_key(key(KeyCode::Char('x')), &data);
-        assert!(matches!(
-            action,
-            Action::ProviderSetDefaultModel { provider_id, model_id }
-                if provider_id == "p1" && model_id == "claude-sonnet-4"
-        ));
-    }
-
-    #[test]
-    fn hermes_provider_detail_x_key_enables_provider() {
-        let mut app = App::new(Some(AppType::Hermes));
-        app.route = Route::ProviderDetail {
-            id: "p1".to_string(),
-        };
-        app.focus = Focus::Content;
-
-        let mut data = UiData::default();
-        data.providers.rows.push(super::super::data::ProviderRow {
-            id: "p1".to_string(),
-            provider: crate::provider::Provider::with_id(
-                "p1".to_string(),
-                "Provider One".to_string(),
-                json!({
-                    "base_url": "https://example.com",
-                    "api_key": "sk-demo",
-                    "models": [{"id": "main"}]
-                }),
-                None,
-            ),
-            api_url: Some("https://example.com".to_string()),
-            is_current: false,
-            is_in_config: true,
-            is_saved: true,
-            is_default_model: false,
-            primary_model_id: Some("main".to_string()),
-            default_model_id: None,
-        });
-
-        let action = app.on_key(key(KeyCode::Char('x')), &data);
-        assert!(matches!(
-            action,
-            Action::ProviderSetDefaultModel { provider_id, model_id }
-                if provider_id == "p1" && model_id == "main"
-        ));
-    }
-
-    #[test]
-    fn openclaw_provider_detail_e_key_allows_editing_saved_only_provider() {
-        let mut app = App::new(Some(AppType::OpenClaw));
-        app.route = Route::ProviderDetail {
-            id: "saved-only".to_string(),
-        };
-        app.focus = Focus::Content;
-
-        let mut data = UiData::default();
-        data.providers.rows.push(super::super::data::ProviderRow {
-            id: "saved-only".to_string(),
-            provider: crate::provider::Provider::with_id(
-                "saved-only".to_string(),
-                "Saved Only".to_string(),
-                json!({"apiKey":"sk-demo","baseUrl":"https://example.com"}),
-                None,
-            ),
-            api_url: Some("https://example.com".to_string()),
-            is_current: false,
-            is_in_config: false,
-            is_saved: true,
-            is_default_model: false,
-            primary_model_id: Some("saved-model".to_string()),
-            default_model_id: None,
-        });
-
-        let action = app.on_key(key(KeyCode::Char('e')), &data);
-        assert!(matches!(action, Action::None));
-        assert!(
-            app.form.is_some(),
-            "saved-only provider should open edit form"
-        );
-        assert!(app.toast.is_none(), "saved-only edit should not be blocked");
-    }
-
-    #[test]
-    fn hermes_provider_detail_blocks_read_only_edit() {
-        let mut app = App::new(Some(AppType::Hermes));
-        app.route = Route::ProviderDetail {
-            id: "remote".to_string(),
-        };
-        app.focus = Focus::Content;
-
-        let mut data = UiData::default();
-        data.providers.rows.push(super::super::data::ProviderRow {
-            id: "remote".to_string(),
-            provider: crate::provider::Provider::with_id(
-                "remote".to_string(),
-                "Remote".to_string(),
-                json!({
-                    "_cc_source": crate::hermes_config::PROVIDER_SOURCE_DICT,
-                    "base_url": "https://example.com",
-                    "models": [{"id": "main"}]
-                }),
-                None,
-            ),
-            api_url: Some("https://example.com".to_string()),
-            is_current: true,
-            is_in_config: true,
-            is_saved: true,
-            is_default_model: true,
-            primary_model_id: Some("main".to_string()),
-            default_model_id: None,
-        });
-
-        let action = app.on_key(key(KeyCode::Char('e')), &data);
-        assert!(matches!(action, Action::None));
-        assert!(
-            app.form.is_none(),
-            "read-only provider should not open edit form"
-        );
-        assert!(matches!(
-            app.toast.as_ref(),
-            Some(toast)
-                if toast.kind == ToastKind::Info
-                    && toast.message == texts::tui_toast_provider_managed_by_hermes()
-        ));
-    }
-
-    #[test]
-    fn openclaw_provider_detail_x_key_can_reset_default_back_to_primary_model() {
-        let mut app = App::new(Some(AppType::OpenClaw));
-        app.route = Route::ProviderDetail {
-            id: "p1".to_string(),
-        };
-        app.focus = Focus::Content;
-
-        let mut data = UiData::default();
-        data.providers.rows.push(super::super::data::ProviderRow {
-            id: "p1".to_string(),
-            provider: crate::provider::Provider::with_id(
-                "p1".to_string(),
-                "Provider One".to_string(),
-                json!({"apiKey":"sk-demo","baseUrl":"https://example.com"}),
-                None,
-            ),
-            api_url: Some("https://example.com".to_string()),
-            is_current: false,
-            is_in_config: true,
-            is_saved: true,
-            is_default_model: true,
-            primary_model_id: Some("primary-model".to_string()),
-            default_model_id: Some("fallback-model".to_string()),
-        });
-
-        let action = app.on_key(key(KeyCode::Char('x')), &data);
-        assert!(matches!(
-            action,
-            Action::ProviderSetDefaultModel { provider_id, model_id }
-                if provider_id == "p1" && model_id == "primary-model"
-        ));
-    }
-
-    #[test]
-    fn openclaw_provider_detail_x_key_reapplies_primary_default_to_rebuild_fallbacks() {
-        let mut app = App::new(Some(AppType::OpenClaw));
-        app.route = Route::ProviderDetail {
-            id: "p1".to_string(),
-        };
-        app.focus = Focus::Content;
-
-        let mut data = UiData::default();
-        data.providers.rows.push(super::super::data::ProviderRow {
-            id: "p1".to_string(),
-            provider: crate::provider::Provider::with_id(
-                "p1".to_string(),
-                "Provider One".to_string(),
-                json!({"apiKey":"sk-demo","baseUrl":"https://example.com"}),
-                None,
-            ),
-            api_url: Some("https://example.com".to_string()),
-            is_current: false,
-            is_in_config: true,
-            is_saved: true,
-            is_default_model: true,
-            primary_model_id: Some("primary-model".to_string()),
-            default_model_id: Some("primary-model".to_string()),
-        });
-
-        let action = app.on_key(key(KeyCode::Char('x')), &data);
-        assert!(matches!(
-            action,
-            Action::ProviderSetDefaultModel { provider_id, model_id }
-                if provider_id == "p1" && model_id == "primary-model"
-        ));
-    }
-
-    #[test]
-    fn openclaw_provider_detail_s_key_allows_removing_fallback_only_default_provider() {
-        let mut app = App::new(Some(AppType::OpenClaw));
-        app.route = Route::ProviderDetail {
-            id: "p2".to_string(),
-        };
-        app.focus = Focus::Content;
-
-        let mut data = UiData::default();
-        data.providers.rows.push(super::super::data::ProviderRow {
-            id: "p2".to_string(),
-            provider: crate::provider::Provider::with_id(
-                "p2".to_string(),
-                "Provider Two".to_string(),
-                json!({"apiKey":"sk-demo","baseUrl":"https://example.com"}),
-                None,
-            ),
-            api_url: Some("https://example.com".to_string()),
-            is_current: false,
-            is_in_config: true,
-            is_saved: true,
-            is_default_model: false,
-            primary_model_id: Some("shared-model".to_string()),
-            default_model_id: Some("shared-model".to_string()),
-        });
-
-        let action = app.on_key(key(KeyCode::Char('s')), &data);
-        assert!(matches!(action, Action::None));
-        assert_provider_remove_confirm(&app, "p2", "Provider Two");
-        assert!(app.toast.is_none());
-    }
-
-    #[test]
-    fn openclaw_provider_detail_s_key_blocks_removing_primary_default_provider() {
-        let mut app = App::new(Some(AppType::OpenClaw));
-        app.route = Route::ProviderDetail {
-            id: "p1".to_string(),
-        };
-        app.focus = Focus::Content;
-
-        let mut data = UiData::default();
-        data.providers.rows.push(super::super::data::ProviderRow {
-            id: "p1".to_string(),
-            provider: crate::provider::Provider::with_id(
-                "p1".to_string(),
-                "Provider One".to_string(),
-                json!({"apiKey":"sk-demo","baseUrl":"https://example.com"}),
-                None,
-            ),
-            api_url: Some("https://example.com".to_string()),
-            is_current: false,
-            is_in_config: true,
-            is_saved: true,
-            is_default_model: true,
-            primary_model_id: Some("primary-model".to_string()),
-            default_model_id: Some("primary-model".to_string()),
-        });
-
-        let action = app.on_key(key(KeyCode::Char('s')), &data);
-        assert!(matches!(action, Action::None));
-        assert!(app.toast.is_some());
-    }
-
-    #[test]
-    fn openclaw_provider_detail_x_key_promotes_fallback_only_provider_even_when_model_matches_primary(
-    ) {
-        let mut app = App::new(Some(AppType::OpenClaw));
-        app.route = Route::ProviderDetail {
-            id: "p2".to_string(),
-        };
-        app.focus = Focus::Content;
-
-        let mut data = UiData::default();
-        data.providers.rows.push(super::super::data::ProviderRow {
-            id: "p2".to_string(),
-            provider: crate::provider::Provider::with_id(
-                "p2".to_string(),
-                "Provider Two".to_string(),
-                json!({"apiKey":"sk-demo","baseUrl":"https://example.com"}),
-                None,
-            ),
-            api_url: Some("https://example.com".to_string()),
-            is_current: false,
-            is_in_config: true,
-            is_saved: true,
-            is_default_model: false,
-            primary_model_id: Some("shared-model".to_string()),
-            default_model_id: Some("shared-model".to_string()),
-        });
-
-        let action = app.on_key(key(KeyCode::Char('x')), &data);
-        assert!(matches!(
-            action,
-            Action::ProviderSetDefaultModel { provider_id, model_id }
-                if provider_id == "p2" && model_id == "shared-model"
-        ));
-    }
-
-    #[test]
-    fn provider_detail_s_key_triggers_switch_action_and_enter_is_noop() {
-        let mut app = App::new(Some(AppType::Claude));
-        app.route = Route::ProviderDetail {
-            id: "p1".to_string(),
-        };
-        app.focus = Focus::Content;
-
-        let mut data = UiData::default();
-        data.providers.rows.push(super::super::data::ProviderRow {
-            id: "p1".to_string(),
-            provider: crate::provider::Provider::with_id(
-                "p1".to_string(),
-                "Provider One".to_string(),
-                json!({"env":{"ANTHROPIC_BASE_URL":"https://example.com"}}),
-                None,
-            ),
-            api_url: Some("https://example.com".to_string()),
-            is_current: false,
-            is_in_config: true,
-            is_saved: true,
-            is_default_model: false,
-            primary_model_id: None,
-            default_model_id: None,
-        });
-
-        let enter_action = app.on_key(key(KeyCode::Enter), &data);
-        assert!(matches!(enter_action, Action::None));
-
-        let action = app.on_key(key(KeyCode::Char('s')), &data);
-        assert!(matches!(action, Action::ProviderSwitch { id } if id == "p1"));
     }
 
     #[test]
@@ -4210,43 +3759,6 @@ mod tests {
                 .content,
             "# Existing prompt"
         );
-    }
-
-    #[test]
-    fn back_from_provider_detail_returns_to_providers() {
-        let mut app = App::new(Some(AppType::Claude));
-        app.route = Route::Providers;
-        app.focus = Focus::Content;
-
-        let mut data = UiData::default();
-        data.providers.rows.push(super::super::data::ProviderRow {
-            id: "p1".to_string(),
-            provider: crate::provider::Provider::with_id(
-                "p1".to_string(),
-                "Provider One".to_string(),
-                json!({"env":{"ANTHROPIC_BASE_URL":"https://example.com"}}),
-                None,
-            ),
-            api_url: Some("https://example.com".to_string()),
-            is_current: false,
-            is_in_config: true,
-            is_saved: true,
-            is_default_model: false,
-            primary_model_id: None,
-            default_model_id: None,
-        });
-
-        assert!(matches!(
-            app.on_key(key(KeyCode::Enter), &data),
-            Action::SwitchRoute(Route::ProviderDetail { .. })
-        ));
-        assert!(matches!(app.route, Route::ProviderDetail { .. }));
-
-        assert!(matches!(
-            app.on_key(key(KeyCode::Esc), &data),
-            Action::SwitchRoute(Route::Providers)
-        ));
-        assert_eq!(app.route, Route::Providers);
     }
 
     #[test]
@@ -12413,7 +11925,7 @@ mod tests {
     }
 
     #[test]
-    fn provider_codex_local_routing_toggle_warns_when_proxy_not_enabled() {
+    fn provider_codex_upstream_format_chat_warns_when_proxy_not_enabled() {
         let mut app = App::new(Some(AppType::Codex));
         app.route = Route::Providers;
         app.focus = Focus::Content;
@@ -12429,14 +11941,15 @@ mod tests {
             form.field_idx = form
                 .fields()
                 .iter()
-                .position(|field| *field == ProviderAddField::CodexLocalRouting)
-                .expect("Codex local routing field should exist");
+                .position(|field| *field == ProviderAddField::ClaudeApiFormat)
+                .expect("Codex upstream-format field should exist");
         } else {
             panic!("expected ProviderAdd form");
         }
 
-        app.on_key(key(KeyCode::Enter), &data);
-        let action = app.on_key(key(KeyCode::Enter), &data);
+        app.on_key(key(KeyCode::Enter), &data); // open upstream-format picker
+        app.on_key(key(KeyCode::Down), &data); // move to Chat Completions
+        let action = app.on_key(key(KeyCode::Enter), &data); // select Chat
 
         assert!(matches!(action, Action::None));
         assert!(matches!(
@@ -12454,7 +11967,7 @@ mod tests {
     }
 
     #[test]
-    fn provider_codex_local_routing_toggle_does_not_warn_when_proxy_routes_current_app() {
+    fn provider_codex_upstream_format_chat_does_not_warn_when_proxy_routes_current_app() {
         let mut app = App::new(Some(AppType::Codex));
         app.route = Route::Providers;
         app.focus = Focus::Content;
@@ -12473,14 +11986,15 @@ mod tests {
             form.field_idx = form
                 .fields()
                 .iter()
-                .position(|field| *field == ProviderAddField::CodexLocalRouting)
-                .expect("Codex local routing field should exist");
+                .position(|field| *field == ProviderAddField::ClaudeApiFormat)
+                .expect("Codex upstream-format field should exist");
         } else {
             panic!("expected ProviderAdd form");
         }
 
-        app.on_key(key(KeyCode::Enter), &data);
-        let action = app.on_key(key(KeyCode::Enter), &data);
+        app.on_key(key(KeyCode::Enter), &data); // open upstream-format picker
+        app.on_key(key(KeyCode::Down), &data); // move to Chat Completions
+        let action = app.on_key(key(KeyCode::Enter), &data); // select Chat
 
         assert!(matches!(action, Action::None));
         assert!(matches!(app.overlay, Overlay::None));
@@ -12492,7 +12006,7 @@ mod tests {
     }
 
     #[test]
-    fn provider_codex_local_routing_model_catalog_opens_list_page_and_adds_models() {
+    fn provider_codex_local_routing_model_catalog_edits_inline_and_adds_models() {
         let mut app = App::new(Some(AppType::Codex));
         app.route = Route::Providers;
         app.focus = Focus::Content;
@@ -12517,22 +12031,14 @@ mod tests {
             panic!("expected ProviderAdd form");
         }
 
-        app.on_key(key(KeyCode::Enter), &data); // open local routing page
-        app.on_key(key(KeyCode::Enter), &data); // enable local routing
-        app.on_key(key(KeyCode::Down), &data);
-        app.on_key(key(KeyCode::Down), &data);
-        app.on_key(key(KeyCode::Down), &data);
-
-        let action = app.on_key(key(KeyCode::Enter), &data);
-        assert!(matches!(action, Action::None));
+        app.on_key(key(KeyCode::Enter), &data); // open model-mapping page
+        app.on_key(key(KeyCode::Enter), &data); // toggle "需要本地路由映射" on
+                                                // Default upstream format is Responses, so once routing is on the inline
+                                                // model-catalog table sits below the toggle; Down focuses it.
+        app.on_key(key(KeyCode::Down), &data); // focus the inline catalog table
         assert!(app.editor.is_none());
-        assert!(matches!(
-            app.form,
-            Some(super::super::form::FormState::ProviderAdd(ref form))
-                if matches!(form.page, super::super::form::ProviderFormPage::CodexModelCatalog)
-        ));
 
-        app.on_key(key(KeyCode::Char('+')), &data);
+        app.on_key(key(KeyCode::Char('+')), &data); // add a model row inline
         assert!(matches!(
             app.overlay,
             Overlay::TextInput(TextInputState {
@@ -13009,33 +12515,6 @@ mod tests {
     }
 
     #[test]
-    fn provider_detail_move_keys_do_not_move_failover_queue() {
-        let mut app = App::new(Some(AppType::Claude));
-        app.route = Route::ProviderDetail {
-            id: "p1".to_string(),
-        };
-        app.focus = Focus::Content;
-
-        let mut data = UiData::default();
-        data.providers.rows.push(failover_provider_row(
-            "p1",
-            "Provider One",
-            json!({"env":{"ANTHROPIC_BASE_URL":"https://example.com"}}),
-            true,
-            Some(0),
-        ));
-
-        assert!(matches!(
-            app.on_key(key(KeyCode::Char('<')), &data),
-            Action::None
-        ));
-        assert!(matches!(
-            app.on_key(key(KeyCode::Char('>')), &data),
-            Action::None
-        ));
-    }
-
-    #[test]
     fn failover_queue_manager_f_toggles_auto_failover() {
         let mut app = App::new(Some(AppType::Claude));
         app.overlay = Overlay::FailoverQueueManager { selected: 0 };
@@ -13155,38 +12634,6 @@ mod tests {
         assert!(matches!(
             app.overlay,
             Overlay::FailoverQueueManager { selected: 0 }
-        ));
-    }
-
-    #[test]
-    fn provider_detail_f_key_opens_failover_queue_manager_for_supported_apps() {
-        let mut app = App::new(Some(AppType::Gemini));
-        app.route = Route::ProviderDetail {
-            id: "p2".to_string(),
-        };
-        app.focus = Focus::Content;
-
-        let mut data = UiData::default();
-        data.providers.rows.push(failover_provider_row(
-            "p1",
-            "Provider One",
-            json!({"baseUrl":"https://example.com"}),
-            true,
-            Some(1),
-        ));
-        data.providers.rows.push(failover_provider_row(
-            "p2",
-            "Provider Two",
-            json!({"baseUrl":"https://example.com"}),
-            false,
-            None,
-        ));
-
-        let action = app.on_key(key(KeyCode::Char('f')), &data);
-        assert!(matches!(action, Action::None));
-        assert!(matches!(
-            app.overlay,
-            Overlay::FailoverQueueManager { selected: 1 }
         ));
     }
 
@@ -13583,7 +13030,8 @@ mod tests {
         assert!(text.contains("Help follows the focused item"), "{text}");
         assert!(text.contains("↑↓ or h/j/k/l  move"), "{text}");
         assert!(text.contains("?   toggle help"), "{text}");
-        assert!(text.contains("Providers: Enter details"), "{text}");
+        assert!(text.contains("Providers: Space switch"), "{text}");
+        assert!(!text.contains("Provider Detail:"), "{text}");
         assert!(!text.contains("点在哪"), "{text}");
         assert!(!text.contains("显示/关闭帮助"), "{text}");
     }
@@ -13630,6 +13078,22 @@ mod tests {
     }
 
     #[test]
+    fn context_help_codex_upstream_format_shows_format_hint() {
+        let _lang = use_test_language(Language::English);
+        let mut app = App::new(Some(AppType::Codex));
+        app.form = Some(FormState::ProviderAdd(ProviderAddFormState::new(
+            AppType::Codex,
+        )));
+        select_provider_field(&mut app, ProviderAddField::ClaudeApiFormat);
+
+        app.on_key(key(KeyCode::Char('?')), &UiData::default());
+        let text = help_text(&app);
+        assert!(text.contains("Upstream format"), "{text}");
+        assert!(text.contains("natively Responses API"), "{text}");
+        assert!(!text.contains("上游格式"), "{text}");
+    }
+
+    #[test]
     fn context_help_codex_local_routing_fields_follow_focus() {
         let _lang = use_test_language(Language::English);
         let mut app = App::new(Some(AppType::Codex));
@@ -13640,22 +13104,22 @@ mod tests {
 
         app.on_key(key(KeyCode::Char('?')), &UiData::default());
         let main_field = help_text(&app);
-        assert!(main_field.contains("Local Routing"), "{main_field}");
-        assert!(
-            main_field.contains("OpenAI Chat Completions"),
-            "{main_field}"
-        );
-        assert!(!main_field.contains("本地路由"), "{main_field}");
+        assert!(main_field.contains("Model mapping"), "{main_field}");
+        assert!(main_field.contains("Chat Completions"), "{main_field}");
+        assert!(main_field.contains("model-catalogs.json"), "{main_field}");
+        assert!(!main_field.contains("模型映射"), "{main_field}");
 
         app.on_key(key(KeyCode::Char('?')), &UiData::default());
         if let Some(FormState::ProviderAdd(form)) = app.form.as_mut() {
             form.open_codex_local_routing_page();
+            // Reasoning capability only shows when routing is on AND format is Chat.
+            form.claude_api_format = super::super::form::ClaudeApiFormat::OpenAiChat;
             form.toggle_codex_local_routing_enabled();
             form.codex_local_routing_field_idx = form
                 .codex_local_routing_fields()
                 .iter()
                 .position(|field| *field == CodexLocalRoutingField::SupportsEffort)
-                .expect("SupportsEffort field should be visible when local routing is enabled");
+                .expect("SupportsEffort field should be visible when routing is on and Chat");
         }
 
         app.on_key(key(KeyCode::Char('?')), &UiData::default());
@@ -14150,17 +13614,22 @@ mod tests {
             AppType::Claude,
         )));
 
-        if let Some(FormState::ProviderAdd(form)) = app.form.as_mut() {
+        // The focusable field directly above the usage-query divider (whatever
+        // the last Claude quick toggle happens to be) is our anchor.
+        let field_before_divider = {
+            let Some(FormState::ProviderAdd(form)) = app.form.as_mut() else {
+                panic!("expected ProviderAdd form");
+            };
             form.focus = FormFocus::Fields;
             form.editing = false;
             let fields = form.fields();
-            form.field_idx = fields
+            let divider_idx = fields
                 .iter()
-                .position(|field| *field == ProviderAddField::IncludeCommonConfig)
-                .expect("IncludeCommonConfig field should exist");
-        } else {
-            panic!("expected ProviderAdd form");
-        }
+                .position(|field| *field == ProviderAddField::UsageQueryDivider)
+                .expect("UsageQueryDivider field should exist");
+            form.field_idx = divider_idx - 1;
+            fields[form.field_idx]
+        };
 
         app.on_key(key(KeyCode::Down), &UiData::default());
         assert!(matches!(
@@ -14173,7 +13642,7 @@ mod tests {
         assert!(matches!(
             app.form,
             Some(FormState::ProviderAdd(ref form))
-                if form.fields().get(form.field_idx) == Some(&ProviderAddField::IncludeCommonConfig)
+                if form.fields().get(form.field_idx) == Some(&field_before_divider)
         ));
     }
 
@@ -14334,6 +13803,20 @@ mod tests {
         let action = app.on_key(key(KeyCode::Enter), &data);
         assert!(matches!(action, Action::None));
 
+        // Ctrl+S no longer saves from the usage-query sub-page; it is ignored there.
+        let ignored = app.on_key(ctrl(KeyCode::Char('s')), &data);
+        assert!(matches!(ignored, Action::None));
+        assert!(
+            matches!(
+                app.form.as_ref(),
+                Some(FormState::ProviderAdd(form))
+                    if matches!(form.page, super::super::form::ProviderFormPage::UsageQuery)
+            ),
+            "Ctrl+S on a sub-page must not close/submit the form"
+        );
+
+        // Return to the main page, then Ctrl+S saves.
+        app.on_key(key(KeyCode::Esc), &data);
         let submit = app.on_key(ctrl(KeyCode::Char('s')), &data);
         assert!(matches!(
             submit,

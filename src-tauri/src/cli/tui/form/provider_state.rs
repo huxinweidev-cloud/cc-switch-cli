@@ -154,6 +154,18 @@ impl ProviderAddFormState {
             claude_opus_model: TextInput::new(""),
             claude_hide_attribution: false,
             claude_hide_attribution_touched: false,
+            claude_teammates: false,
+            claude_teammates_touched: false,
+            claude_tool_search: false,
+            claude_tool_search_touched: false,
+            claude_disable_auto_upgrade: false,
+            claude_disable_auto_upgrade_touched: false,
+            claude_quick_config_idx: 0,
+            codex_goal_mode: false,
+            codex_goal_mode_touched: false,
+            codex_remote_compaction: false,
+            codex_remote_compaction_touched: false,
+            codex_quick_config_idx: 0,
             codex_oauth_account_id: None,
             codex_fast_mode: false,
             codex_base_url: TextInput::new(codex_defaults.0),
@@ -164,6 +176,7 @@ impl ProviderAddFormState {
             codex_api_key: TextInput::new(""),
             codex_chat_reasoning: CodexChatReasoningConfig::default(),
             codex_model_catalog: Vec::new(),
+            codex_local_routing_enabled: false,
             gemini_auth_type: GeminiAuthType::ApiKey,
             gemini_api_key: TextInput::new(""),
             gemini_base_url: TextInput::new("https://generativelanguage.googleapis.com"),
@@ -358,28 +371,30 @@ impl ProviderAddFormState {
                 if self.is_claude_codex_oauth_provider() {
                     fields.push(ProviderAddField::CodexOAuthAccount);
                     fields.push(ProviderAddField::CodexFastMode);
-                    fields.push(ProviderAddField::ClaudeHideAttribution);
                     fields.push(ProviderAddField::ClaudeAdvancedDivider);
                     fields.push(ProviderAddField::ClaudeModelConfig);
                     fields.push(ProviderAddField::ClaudeFallbackModel);
                 } else if !self.is_claude_official_provider() {
                     fields.push(ProviderAddField::ClaudeBaseUrl);
                     fields.push(ProviderAddField::ClaudeApiKey);
-                    fields.push(ProviderAddField::ClaudeHideAttribution);
                     fields.push(ProviderAddField::ClaudeAdvancedDivider);
                     fields.push(ProviderAddField::ClaudeApiFormat);
                     fields.push(ProviderAddField::ClaudeModelConfig);
                     fields.push(ProviderAddField::ClaudeFallbackModel);
-                } else {
-                    fields.push(ProviderAddField::ClaudeHideAttribution);
                 }
             }
             AppType::Codex => {
                 if !self.is_codex_official_provider() {
                     fields.push(ProviderAddField::CodexBaseUrl);
-                    fields.push(ProviderAddField::CodexModel);
-                    fields.push(ProviderAddField::CodexLocalRouting);
                     fields.push(ProviderAddField::CodexApiKey);
+                    // No standalone model field (matches upstream): the model is
+                    // configured via 模型映射 / the catalog, falling back to the
+                    // default when empty.
+                    fields.push(ProviderAddField::CodexAdvancedDivider);
+                    // Upstream format is an independent picker; local routing /
+                    // model mapping is decoupled from it.
+                    fields.push(ProviderAddField::ClaudeApiFormat);
+                    fields.push(ProviderAddField::CodexLocalRouting);
                 }
             }
             AppType::Gemini => {
@@ -420,6 +435,15 @@ impl ProviderAddFormState {
             fields.push(ProviderAddField::CommonConfigDivider);
             fields.push(ProviderAddField::CommonSnippet);
             fields.push(ProviderAddField::IncludeCommonConfig);
+        }
+        // The Claude/Codex quick toggles are collapsed into a single sub-page
+        // entry ("快捷配置菜单") that sits directly below the common-config
+        // controls. Goal mode applies to every Codex provider, so the Codex
+        // entry is present for official providers too.
+        match self.app_type {
+            AppType::Claude => fields.push(ProviderAddField::ClaudeQuickConfig),
+            AppType::Codex => fields.push(ProviderAddField::CodexQuickConfig),
+            _ => {}
         }
         fields.push(ProviderAddField::UsageQueryDivider);
         fields.push(ProviderAddField::UsageQuery);
@@ -520,12 +544,20 @@ impl ProviderAddFormState {
             ProviderAddField::CodexOAuthAccount
             | ProviderAddField::CodexFastMode
             | ProviderAddField::CodexLocalRouting
+            | ProviderAddField::CodexQuickConfig
+            | ProviderAddField::CodexGoalMode
+            | ProviderAddField::CodexRemoteCompaction
             | ProviderAddField::CodexWireApi
             | ProviderAddField::CodexRequiresOpenaiAuth
             | ProviderAddField::ClaudeApiFormat
             | ProviderAddField::ClaudeModelConfig
             | ProviderAddField::ClaudeAdvancedDivider
+            | ProviderAddField::CodexAdvancedDivider
+            | ProviderAddField::ClaudeQuickConfig
             | ProviderAddField::ClaudeHideAttribution
+            | ProviderAddField::ClaudeTeammates
+            | ProviderAddField::ClaudeToolSearch
+            | ProviderAddField::ClaudeDisableAutoUpgrade
             | ProviderAddField::GeminiAuthType
             | ProviderAddField::OpenClawApiProtocol
             | ProviderAddField::OpenClawUserAgent
@@ -574,12 +606,20 @@ impl ProviderAddFormState {
             ProviderAddField::CodexOAuthAccount
             | ProviderAddField::CodexFastMode
             | ProviderAddField::CodexLocalRouting
+            | ProviderAddField::CodexQuickConfig
+            | ProviderAddField::CodexGoalMode
+            | ProviderAddField::CodexRemoteCompaction
             | ProviderAddField::CodexWireApi
             | ProviderAddField::CodexRequiresOpenaiAuth
             | ProviderAddField::ClaudeApiFormat
             | ProviderAddField::ClaudeModelConfig
             | ProviderAddField::ClaudeAdvancedDivider
+            | ProviderAddField::CodexAdvancedDivider
+            | ProviderAddField::ClaudeQuickConfig
             | ProviderAddField::ClaudeHideAttribution
+            | ProviderAddField::ClaudeTeammates
+            | ProviderAddField::ClaudeToolSearch
+            | ProviderAddField::ClaudeDisableAutoUpgrade
             | ProviderAddField::GeminiAuthType
             | ProviderAddField::OpenClawApiProtocol
             | ProviderAddField::OpenClawUserAgent
@@ -621,6 +661,116 @@ impl ProviderAddFormState {
         }
     }
 
+    /// The four Claude quick toggles, in upstream order. They live on the
+    /// "快捷配置菜单" sub-page rather than the main field list.
+    pub fn claude_quick_config_fields(&self) -> Vec<ProviderAddField> {
+        vec![
+            ProviderAddField::ClaudeHideAttribution,
+            ProviderAddField::ClaudeTeammates,
+            ProviderAddField::ClaudeToolSearch,
+            ProviderAddField::ClaudeDisableAutoUpgrade,
+        ]
+    }
+
+    pub fn claude_quick_config_enabled_count(&self) -> usize {
+        [
+            self.claude_hide_attribution,
+            self.claude_teammates,
+            self.claude_tool_search,
+            self.claude_disable_auto_upgrade,
+        ]
+        .into_iter()
+        .filter(|enabled| *enabled)
+        .count()
+    }
+
+    pub fn selected_claude_quick_config_field(&self) -> Option<ProviderAddField> {
+        let fields = self.claude_quick_config_fields();
+        fields
+            .get(
+                self.claude_quick_config_idx
+                    .min(fields.len().saturating_sub(1)),
+            )
+            .copied()
+    }
+
+    pub fn open_claude_quick_config_page(&mut self) {
+        if !matches!(self.app_type, AppType::Claude) {
+            return;
+        }
+        self.page = ProviderFormPage::ClaudeQuickConfig;
+        self.focus = FormFocus::Fields;
+        self.editing = false;
+        let len = self.claude_quick_config_fields().len();
+        self.claude_quick_config_idx = self.claude_quick_config_idx.min(len.saturating_sub(1));
+    }
+
+    pub fn close_claude_quick_config_page(&mut self) {
+        self.page = ProviderFormPage::Main;
+        self.focus = FormFocus::Fields;
+        self.editing = false;
+    }
+
+    pub fn toggle_codex_goal_mode(&mut self) {
+        self.codex_goal_mode = !self.codex_goal_mode;
+        self.codex_goal_mode_touched = true;
+    }
+
+    pub fn toggle_codex_remote_compaction(&mut self) {
+        self.codex_remote_compaction = !self.codex_remote_compaction;
+        self.codex_remote_compaction_touched = true;
+    }
+
+    /// The Codex quick toggles, in upstream order. They live on the Codex
+    /// "快捷配置菜单" sub-page rather than the main field list. Goal mode is
+    /// available for every Codex provider; remote compaction is only meaningful
+    /// for custom providers (upstream `showRemoteCompaction = category != "official"`).
+    pub fn codex_quick_config_fields(&self) -> Vec<ProviderAddField> {
+        let mut fields = vec![ProviderAddField::CodexGoalMode];
+        if !self.is_codex_official_provider() {
+            fields.push(ProviderAddField::CodexRemoteCompaction);
+        }
+        fields
+    }
+
+    pub fn codex_quick_config_enabled_count(&self) -> usize {
+        self.codex_quick_config_fields()
+            .iter()
+            .filter(|field| match field {
+                ProviderAddField::CodexGoalMode => self.codex_goal_mode,
+                ProviderAddField::CodexRemoteCompaction => self.codex_remote_compaction,
+                _ => false,
+            })
+            .count()
+    }
+
+    pub fn selected_codex_quick_config_field(&self) -> Option<ProviderAddField> {
+        let fields = self.codex_quick_config_fields();
+        fields
+            .get(
+                self.codex_quick_config_idx
+                    .min(fields.len().saturating_sub(1)),
+            )
+            .copied()
+    }
+
+    pub fn open_codex_quick_config_page(&mut self) {
+        if !matches!(self.app_type, AppType::Codex) {
+            return;
+        }
+        self.page = ProviderFormPage::CodexQuickConfig;
+        self.focus = FormFocus::Fields;
+        self.editing = false;
+        let len = self.codex_quick_config_fields().len();
+        self.codex_quick_config_idx = self.codex_quick_config_idx.min(len.saturating_sub(1));
+    }
+
+    pub fn close_codex_quick_config_page(&mut self) {
+        self.page = ProviderFormPage::Main;
+        self.focus = FormFocus::Fields;
+        self.editing = false;
+    }
+
     pub fn open_usage_query_page(&mut self) {
         self.refresh_default_usage_query_template();
         self.page = ProviderFormPage::UsageQuery;
@@ -652,9 +802,7 @@ impl ProviderAddFormState {
     }
 
     pub fn open_codex_model_catalog_page(&mut self) {
-        if !self.codex_local_routing_enabled() {
-            return;
-        }
+        // Model mapping is available for both Chat and native Responses formats.
         self.page = ProviderFormPage::CodexModelCatalog;
         self.focus = FormFocus::Fields;
         self.editing = false;
@@ -801,13 +949,16 @@ impl ProviderAddFormState {
     }
 
     pub fn codex_local_routing_fields(&self) -> Vec<CodexLocalRoutingField> {
+        // The "需要本地路由映射" toggle gates everything (decoupled from the
+        // upstream format). When on, reasoning shows only for Chat, and the
+        // model-mapping table is available for both formats.
         let mut fields = vec![CodexLocalRoutingField::Enabled];
         if self.codex_local_routing_enabled() {
-            fields.extend([
-                CodexLocalRoutingField::SupportsThinking,
-                CodexLocalRoutingField::SupportsEffort,
-                CodexLocalRoutingField::ModelCatalog,
-            ]);
+            if self.codex_is_chat_format() {
+                fields.push(CodexLocalRoutingField::SupportsThinking);
+                fields.push(CodexLocalRoutingField::SupportsEffort);
+            }
+            fields.push(CodexLocalRoutingField::ModelCatalog);
         }
         fields
     }
@@ -823,11 +974,8 @@ impl ProviderAddFormState {
     }
 
     pub fn toggle_codex_local_routing_enabled(&mut self) {
-        self.claude_api_format = if self.codex_local_routing_enabled() {
-            ClaudeApiFormat::OpenAiResponses
-        } else {
-            ClaudeApiFormat::OpenAiChat
-        };
+        // Independent of the upstream format: just flip the routing/mapping gate.
+        self.codex_local_routing_enabled = !self.codex_local_routing_enabled;
         let len = self.codex_local_routing_fields().len();
         self.codex_local_routing_field_idx = self
             .codex_local_routing_field_idx
@@ -1337,6 +1485,21 @@ impl ProviderAddFormState {
         self.claude_hide_attribution_touched = true;
     }
 
+    pub fn toggle_claude_teammates(&mut self) {
+        self.claude_teammates = !self.claude_teammates;
+        self.claude_teammates_touched = true;
+    }
+
+    pub fn toggle_claude_tool_search(&mut self) {
+        self.claude_tool_search = !self.claude_tool_search;
+        self.claude_tool_search_touched = true;
+    }
+
+    pub fn toggle_claude_disable_auto_upgrade(&mut self) {
+        self.claude_disable_auto_upgrade = !self.claude_disable_auto_upgrade;
+        self.claude_disable_auto_upgrade_touched = true;
+    }
+
     pub fn toggle_codex_fast_mode(&mut self) {
         if self.is_claude_codex_oauth_provider() {
             self.codex_fast_mode = !self.codex_fast_mode;
@@ -1412,6 +1575,14 @@ impl ProviderAddFormState {
     }
 
     pub fn codex_local_routing_enabled(&self) -> bool {
+        matches!(self.app_type, AppType::Codex)
+            && !self.is_codex_official_provider()
+            && self.codex_local_routing_enabled
+    }
+
+    /// Whether the Codex upstream format is Chat Completions (which needs proxy
+    /// conversion). Reasoning capability is Chat-only.
+    pub fn codex_is_chat_format(&self) -> bool {
         matches!(self.app_type, AppType::Codex)
             && !self.is_codex_official_provider()
             && matches!(self.claude_api_format, ClaudeApiFormat::OpenAiChat)
@@ -1708,6 +1879,8 @@ impl ProviderAddFormState {
         if self.codex_model_catalog.is_empty() {
             self.codex_model_catalog_field = CodexModelCatalogField::Model;
         }
+        // Applying a catalog implies routing/mapping is on (mirrors load init).
+        self.codex_local_routing_enabled = !self.codex_model_catalog.is_empty();
         Ok(())
     }
 

@@ -427,6 +427,9 @@ impl ProviderAddFormState {
                     self.claude_sonnet_model = defaults.claude_sonnet_model;
                     self.claude_opus_model = defaults.claude_opus_model;
                     self.claude_hide_attribution = defaults.claude_hide_attribution;
+                    self.claude_teammates = defaults.claude_teammates;
+                    self.claude_tool_search = defaults.claude_tool_search;
+                    self.claude_disable_auto_upgrade = defaults.claude_disable_auto_upgrade;
                     self.codex_oauth_account_id = defaults.codex_oauth_account_id;
                     self.codex_fast_mode = defaults.codex_fast_mode;
                     self.codex_base_url = defaults.codex_base_url;
@@ -437,6 +440,9 @@ impl ProviderAddFormState {
                     self.codex_api_key = defaults.codex_api_key;
                     self.codex_chat_reasoning = defaults.codex_chat_reasoning;
                     self.codex_model_catalog = defaults.codex_model_catalog;
+                    self.codex_local_routing_enabled = defaults.codex_local_routing_enabled;
+                    self.codex_goal_mode = defaults.codex_goal_mode;
+                    self.codex_remote_compaction = defaults.codex_remote_compaction;
                     self.codex_local_routing_field_idx = defaults.codex_local_routing_field_idx;
                     self.codex_model_catalog_idx = defaults.codex_model_catalog_idx;
                     self.codex_model_catalog_field = defaults.codex_model_catalog_field;
@@ -488,6 +494,12 @@ impl ProviderAddFormState {
                     self.codex_fast_mode = false;
                     self.claude_hide_attribution = false;
                     self.claude_hide_attribution_touched = false;
+                    self.claude_teammates = false;
+                    self.claude_teammates_touched = false;
+                    self.claude_tool_search = false;
+                    self.claude_tool_search_touched = false;
+                    self.claude_disable_auto_upgrade = false;
+                    self.claude_disable_auto_upgrade_touched = false;
                 }
                 ProviderTemplateId::CodexOAuth => {
                     self.extra = json!({
@@ -516,6 +528,12 @@ impl ProviderAddFormState {
                     self.codex_fast_mode = false;
                     self.claude_hide_attribution = true;
                     self.claude_hide_attribution_touched = true;
+                    self.claude_teammates = false;
+                    self.claude_teammates_touched = false;
+                    self.claude_tool_search = false;
+                    self.claude_tool_search_touched = false;
+                    self.claude_disable_auto_upgrade = false;
+                    self.claude_disable_auto_upgrade_touched = false;
                 }
                 ProviderTemplateId::OpenAiOfficial => {
                     self.extra = json!({
@@ -613,6 +631,12 @@ impl ProviderAddFormState {
                     self.gemini_auth_type = GeminiAuthType::OAuth;
                 }
             };
+        }
+
+        // A preset with a model catalog implies routing/mapping is on (no
+        // dedicated stored field), matching the load-time initialization.
+        if matches!(self.app_type, AppType::Codex) {
+            self.codex_local_routing_enabled = !self.codex_model_catalog.is_empty();
         }
 
         if !self.id_is_manual && !self.name.is_blank() {
@@ -775,12 +799,17 @@ impl ProviderAddFormState {
                 }
             }
         }
+
+        if matches!(self.app_type, AppType::Codex) {
+            self.codex_local_routing_enabled = !self.codex_model_catalog.is_empty();
+        }
     }
 
     fn reset_codex_local_routing_state(&mut self) {
         self.claude_api_format = ClaudeApiFormat::OpenAiResponses;
         self.codex_chat_reasoning = CodexChatReasoningConfig::default();
         self.codex_model_catalog.clear();
+        self.codex_local_routing_enabled = false;
         self.codex_local_routing_field_idx = 0;
         self.codex_model_catalog_idx = 0;
         self.codex_model_catalog_field = CodexModelCatalogField::Model;
