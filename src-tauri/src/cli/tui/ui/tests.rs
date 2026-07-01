@@ -1143,7 +1143,7 @@ fn provider_form_fields_show_dashed_divider_before_hermes_rate_limit_delay() {
 }
 
 #[test]
-fn provider_form_renders_usage_query_entry_as_open_row() {
+fn provider_form_usage_query_entry_uses_open_hint_not_value() {
     let _lock = lock_env();
     let _no_color = EnvGuard::remove("NO_COLOR");
 
@@ -1154,12 +1154,33 @@ fn provider_form_renders_usage_query_entry_as_open_row() {
     let mut form = crate::cli::tui::form::ProviderAddFormState::new(AppType::Claude);
     form.focus = FormFocus::Fields;
     form.name.set("Demo Provider");
+
+    // The value column no longer prints the bare "open" label; it stays blank.
+    let (_label, value) = super::provider_field_label_and_value(
+        &form,
+        crate::cli::tui::form::ProviderAddField::UsageQuery,
+    );
+    assert!(
+        value.is_empty(),
+        "usage query value column should be blank, got: {value:?}"
+    );
+
+    // The open affordance moves to the help line under the table.
+    let (hint_line, _) = super::provider_field_editor_line(
+        &form,
+        Some(crate::cli::tui::form::ProviderAddField::UsageQuery),
+        80,
+    );
+    let hint: String = hint_line
+        .spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect();
+    assert!(hint.contains("open") || hint.contains("打开"), "{hint}");
+
     app.form = Some(FormState::ProviderAdd(form));
-
     let all = all_text(&render(&app, &minimal_data(&app.app_type)));
-
     assert!(all.contains("Usage Query"), "{all}");
-    assert!(all.contains("open") || all.contains("打开"), "{all}");
 }
 
 #[test]
@@ -4505,7 +4526,10 @@ fn claude_api_format_picker_overlay_is_compact_and_padded() {
 
     let theme = theme_for(&app.app_type);
     let content = super::content_pane_rect(buf.area, &theme);
-    let area = super::centered_rect_fixed(58, 10, content);
+    // Height tracks the option count (borders + key bar + gaps + one row per choice).
+    let choices = crate::cli::tui::form::ClaudeApiFormat::choices_for_app(&AppType::Claude);
+    let height = choices.len() as u16 + 5;
+    let area = super::centered_rect_fixed(58, height, content);
 
     assert_eq!(buf[(area.x, area.y)].symbol(), "┌");
     assert_eq!(

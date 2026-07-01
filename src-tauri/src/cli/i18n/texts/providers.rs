@@ -10,9 +10,17 @@ pub fn tui_claude_api_format_popup_title() -> &'static str {
 
 pub fn tui_label_claude_model_config() -> &'static str {
     if is_chinese() {
-        "Claude 模型配置"
+        "模型映射"
     } else {
-        "Claude Model Config"
+        "Model Mapping"
+    }
+}
+
+pub fn tui_label_claude_fallback_model() -> &'static str {
+    if is_chinese() {
+        "默认兜底模型"
+    } else {
+        "Default fallback model"
     }
 }
 
@@ -644,9 +652,9 @@ pub fn tui_claude_default_opus_model_label() -> &'static str {
 
 pub fn tui_claude_model_config_summary(configured_count: usize) -> String {
     if is_chinese() {
-        format!("已配置 {configured_count}/5")
+        format!("已配置 {configured_count}/4")
     } else {
-        format!("Configured {configured_count}/5")
+        format!("Configured {configured_count}/4")
     }
 }
 
@@ -655,6 +663,22 @@ pub fn tui_claude_model_config_open_hint() -> &'static str {
         "按 Enter 配置 Claude 模型"
     } else {
         "Press Enter to configure Claude models"
+    }
+}
+
+pub fn tui_form_open_editor_hint() -> &'static str {
+    if is_chinese() {
+        "按 Enter 打开编辑器"
+    } else {
+        "Press Enter to open editor"
+    }
+}
+
+pub fn tui_form_open_page_hint() -> &'static str {
+    if is_chinese() {
+        "按 Enter 打开"
+    } else {
+        "Press Enter to open"
     }
 }
 
