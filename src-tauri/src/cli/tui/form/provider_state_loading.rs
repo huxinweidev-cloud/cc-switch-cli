@@ -1,7 +1,7 @@
 use super::codex_config::parse_codex_config_snippet;
 use super::provider_state::codex_model_catalog_row_from_value;
 use super::{
-    claude_hide_attribution_enabled, claude_teammates_enabled,
+    claude_hide_attribution_enabled, claude_teammates_enabled, claude_tool_search_enabled,
     detect_balance_provider_for_usage_query, detect_coding_plan_provider_for_usage_query,
     ClaudeApiFormat, CodexWireApi, ProviderAddFormState, UsageQueryTemplate,
     OPENCLAW_DEFAULT_API_PROTOCOL,
@@ -90,6 +90,7 @@ fn populate_claude_form(form: &mut ProviderAddFormState, provider: &Provider) {
     );
     form.claude_hide_attribution = claude_hide_attribution_enabled(&provider.settings_config);
     form.claude_teammates = claude_teammates_enabled(&provider.settings_config);
+    form.claude_tool_search = claude_tool_search_enabled(&provider.settings_config);
     if provider
         .meta
         .as_ref()

@@ -107,6 +107,13 @@ impl ProviderAddFormState {
                         env_obj.remove("CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS");
                     }
                 }
+                if self.claude_tool_search_touched {
+                    if self.claude_tool_search {
+                        env_obj.insert("ENABLE_TOOL_SEARCH".to_string(), json!("true"));
+                    } else {
+                        env_obj.remove("ENABLE_TOOL_SEARCH");
+                    }
+                }
                 settings_obj.remove("api_format");
                 settings_obj.remove("apiFormat");
                 settings_obj.remove("openrouter_compat_mode");
@@ -948,6 +955,16 @@ pub(crate) fn claude_teammates_enabled(settings_config: &Value) -> bool {
         return false;
     };
     value.as_str() == Some("1") || value.as_i64() == Some(1)
+}
+
+pub(crate) fn claude_tool_search_enabled(settings_config: &Value) -> bool {
+    let Some(value) = settings_config
+        .get("env")
+        .and_then(|env| env.get("ENABLE_TOOL_SEARCH"))
+    else {
+        return false;
+    };
+    value.as_str() == Some("true") || value.as_str() == Some("1")
 }
 
 pub(crate) fn should_hide_provider_field(key: &str) -> bool {

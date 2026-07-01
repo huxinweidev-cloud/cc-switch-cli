@@ -322,6 +322,13 @@ fn provider_field_help(app_type: AppType, field: ProviderAddField) -> HelpConten
                 "Enables Claude Code's experimental Teammates (multi-agent) mode by writing env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1; turning it off removes the variable.",
             ),
         ),
+        ProviderAddField::ClaudeToolSearch => HelpContent::new(
+            texts::tui_label_claude_tool_search(),
+            help_lines(
+                "启用 Claude Code 的 Tool Search（工具搜索）能力，写入 env.ENABLE_TOOL_SEARCH=true；关闭时移除该变量。",
+                "Enables Claude Code's Tool Search capability by writing env.ENABLE_TOOL_SEARCH=true; turning it off removes the variable.",
+            ),
+        ),
         ProviderAddField::CodexOAuthAccount => HelpContent::new(
             texts::tui_label_chatgpt_account(),
             help_lines(

@@ -1862,6 +1862,14 @@ pub mod texts {
         }
     }
 
+    pub fn tui_label_claude_tool_search() -> &'static str {
+        if is_chinese() {
+            "启用 Tool Search"
+        } else {
+            "Enable Tool Search"
+        }
+    }
+
     pub fn tui_label_chatgpt_account() -> &'static str {
         if is_chinese() {
             "ChatGPT 账号"

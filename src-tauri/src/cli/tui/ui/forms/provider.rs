@@ -1217,6 +1217,7 @@ pub(crate) fn provider_field_label_and_value(
             texts::tui_label_claude_hide_attribution().to_string()
         }
         ProviderAddField::ClaudeTeammates => texts::tui_label_claude_teammates().to_string(),
+        ProviderAddField::ClaudeToolSearch => texts::tui_label_claude_tool_search().to_string(),
         ProviderAddField::CodexOAuthAccount => texts::tui_label_chatgpt_account().to_string(),
         ProviderAddField::CodexFastMode => texts::tui_label_codex_fast_mode().to_string(),
         ProviderAddField::CodexBaseUrl => texts::tui_label_base_url().to_string(),
@@ -1293,6 +1294,13 @@ pub(crate) fn provider_field_label_and_value(
         }
         ProviderAddField::ClaudeTeammates => {
             if provider.claude_teammates {
+                format!("[{}]", texts::tui_marker_active())
+            } else {
+                "[ ]".to_string()
+            }
+        }
+        ProviderAddField::ClaudeToolSearch => {
+            if provider.claude_tool_search {
                 format!("[{}]", texts::tui_marker_active())
             } else {
                 "[ ]".to_string()
@@ -1416,6 +1424,16 @@ pub(crate) fn provider_field_editor_line(
                     "env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = {}",
                     if provider.claude_teammates {
                         "\"1\""
+                    } else {
+                        "<unset>"
+                    }
+                )
+            }
+            ProviderAddField::ClaudeToolSearch => {
+                format!(
+                    "env.ENABLE_TOOL_SEARCH = {}",
+                    if provider.claude_tool_search {
+                        "\"true\""
                     } else {
                         "<unset>"
                     }

@@ -320,6 +320,13 @@ impl App {
                 provider.toggle_claude_teammates();
                 Action::None
             }
+            ProviderAddField::ClaudeToolSearch => {
+                let Some(FormState::ProviderAdd(provider)) = self.form.as_mut() else {
+                    return Action::None;
+                };
+                provider.toggle_claude_tool_search();
+                Action::None
+            }
             ProviderAddField::CodexOAuthAccount => {
                 if matches!(key.code, KeyCode::Enter) {
                     let selected = self
