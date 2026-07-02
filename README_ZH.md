@@ -2,7 +2,7 @@
 
 # CC-Switch CLI
 
-[![Version](https://img.shields.io/badge/version-5.8.6-blue.svg)](https://github.com/saladday/cc-switch-cli/releases)
+[![Version](https://img.shields.io/badge/version-5.8.7-blue.svg)](https://github.com/saladday/cc-switch-cli/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/saladday/cc-switch-cli/releases)
 [![Built with Rust](https://img.shields.io/badge/built%20with-Rust-orange.svg)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
@@ -45,16 +45,34 @@
   </tr>
   <tr>
     <td width="180">
-      <a href="https://www.packyapi.com/register?aff=cc-switch-cli">
-        <img src="assets/partners/logos/packycode.png" alt="PackyCode" width="150">
+      <a href="https://s.qiniu.com/FVfiEb">
+        <img src="assets/partners/logos/qiniuyun.png" alt="七牛云AI" width="150">
       </a>
     </td>
     <td>
-      感谢 <b>PackyCode</b> 赞助本项目！<br/>
-      官网：<a href="https://www.packyapi.com">https://www.packyapi.com</a><br/>
-      CC-Switch CLI 专属优惠：通过
-      <a href="https://www.packyapi.com/register?aff=cc-switch-cli">此链接</a>
-      注册，并在充值时填写优惠码 <code>cc-switch-cli</code>，即可享受 <b>9 折优惠</b>。
+      感谢 <b>七牛云AI</b> 赞助本项目！<b>七牛云（02567.HK）</b>旗下企业级大模型 MaaS 平台，一站式调用全球 150+ 主流模型，兼容全球主流模型厂商协议，覆盖文本、图像、音频、视频、文件处理等全模态处理能力，服务超过 <b>169 万</b>企业及开发者用户。<br/>
+      专属福利：企业用户免费领 <b>1200 万 Token</b>，邀请好友最高得<b>百亿 Token</b>。通过<a href="https://s.qiniu.com/FVfiEb">此链接</a>注册领取。
+    </td>
+  </tr>
+  <tr>
+    <td width="180">
+      <a href="https://api.fenno.ai/register?redirect=/purchase?tab=subscription%26group=16&aff=Z6XB52KCVP6Y">
+        <img src="assets/partners/logos/fennoai.png" alt="Fenno.ai" width="150">
+      </a>
+    </td>
+    <td>
+      感谢 <b>Fenno.ai</b> 赞助本项目！Fenno.ai 是一家稳定、高效的 API 中转服务商，目前主要提供 Codex 中转服务，兼容 OpenAI 及 Anthropic 协议，可灵活接入 Codex、Claude Code、OpenCode 等主流编程工具，可稳定支撑千亿 Token/日的企业级调用需求，支持国内及海外主体公对公结算、开票。<br/>
+      Fenno.ai 为 CC-Switch CLI 用户提供了专属福利：通过<a href="https://api.fenno.ai/register?redirect=/purchase?tab=subscription%26group=16&aff=Z6XB52KCVP6Y">此链接</a>即可订阅 <b>9.9 元/150 刀额度</b>的超值 Coding Plan，邀请好友最高可享 <b>20% 奖励</b>，多邀多得！
+    </td>
+  </tr>
+  <tr>
+    <td width="180">
+      <a href="https://runapi.co/register?aff=kTlB">
+        <img src="assets/partners/logos/runapi.png" alt="RunAPI" width="150">
+      </a>
+    </td>
+    <td>
+      感谢 <b>RunAPI</b> 赞助本项目！<a href="https://runapi.co/register?aff=kTlB"><b>RunAPI</b></a> 是高效稳定的 API 平台和 OpenRouter 平替，一个 API Key 即可访问 OpenAI、Claude、Gemini、DeepSeek、Grok 等 150+ 主流模型，低至 1 折，极其稳定，可以无缝兼容 Claude Code、OpenClaw 等工具。cc-switch-cli 用户专属福利：注册联系管理员即可领取 ￥7 的免费额度。
     </td>
   </tr>
   <tr>
@@ -69,12 +87,16 @@
   </tr>
   <tr>
     <td width="180">
-      <a href="https://runapi.co/register?aff=kTlB">
-        <img src="assets/partners/logos/runapi.png" alt="RunAPI" width="150">
+      <a href="https://www.packyapi.com/register?aff=cc-switch-cli">
+        <img src="assets/partners/logos/packycode.png" alt="PackyCode" width="150">
       </a>
     </td>
     <td>
-      感谢 <b>RunAPI</b> 赞助本项目！<a href="https://runapi.co/register?aff=kTlB"><b>RunAPI</b></a> 是高效稳定的 API 平台和 OpenRouter 平替，一个 API Key 即可访问 OpenAI、Claude、Gemini、DeepSeek、Grok 等 150+ 主流模型，低至 1 折，极其稳定，可以无缝兼容 Claude Code、OpenClaw 等工具。cc-switch-cli 用户专属福利：注册联系管理员即可领取 ￥7 的免费额度。
+      感谢 <b>PackyCode</b> 赞助本项目！<br/>
+      官网：<a href="https://www.packyapi.com">https://www.packyapi.com</a><br/>
+      CC-Switch CLI 专属优惠：通过
+      <a href="https://www.packyapi.com/register?aff=cc-switch-cli">此链接</a>
+      注册，并在充值时填写优惠码 <code>cc-switch-cli</code>，即可享受 <b>9 折优惠</b>。
     </td>
   </tr>
   <tr>

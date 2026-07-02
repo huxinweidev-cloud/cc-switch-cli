@@ -30,6 +30,8 @@ pub enum ProviderAddTemplate {
     Aicodemirror,
     Cubence,
     Dds,
+    Qiniu,
+    Fenno,
     Deepseek,
 }
 
@@ -47,6 +49,8 @@ impl ProviderAddTemplate {
             Self::Aicodemirror => "aicodemirror",
             Self::Cubence => "cubence",
             Self::Dds => "dds",
+            Self::Qiniu => "qiniu",
+            Self::Fenno => "fenno",
             Self::Deepseek => "deepseek",
         }
     }
@@ -64,6 +68,8 @@ impl ProviderAddTemplate {
                 | Self::Aicodemirror
                 | Self::Cubence
                 | Self::Dds
+                | Self::Qiniu
+                | Self::Fenno
                 | Self::Deepseek
         )
     }
@@ -178,7 +184,7 @@ struct SponsorProviderPreset {
     hermes_base_url: &'static str,
 }
 
-const SPONSOR_PROVIDER_PRESETS: [SponsorProviderPreset; 6] = [
+const SPONSOR_PROVIDER_PRESETS: [SponsorProviderPreset; 8] = [
     SponsorProviderPreset {
         id: ProviderAddTemplate::Claudeapi,
         provider_name: "ClaudeAPI",
@@ -257,9 +263,35 @@ const SPONSOR_PROVIDER_PRESETS: [SponsorProviderPreset; 6] = [
         openclaw_base_url: "",
         hermes_base_url: "",
     },
+    SponsorProviderPreset {
+        id: ProviderAddTemplate::Qiniu,
+        provider_name: "Qiniu",
+        chip_label: "* Qiniu",
+        website_url: "https://s.qiniu.com/FVfiEb",
+        partner_promotion_key: "qiniu",
+        claude_base_url: "https://api.qnaigc.com",
+        codex_base_url: "https://api.qnaigc.com/bypass/openai/v1",
+        gemini_base_url: "https://api.qnaigc.com/bypass/vertex",
+        opencode_base_url: "https://api.qnaigc.com/v1",
+        openclaw_base_url: "https://api.qnaigc.com/v1",
+        hermes_base_url: "https://api.qnaigc.com/v1",
+    },
+    SponsorProviderPreset {
+        id: ProviderAddTemplate::Fenno,
+        provider_name: "FennoAI",
+        chip_label: "* FennoAI",
+        website_url: "https://api.fenno.ai",
+        partner_promotion_key: "fenno",
+        claude_base_url: "https://api.fenno.ai",
+        codex_base_url: "https://api.fenno.ai",
+        gemini_base_url: "",
+        opencode_base_url: "https://api.fenno.ai/v1",
+        openclaw_base_url: "https://api.fenno.ai/v1",
+        hermes_base_url: "https://api.fenno.ai/v1",
+    },
 ];
 
-const PROVIDER_TEMPLATE_CHOICES_CLAUDE: [ProviderAddTemplateChoice; 9] = [
+const PROVIDER_TEMPLATE_CHOICES_CLAUDE: [ProviderAddTemplateChoice; 11] = [
     ProviderAddTemplateChoice {
         template: ProviderAddTemplate::Custom,
         label: "Custom",
@@ -277,16 +309,24 @@ const PROVIDER_TEMPLATE_CHOICES_CLAUDE: [ProviderAddTemplateChoice; 9] = [
         label: SPONSOR_PROVIDER_PRESETS[0].chip_label,
     },
     ProviderAddTemplateChoice {
-        template: ProviderAddTemplate::Packycode,
-        label: SPONSOR_PROVIDER_PRESETS[1].chip_label,
+        template: ProviderAddTemplate::Qiniu,
+        label: SPONSOR_PROVIDER_PRESETS[6].chip_label,
+    },
+    ProviderAddTemplateChoice {
+        template: ProviderAddTemplate::Fenno,
+        label: SPONSOR_PROVIDER_PRESETS[7].chip_label,
+    },
+    ProviderAddTemplateChoice {
+        template: ProviderAddTemplate::Runapi,
+        label: SPONSOR_PROVIDER_PRESETS[3].chip_label,
     },
     ProviderAddTemplateChoice {
         template: ProviderAddTemplate::Cubence,
         label: SPONSOR_PROVIDER_PRESETS[2].chip_label,
     },
     ProviderAddTemplateChoice {
-        template: ProviderAddTemplate::Runapi,
-        label: SPONSOR_PROVIDER_PRESETS[3].chip_label,
+        template: ProviderAddTemplate::Packycode,
+        label: SPONSOR_PROVIDER_PRESETS[1].chip_label,
     },
     ProviderAddTemplateChoice {
         template: ProviderAddTemplate::Aicodemirror,
@@ -298,7 +338,7 @@ const PROVIDER_TEMPLATE_CHOICES_CLAUDE: [ProviderAddTemplateChoice; 9] = [
     },
 ];
 
-const PROVIDER_TEMPLATE_CHOICES_CODEX: [ProviderAddTemplateChoice; 8] = [
+const PROVIDER_TEMPLATE_CHOICES_CODEX: [ProviderAddTemplateChoice; 10] = [
     ProviderAddTemplateChoice {
         template: ProviderAddTemplate::Custom,
         label: "Custom",
@@ -308,16 +348,24 @@ const PROVIDER_TEMPLATE_CHOICES_CODEX: [ProviderAddTemplateChoice; 8] = [
         label: "OpenAI Official",
     },
     ProviderAddTemplateChoice {
-        template: ProviderAddTemplate::Packycode,
-        label: SPONSOR_PROVIDER_PRESETS[1].chip_label,
+        template: ProviderAddTemplate::Qiniu,
+        label: SPONSOR_PROVIDER_PRESETS[6].chip_label,
+    },
+    ProviderAddTemplateChoice {
+        template: ProviderAddTemplate::Fenno,
+        label: SPONSOR_PROVIDER_PRESETS[7].chip_label,
+    },
+    ProviderAddTemplateChoice {
+        template: ProviderAddTemplate::Runapi,
+        label: SPONSOR_PROVIDER_PRESETS[3].chip_label,
     },
     ProviderAddTemplateChoice {
         template: ProviderAddTemplate::Cubence,
         label: SPONSOR_PROVIDER_PRESETS[2].chip_label,
     },
     ProviderAddTemplateChoice {
-        template: ProviderAddTemplate::Runapi,
-        label: SPONSOR_PROVIDER_PRESETS[3].chip_label,
+        template: ProviderAddTemplate::Packycode,
+        label: SPONSOR_PROVIDER_PRESETS[1].chip_label,
     },
     ProviderAddTemplateChoice {
         template: ProviderAddTemplate::Aicodemirror,
@@ -333,7 +381,7 @@ const PROVIDER_TEMPLATE_CHOICES_CODEX: [ProviderAddTemplateChoice; 8] = [
     },
 ];
 
-const PROVIDER_TEMPLATE_CHOICES_GEMINI: [ProviderAddTemplateChoice; 5] = [
+const PROVIDER_TEMPLATE_CHOICES_GEMINI: [ProviderAddTemplateChoice; 6] = [
     ProviderAddTemplateChoice {
         template: ProviderAddTemplate::Custom,
         label: "Custom",
@@ -343,10 +391,41 @@ const PROVIDER_TEMPLATE_CHOICES_GEMINI: [ProviderAddTemplateChoice; 5] = [
         label: "Google OAuth",
     },
     ProviderAddTemplateChoice {
+        template: ProviderAddTemplate::Qiniu,
+        label: SPONSOR_PROVIDER_PRESETS[6].chip_label,
+    },
+    ProviderAddTemplateChoice {
+        template: ProviderAddTemplate::Cubence,
+        label: SPONSOR_PROVIDER_PRESETS[2].chip_label,
+    },
+    ProviderAddTemplateChoice {
         template: ProviderAddTemplate::Packycode,
         label: SPONSOR_PROVIDER_PRESETS[1].chip_label,
     },
     ProviderAddTemplateChoice {
+        template: ProviderAddTemplate::Aicodemirror,
+        label: SPONSOR_PROVIDER_PRESETS[4].chip_label,
+    },
+];
+
+const PROVIDER_TEMPLATE_CHOICES_OPENCODE: [ProviderAddTemplateChoice; 6] = [
+    ProviderAddTemplateChoice {
+        template: ProviderAddTemplate::Custom,
+        label: "Custom",
+    },
+    ProviderAddTemplateChoice {
+        template: ProviderAddTemplate::Qiniu,
+        label: SPONSOR_PROVIDER_PRESETS[6].chip_label,
+    },
+    ProviderAddTemplateChoice {
+        template: ProviderAddTemplate::Fenno,
+        label: SPONSOR_PROVIDER_PRESETS[7].chip_label,
+    },
+    ProviderAddTemplateChoice {
+        template: ProviderAddTemplate::Runapi,
+        label: SPONSOR_PROVIDER_PRESETS[3].chip_label,
+    },
+    ProviderAddTemplateChoice {
         template: ProviderAddTemplate::Cubence,
         label: SPONSOR_PROVIDER_PRESETS[2].chip_label,
     },
@@ -356,52 +435,49 @@ const PROVIDER_TEMPLATE_CHOICES_GEMINI: [ProviderAddTemplateChoice; 5] = [
     },
 ];
 
-const PROVIDER_TEMPLATE_CHOICES_OPENCODE: [ProviderAddTemplateChoice; 4] = [
+const PROVIDER_TEMPLATE_CHOICES_HERMES: [ProviderAddTemplateChoice; 5] = [
     ProviderAddTemplateChoice {
         template: ProviderAddTemplate::Custom,
         label: "Custom",
     },
     ProviderAddTemplateChoice {
-        template: ProviderAddTemplate::Cubence,
-        label: SPONSOR_PROVIDER_PRESETS[2].chip_label,
+        template: ProviderAddTemplate::Qiniu,
+        label: SPONSOR_PROVIDER_PRESETS[6].chip_label,
+    },
+    ProviderAddTemplateChoice {
+        template: ProviderAddTemplate::Fenno,
+        label: SPONSOR_PROVIDER_PRESETS[7].chip_label,
     },
     ProviderAddTemplateChoice {
         template: ProviderAddTemplate::Runapi,
         label: SPONSOR_PROVIDER_PRESETS[3].chip_label,
     },
     ProviderAddTemplateChoice {
-        template: ProviderAddTemplate::Aicodemirror,
-        label: SPONSOR_PROVIDER_PRESETS[4].chip_label,
+        template: ProviderAddTemplate::Cubence,
+        label: SPONSOR_PROVIDER_PRESETS[2].chip_label,
     },
 ];
 
-const PROVIDER_TEMPLATE_CHOICES_HERMES: [ProviderAddTemplateChoice; 3] = [
+const PROVIDER_TEMPLATE_CHOICES_OPENCLAW: [ProviderAddTemplateChoice; 6] = [
     ProviderAddTemplateChoice {
         template: ProviderAddTemplate::Custom,
         label: "Custom",
     },
     ProviderAddTemplateChoice {
-        template: ProviderAddTemplate::Cubence,
-        label: SPONSOR_PROVIDER_PRESETS[2].chip_label,
+        template: ProviderAddTemplate::Qiniu,
+        label: SPONSOR_PROVIDER_PRESETS[6].chip_label,
+    },
+    ProviderAddTemplateChoice {
+        template: ProviderAddTemplate::Fenno,
+        label: SPONSOR_PROVIDER_PRESETS[7].chip_label,
     },
     ProviderAddTemplateChoice {
         template: ProviderAddTemplate::Runapi,
         label: SPONSOR_PROVIDER_PRESETS[3].chip_label,
     },
-];
-
-const PROVIDER_TEMPLATE_CHOICES_OPENCLAW: [ProviderAddTemplateChoice; 4] = [
-    ProviderAddTemplateChoice {
-        template: ProviderAddTemplate::Custom,
-        label: "Custom",
-    },
     ProviderAddTemplateChoice {
         template: ProviderAddTemplate::Cubence,
         label: SPONSOR_PROVIDER_PRESETS[2].chip_label,
-    },
-    ProviderAddTemplateChoice {
-        template: ProviderAddTemplate::Runapi,
-        label: SPONSOR_PROVIDER_PRESETS[3].chip_label,
     },
     ProviderAddTemplateChoice {
         template: ProviderAddTemplate::Aicodemirror,
@@ -519,7 +595,9 @@ fn template_default_name(template: ProviderAddTemplate) -> Result<&'static str, 
         | ProviderAddTemplate::Runapi
         | ProviderAddTemplate::Aicodemirror
         | ProviderAddTemplate::Cubence
-        | ProviderAddTemplate::Dds => sponsor_preset(template)
+        | ProviderAddTemplate::Dds
+        | ProviderAddTemplate::Qiniu
+        | ProviderAddTemplate::Fenno => sponsor_preset(template)
             .map(|preset| preset.provider_name)
             .ok_or_else(|| unsupported_template_error(template))?,
         ProviderAddTemplate::Custom => return Err(unsupported_template_error(template)),
@@ -538,7 +616,9 @@ fn template_default_website_url(template: ProviderAddTemplate) -> Option<&'stati
         | ProviderAddTemplate::Runapi
         | ProviderAddTemplate::Aicodemirror
         | ProviderAddTemplate::Cubence
-        | ProviderAddTemplate::Dds => sponsor_preset(template).map(|preset| preset.website_url),
+        | ProviderAddTemplate::Dds
+        | ProviderAddTemplate::Qiniu
+        | ProviderAddTemplate::Fenno => sponsor_preset(template).map(|preset| preset.website_url),
         ProviderAddTemplate::Custom => None,
     }
 }
@@ -549,7 +629,9 @@ fn template_default_category(template: ProviderAddTemplate) -> Option<&'static s
         | ProviderAddTemplate::OpenaiOfficial
         | ProviderAddTemplate::GoogleOauth => Some("official"),
         ProviderAddTemplate::Deepseek => Some("cn_official"),
-        ProviderAddTemplate::Runapi => Some("aggregator"),
+        ProviderAddTemplate::Runapi | ProviderAddTemplate::Qiniu | ProviderAddTemplate::Fenno => {
+            Some("aggregator")
+        }
         ProviderAddTemplate::Custom
         | ProviderAddTemplate::CodexOauth
         | ProviderAddTemplate::Claudeapi
@@ -601,7 +683,9 @@ fn template_default_meta(
         | ProviderAddTemplate::Runapi
         | ProviderAddTemplate::Aicodemirror
         | ProviderAddTemplate::Cubence
-        | ProviderAddTemplate::Dds => sponsor_preset(template).map(|preset| {
+        | ProviderAddTemplate::Dds
+        | ProviderAddTemplate::Qiniu
+        | ProviderAddTemplate::Fenno => sponsor_preset(template).map(|preset| {
             let mut meta = ProviderMeta {
                 is_partner: Some(true),
                 partner_promotion_key: Some(preset.partner_promotion_key.to_string()),
@@ -620,6 +704,8 @@ fn template_default_icon(template: ProviderAddTemplate) -> Option<&'static str> 
     match template {
         ProviderAddTemplate::Deepseek => Some("deepseek"),
         ProviderAddTemplate::Runapi => Some("runapi"),
+        ProviderAddTemplate::Qiniu => Some("qiniu"),
+        ProviderAddTemplate::Fenno => Some("fenno"),
         ProviderAddTemplate::Custom
         | ProviderAddTemplate::ClaudeOfficial
         | ProviderAddTemplate::CodexOauth
@@ -646,7 +732,9 @@ fn template_default_icon_color(template: ProviderAddTemplate) -> Option<&'static
         | ProviderAddTemplate::Runapi
         | ProviderAddTemplate::Aicodemirror
         | ProviderAddTemplate::Cubence
-        | ProviderAddTemplate::Dds => None,
+        | ProviderAddTemplate::Dds
+        | ProviderAddTemplate::Qiniu
+        | ProviderAddTemplate::Fenno => None,
     }
 }
 
@@ -679,7 +767,9 @@ fn build_provider_template_settings_config(
         | ProviderAddTemplate::Runapi
         | ProviderAddTemplate::Aicodemirror
         | ProviderAddTemplate::Cubence
-        | ProviderAddTemplate::Dds => build_sponsor_template_settings_config(
+        | ProviderAddTemplate::Dds
+        | ProviderAddTemplate::Qiniu
+        | ProviderAddTemplate::Fenno => build_sponsor_template_settings_config(
             app_type,
             sponsor_preset(template).ok_or_else(|| unsupported_template_error(template))?,
             provider_id,
@@ -772,6 +862,82 @@ fn runapi_openclaw_models() -> Value {
     ])
 }
 
+fn qiniu_opencode_settings_config(base_url: &str) -> Result<Value, AppError> {
+    build_opencode_settings_config(
+        Some(&json!({
+            "name": "Qiniu",
+            "options": {
+                "setCacheKey": true,
+            },
+        })),
+        "@ai-sdk/openai-compatible",
+        "",
+        base_url,
+        "gpt-5.5",
+        "GPT-5.5",
+        "",
+        "",
+        None,
+    )
+}
+
+fn qiniu_hermes_models() -> Value {
+    json!([
+        {
+            "id": "gpt-5.5",
+            "name": "GPT-5.5",
+        },
+    ])
+}
+
+fn qiniu_openclaw_models() -> Value {
+    json!([
+        {
+            "id": "gpt-5.5",
+            "name": "GPT-5.5",
+            "contextWindow": 400000,
+        },
+    ])
+}
+
+fn fenno_opencode_settings_config(base_url: &str) -> Result<Value, AppError> {
+    build_opencode_settings_config(
+        Some(&json!({
+            "name": "FennoAI",
+            "options": {
+                "setCacheKey": true,
+            },
+        })),
+        "@ai-sdk/openai-compatible",
+        "",
+        base_url,
+        "gpt-5.5",
+        "GPT-5.5",
+        "",
+        "",
+        None,
+    )
+}
+
+fn fenno_hermes_models() -> Value {
+    json!([
+        {
+            "id": "gpt-5.5",
+            "name": "GPT-5.5",
+        },
+    ])
+}
+
+fn fenno_openclaw_models() -> Value {
+    json!([
+        {
+            "id": "gpt-5.5",
+            "name": "GPT-5.5",
+            "contextWindow": 400000,
+        },
+    ])
+}
+
 fn build_sponsor_template_settings_config(
     app_type: &AppType,
     preset: SponsorProviderPreset,
@@ -786,15 +952,33 @@ fn build_sponsor_template_settings_config(
         AppType::Codex => Ok(build_codex_settings_config(
             None,
             preset.codex_base_url,
-            "gpt-5.4",
+            if matches!(
+                preset.id,
+                ProviderAddTemplate::Qiniu | ProviderAddTemplate::Fenno
+            ) {
+                "gpt-5.5"
+            } else {
+                "gpt-5.4"
+            },
             "responses",
             provider_id,
         )),
-        AppType::Gemini => Ok(json!({
-            "env": {
-                "GOOGLE_GEMINI_BASE_URL": preset.gemini_base_url,
+        AppType::Gemini => {
+            if preset.id == ProviderAddTemplate::Qiniu {
+                Ok(json!({
+                    "env": {
+                        "GOOGLE_GEMINI_BASE_URL": preset.gemini_base_url,
+                        "GEMINI_MODEL": "gemini-3.1-pro-preview",
+                    }
+                }))
+            } else {
+                Ok(json!({
+                    "env": {
+                        "GOOGLE_GEMINI_BASE_URL": preset.gemini_base_url,
+                    }
+                }))
             }
-        })),
+        }
         AppType::OpenCode => {
             if preset.id == ProviderAddTemplate::Aicodemirror {
                 Ok(json!({
@@ -814,6 +998,12 @@ fn build_sponsor_template_settings_config(
             } else {
                 if preset.id == ProviderAddTemplate::Runapi {
                     return runapi_opencode_settings_config(preset.opencode_base_url);
+                }
+                if preset.id == ProviderAddTemplate::Qiniu {
+                    return qiniu_opencode_settings_config(preset.opencode_base_url);
+                }
+                if preset.id == ProviderAddTemplate::Fenno {
+                    return fenno_opencode_settings_config(preset.opencode_base_url);
                 }
                 build_opencode_settings_config(
                     None,
@@ -836,6 +1026,24 @@ fn build_sponsor_template_settings_config(
                     preset.hermes_base_url,
                     "",
                     runapi_hermes_models(),
+                    "",
+                )
+            } else if preset.id == ProviderAddTemplate::Qiniu {
+                build_hermes_settings_config(
+                    Some(&json!({ "name": "qiniu" })),
+                    crate::hermes_config::HERMES_DEFAULT_API_MODE,
+                    preset.hermes_base_url,
+                    "",
+                    qiniu_hermes_models(),
+                    "",
+                )
+            } else if preset.id == ProviderAddTemplate::Fenno {
+                build_hermes_settings_config(
+                    Some(&json!({ "name": "fenno" })),
+                    crate::hermes_config::HERMES_DEFAULT_API_MODE,
+                    preset.hermes_base_url,
+                    "",
+                    fenno_hermes_models(),
                     "",
                 )
             } else {
@@ -886,6 +1094,24 @@ fn build_sponsor_template_settings_config(
                     preset.openclaw_base_url,
                     false,
                     runapi_openclaw_models(),
+                )
+            } else if preset.id == ProviderAddTemplate::Qiniu {
+                build_openclaw_settings_config(
+                    None,
+                    crate::openclaw_config::OPENCLAW_DEFAULT_API_PROTOCOL,
+                    "",
+                    preset.openclaw_base_url,
+                    false,
+                    qiniu_openclaw_models(),
+                )
+            } else if preset.id == ProviderAddTemplate::Fenno {
+                build_openclaw_settings_config(
+                    None,
+                    crate::openclaw_config::OPENCLAW_DEFAULT_API_PROTOCOL,
+                    "",
+                    preset.openclaw_base_url,
+                    false,
+                    fenno_openclaw_models(),
                 )
             } else {
                 build_openclaw_settings_config(
@@ -1211,9 +1437,11 @@ requires_openai_auth = true
                 "Claude Official",
                 "Codex",
                 "* ClaudeAPI",
-                "* PackyCode",
-                "* Cubence",
+                "* Qiniu",
+                "* FennoAI",
                 "* RunAPI",
+                "* Cubence",
+                "* PackyCode",
                 "* AICodeMirror",
                 "* DDS",
             ]
@@ -1223,9 +1451,11 @@ requires_openai_auth = true
             vec![
                 "Custom",
                 "OpenAI Official",
-                "* PackyCode",
-                "* Cubence",
+                "* Qiniu",
+                "* FennoAI",
                 "* RunAPI",
+                "* Cubence",
+                "* PackyCode",
                 "* AICodeMirror",
                 "* DDS",
                 "DeepSeek",
@@ -1236,22 +1466,37 @@ requires_openai_auth = true
             vec![
                 "Custom",
                 "Google OAuth",
-                "* PackyCode",
+                "* Qiniu",
                 "* Cubence",
+                "* PackyCode",
                 "* AICodeMirror",
             ]
         );
         assert_eq!(
             labels(AppType::OpenCode),
-            vec!["Custom", "* Cubence", "* RunAPI", "* AICodeMirror"]
+            vec![
+                "Custom",
+                "* Qiniu",
+                "* FennoAI",
+                "* RunAPI",
+                "* Cubence",
+                "* AICodeMirror"
+            ]
         );
         assert_eq!(
             labels(AppType::Hermes),
-            vec!["Custom", "* Cubence", "* RunAPI"]
+            vec!["Custom", "* Qiniu", "* FennoAI", "* RunAPI", "* Cubence"]
         );
         assert_eq!(
             labels(AppType::OpenClaw),
-            vec!["Custom", "* Cubence", "* RunAPI", "* AICodeMirror"]
+            vec![
+                "Custom",
+                "* Qiniu",
+                "* FennoAI",
+                "* RunAPI",
+                "* Cubence",
+                "* AICodeMirror"
+            ]
         );
     }
 

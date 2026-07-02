@@ -104,9 +104,11 @@ fn provider_add_form_template_labels_follow_explicit_support_matrix() {
             "Claude Official",
             "Codex",
             "* ClaudeAPI",
-            "* PackyCode",
-            "* Cubence",
+            "* Qiniu",
+            "* FennoAI",
             "* RunAPI",
+            "* Cubence",
+            "* PackyCode",
             "* AICodeMirror",
             "* DDS",
         ]
@@ -118,9 +120,11 @@ fn provider_add_form_template_labels_follow_explicit_support_matrix() {
         vec![
             "Custom",
             "OpenAI Official",
-            "* PackyCode",
-            "* Cubence",
+            "* Qiniu",
+            "* FennoAI",
             "* RunAPI",
+            "* Cubence",
+            "* PackyCode",
             "* AICodeMirror",
             "* DDS",
             "DeepSeek",
@@ -133,8 +137,9 @@ fn provider_add_form_template_labels_follow_explicit_support_matrix() {
         vec![
             "Custom",
             "Google OAuth",
-            "* PackyCode",
+            "* Qiniu",
             "* Cubence",
+            "* PackyCode",
             "* AICodeMirror",
         ]
     );
@@ -142,7 +147,14 @@ fn provider_add_form_template_labels_follow_explicit_support_matrix() {
     let opencode_labels = ProviderAddFormState::new(AppType::OpenCode).template_labels();
     assert_eq!(
         opencode_labels,
-        vec!["Custom", "* Cubence", "* RunAPI", "* AICodeMirror"]
+        vec![
+            "Custom",
+            "* Qiniu",
+            "* FennoAI",
+            "* RunAPI",
+            "* Cubence",
+            "* AICodeMirror"
+        ]
     );
     assert!(
         !opencode_labels.contains(&"* PackyCode"),
@@ -154,12 +166,22 @@ fn provider_add_form_template_labels_follow_explicit_support_matrix() {
     );
 
     let hermes_labels = ProviderAddFormState::new(AppType::Hermes).template_labels();
-    assert_eq!(hermes_labels, vec!["Custom", "* Cubence", "* RunAPI"]);
+    assert_eq!(
+        hermes_labels,
+        vec!["Custom", "* Qiniu", "* FennoAI", "* RunAPI", "* Cubence"]
+    );
 
     let openclaw_labels = ProviderAddFormState::new(AppType::OpenClaw).template_labels();
     assert_eq!(
         openclaw_labels,
-        vec!["Custom", "* Cubence", "* RunAPI", "* AICodeMirror"]
+        vec![
+            "Custom",
+            "* Qiniu",
+            "* FennoAI",
+            "* RunAPI",
+            "* Cubence",
+            "* AICodeMirror"
+        ]
     );
     assert!(
         !openclaw_labels.contains(&"* PackyCode"),
@@ -225,6 +247,17 @@ fn cli_provider_templates_match_tui_serializer_output() {
         ),
         (AppType::OpenClaw, ProviderAddTemplate::Cubence, "* Cubence"),
         (AppType::OpenClaw, ProviderAddTemplate::Runapi, "* RunAPI"),
+        (AppType::Claude, ProviderAddTemplate::Qiniu, "* Qiniu"),
+        (AppType::Codex, ProviderAddTemplate::Qiniu, "* Qiniu"),
+        (AppType::Gemini, ProviderAddTemplate::Qiniu, "* Qiniu"),
+        (AppType::OpenCode, ProviderAddTemplate::Qiniu, "* Qiniu"),
+        (AppType::Hermes, ProviderAddTemplate::Qiniu, "* Qiniu"),
+        (AppType::OpenClaw, ProviderAddTemplate::Qiniu, "* Qiniu"),
+        (AppType::Claude, ProviderAddTemplate::Fenno, "* FennoAI"),
+        (AppType::Codex, ProviderAddTemplate::Fenno, "* FennoAI"),
+        (AppType::OpenCode, ProviderAddTemplate::Fenno, "* FennoAI"),
+        (AppType::Hermes, ProviderAddTemplate::Fenno, "* FennoAI"),
+        (AppType::OpenClaw, ProviderAddTemplate::Fenno, "* FennoAI"),
     ] {
         assert_cli_template_matches_tui_serializer(app_type, template, label);
     }
@@ -3206,7 +3239,14 @@ fn provider_add_form_opencode_exposes_supported_sponsor_presets() {
 
     assert_eq!(
         labels,
-        vec!["Custom", "* Cubence", "* RunAPI", "* AICodeMirror"]
+        vec![
+            "Custom",
+            "* Qiniu",
+            "* FennoAI",
+            "* RunAPI",
+            "* Cubence",
+            "* AICodeMirror"
+        ]
     );
     assert!(
         !labels.contains(&"* PackyCode"),
@@ -3224,7 +3264,14 @@ fn provider_add_form_openclaw_uses_dedicated_template_defs() {
 
     assert_eq!(
         openclaw_labels,
-        vec!["Custom", "* Cubence", "* RunAPI", "* AICodeMirror"]
+        vec![
+            "Custom",
+            "* Qiniu",
+            "* FennoAI",
+            "* RunAPI",
+            "* Cubence",
+            "* AICodeMirror"
+        ]
     );
     assert!(
         !std::ptr::eq(openclaw_defs, opencode_defs),

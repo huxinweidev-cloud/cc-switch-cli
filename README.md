@@ -2,7 +2,7 @@
 
 # CC-Switch CLI
 
-[![Version](https://img.shields.io/badge/version-5.8.6-blue.svg)](https://github.com/saladday/cc-switch-cli/releases)
+[![Version](https://img.shields.io/badge/version-5.8.7-blue.svg)](https://github.com/saladday/cc-switch-cli/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/saladday/cc-switch-cli/releases)
 [![Built with Rust](https://img.shields.io/badge/built%20with-Rust-orange.svg)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
@@ -49,13 +49,34 @@ This project is a **CLI fork** of [CC-Switch](https://github.com/farion1231/cc-s
   </tr>
   <tr>
     <td width="180">
-      <a href="https://www.packyapi.com/register?aff=cc-switch-cli">
-        <img src="assets/partners/logos/packycode.png" alt="PackyCode" width="150">
+      <a href="https://s.qiniu.com/FVfiEb">
+        <img src="assets/partners/logos/qiniuyun.png" alt="Qiniu Cloud AI" width="150">
       </a>
     </td>
     <td>
-      Thanks to <b>PackyCode</b> for sponsoring this project! PackyCode is a reliable and efficient API relay service provider, offering relay services for Claude Code, Codex, Gemini, and more. <br/>
-      PackyCode provides special discounts for our software users: register via <a href="https://www.packyapi.com/register?aff=cc-switch-cli">this link</a> and use promo code <code>cc-switch-cli</code> when recharging to get <b>10% off</b>.
+      Thanks to <b>Qiniu Cloud AI</b> for sponsoring this project! <b>Qiniu Cloud AI</b> is an enterprise-grade large-model MaaS platform from <b>Qiniu Cloud (HKEX: 02567)</b>, offering one-stop access to 150+ mainstream models worldwide, compatibility with the protocols of major global model vendors, and full-modality coverage across text, image, audio, video, and file processing — serving over <b>1.69 million</b> enterprise and developer users. <br/>
+      Exclusive benefits: enterprise users can claim <b>12 million free tokens</b>, and referring friends can earn up to <b>tens of billions of tokens</b>. Register via <a href="https://s.qiniu.com/FVfiEb">this link</a>.
+    </td>
+  </tr>
+  <tr>
+    <td width="180">
+      <a href="https://api.fenno.ai/register?redirect=/purchase?tab=subscription%26group=16&aff=Z6XB52KCVP6Y">
+        <img src="assets/partners/logos/fennoai.png" alt="Fenno.ai" width="150">
+      </a>
+    </td>
+    <td>
+      Thanks to <b>Fenno.ai</b> for sponsoring this project! Fenno.ai is a stable, efficient API relay provider currently focused on Codex relay. It is compatible with both the OpenAI and Anthropic protocols and plugs smoothly into mainstream coding tools such as Codex, Claude Code, and OpenCode, reliably sustaining enterprise workloads of hundreds of billions of tokens per day, with corporate (B2B) settlement and invoicing for both domestic and overseas entities. <br/>
+      Exclusive benefit for CC-Switch CLI users: register via <a href="https://api.fenno.ai/register?redirect=/purchase?tab=subscription%26group=16&aff=Z6XB52KCVP6Y">this link</a> to subscribe to a great-value Coding Plan — <b>¥9.9 for $150 of credit</b> — and earn up to a <b>20% reward</b> for referrals; the more you invite, the more you get!
+    </td>
+  </tr>
+  <tr>
+    <td width="180">
+      <a href="https://runapi.co/register?aff=kTlB">
+        <img src="assets/partners/logos/runapi.png" alt="RunAPI" width="150">
+      </a>
+    </td>
+    <td>
+      Thanks to <b>RunAPI</b> for sponsoring this project! <a href="https://runapi.co/register?aff=kTlB"><b>RunAPI</b></a> is a fast, stable API platform and OpenRouter alternative. One API key gives access to 150+ mainstream models, including OpenAI, Claude, Gemini, DeepSeek, and Grok, with prices as low as 10% of the original cost. It works with tools such as Claude Code and OpenClaw. Exclusive benefit for cc-switch-cli users: register and contact the admin to claim CNY 7 in free credits.
     </td>
   </tr>
   <tr>
@@ -70,12 +91,13 @@ This project is a **CLI fork** of [CC-Switch](https://github.com/farion1231/cc-s
   </tr>
   <tr>
     <td width="180">
-      <a href="https://runapi.co/register?aff=kTlB">
-        <img src="assets/partners/logos/runapi.png" alt="RunAPI" width="150">
+      <a href="https://www.packyapi.com/register?aff=cc-switch-cli">
+        <img src="assets/partners/logos/packycode.png" alt="PackyCode" width="150">
       </a>
     </td>
     <td>
-      Thanks to <b>RunAPI</b> for sponsoring this project! <a href="https://runapi.co/register?aff=kTlB"><b>RunAPI</b></a> is a fast, stable API platform and OpenRouter alternative. One API key gives access to 150+ mainstream models, including OpenAI, Claude, Gemini, DeepSeek, and Grok, with prices as low as 10% of the original cost. It works with tools such as Claude Code and OpenClaw. Exclusive benefit for cc-switch-cli users: register and contact the admin to claim CNY 7 in free credits.
+      Thanks to <b>PackyCode</b> for sponsoring this project! PackyCode is a reliable and efficient API relay service provider, offering relay services for Claude Code, Codex, Gemini, and more. <br/>
+      PackyCode provides special discounts for our software users: register via <a href="https://www.packyapi.com/register?aff=cc-switch-cli">this link</a> and use promo code <code>cc-switch-cli</code> when recharging to get <b>10% off</b>.
     </td>
   </tr>
   <tr>
