@@ -56,6 +56,17 @@
   </tr>
   <tr>
     <td width="180">
+      <a href="https://api.fenno.ai/register?redirect=/purchase?tab=subscription%26group=16&aff=Z6XB52KCVP6Y">
+        <img src="assets/partners/logos/fennoai.png" alt="Fenno.ai" width="150">
+      </a>
+    </td>
+    <td>
+      感谢 <b>Fenno.ai</b> 赞助本项目！Fenno.ai 是一家稳定、高效的 API 中转服务商，目前主要提供 Codex 中转服务，兼容 OpenAI 及 Anthropic 协议，可灵活接入 Codex、Claude Code、OpenCode 等主流编程工具，可稳定支撑千亿 Token/日的企业级调用需求，支持国内及海外主体公对公结算、开票。<br/>
+      Fenno.ai 为 CC-Switch CLI 用户提供了专属福利：通过<a href="https://api.fenno.ai/register?redirect=/purchase?tab=subscription%26group=16&aff=Z6XB52KCVP6Y">此链接</a>即可订阅 <b>9.9 元/150 刀额度</b>的超值 Coding Plan，邀请好友最高可享 <b>20% 奖励</b>，多邀多得！
+    </td>
+  </tr>
+  <tr>
+    <td width="180">
       <a href="https://www.packyapi.com/register?aff=cc-switch-cli">
         <img src="assets/partners/logos/packycode.png" alt="PackyCode" width="150">
       </a>

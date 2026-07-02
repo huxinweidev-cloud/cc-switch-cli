@@ -60,6 +60,17 @@ This project is a **CLI fork** of [CC-Switch](https://github.com/farion1231/cc-s
   </tr>
   <tr>
     <td width="180">
+      <a href="https://api.fenno.ai/register?redirect=/purchase?tab=subscription%26group=16&aff=Z6XB52KCVP6Y">
+        <img src="assets/partners/logos/fennoai.png" alt="Fenno.ai" width="150">
+      </a>
+    </td>
+    <td>
+      Thanks to <b>Fenno.ai</b> for sponsoring this project! Fenno.ai is a stable, efficient API relay provider currently focused on Codex relay. It is compatible with both the OpenAI and Anthropic protocols and plugs smoothly into mainstream coding tools such as Codex, Claude Code, and OpenCode, reliably sustaining enterprise workloads of hundreds of billions of tokens per day, with corporate (B2B) settlement and invoicing for both domestic and overseas entities. <br/>
+      Exclusive benefit for CC-Switch CLI users: register via <a href="https://api.fenno.ai/register?redirect=/purchase?tab=subscription%26group=16&aff=Z6XB52KCVP6Y">this link</a> to subscribe to a great-value Coding Plan — <b>¥9.9 for $150 of credit</b> — and earn up to a <b>20% reward</b> for referrals; the more you invite, the more you get!
+    </td>
+  </tr>
+  <tr>
+    <td width="180">
       <a href="https://www.packyapi.com/register?aff=cc-switch-cli">
         <img src="assets/partners/logos/packycode.png" alt="PackyCode" width="150">
       </a>

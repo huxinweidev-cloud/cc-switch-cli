@@ -62,7 +62,7 @@ impl SponsorProviderPreset {
     }
 }
 
-static SPONSOR_PROVIDER_PRESETS: [SponsorProviderPreset; 7] = [
+static SPONSOR_PROVIDER_PRESETS: [SponsorProviderPreset; 8] = [
     SponsorProviderPreset {
         id: "claudeapi",
         provider_name: "ClaudeAPI",
@@ -168,11 +168,27 @@ static SPONSOR_PROVIDER_PRESETS: [SponsorProviderPreset; 7] = [
         openclaw_base_url: "https://api.qnaigc.com/v1",
         hermes_base_url: "https://api.qnaigc.com/v1",
     },
+    SponsorProviderPreset {
+        id: "fenno",
+        provider_name: "FennoAI",
+        chip_label: "* FennoAI",
+        website_url: "https://api.fenno.ai",
+        register_url: "https://api.fenno.ai/register?redirect=/purchase?tab=subscription%26group=16&aff=Z6XB52KCVP6Y",
+        promo_code: "",
+        partner_promotion_key: "fenno",
+        claude_base_url: "https://api.fenno.ai",
+        codex_base_url: "https://api.fenno.ai",
+        gemini_base_url: "",
+        opencode_base_url: "https://api.fenno.ai/v1",
+        openclaw_base_url: "https://api.fenno.ai/v1",
+        hermes_base_url: "https://api.fenno.ai/v1",
+    },
 ];
 
-static SPONSOR_PROVIDER_PRESETS_CLAUDE: [SponsorProviderPreset; 7] = [
+static SPONSOR_PROVIDER_PRESETS_CLAUDE: [SponsorProviderPreset; 8] = [
     SPONSOR_PROVIDER_PRESETS[0],
     SPONSOR_PROVIDER_PRESETS[6],
+    SPONSOR_PROVIDER_PRESETS[7],
     SPONSOR_PROVIDER_PRESETS[1],
     SPONSOR_PROVIDER_PRESETS[2],
     SPONSOR_PROVIDER_PRESETS[3],
@@ -180,8 +196,9 @@ static SPONSOR_PROVIDER_PRESETS_CLAUDE: [SponsorProviderPreset; 7] = [
     SPONSOR_PROVIDER_PRESETS[5],
 ];
 
-static SPONSOR_PROVIDER_PRESETS_CODEX: [SponsorProviderPreset; 6] = [
+static SPONSOR_PROVIDER_PRESETS_CODEX: [SponsorProviderPreset; 7] = [
     SPONSOR_PROVIDER_PRESETS[6],
+    SPONSOR_PROVIDER_PRESETS[7],
     SPONSOR_PROVIDER_PRESETS[1],
     SPONSOR_PROVIDER_PRESETS[2],
     SPONSOR_PROVIDER_PRESETS[3],
@@ -196,21 +213,24 @@ static SPONSOR_PROVIDER_PRESETS_GEMINI: [SponsorProviderPreset; 4] = [
     SPONSOR_PROVIDER_PRESETS[4],
 ];
 
-static SPONSOR_PROVIDER_PRESETS_OPENCODE: [SponsorProviderPreset; 4] = [
+static SPONSOR_PROVIDER_PRESETS_OPENCODE: [SponsorProviderPreset; 5] = [
     SPONSOR_PROVIDER_PRESETS[6],
+    SPONSOR_PROVIDER_PRESETS[7],
     SPONSOR_PROVIDER_PRESETS[2],
     SPONSOR_PROVIDER_PRESETS[3],
     SPONSOR_PROVIDER_PRESETS[4],
 ];
 
-static SPONSOR_PROVIDER_PRESETS_HERMES: [SponsorProviderPreset; 3] = [
+static SPONSOR_PROVIDER_PRESETS_HERMES: [SponsorProviderPreset; 4] = [
     SPONSOR_PROVIDER_PRESETS[6],
+    SPONSOR_PROVIDER_PRESETS[7],
     SPONSOR_PROVIDER_PRESETS[2],
     SPONSOR_PROVIDER_PRESETS[3],
 ];
 
-static SPONSOR_PROVIDER_PRESETS_OPENCLAW: [SponsorProviderPreset; 4] = [
+static SPONSOR_PROVIDER_PRESETS_OPENCLAW: [SponsorProviderPreset; 5] = [
     SPONSOR_PROVIDER_PRESETS[6],
+    SPONSOR_PROVIDER_PRESETS[7],
     SPONSOR_PROVIDER_PRESETS[2],
     SPONSOR_PROVIDER_PRESETS[3],
     SPONSOR_PROVIDER_PRESETS[4],
@@ -357,6 +377,37 @@ fn qiniu_hermes_models() -> Vec<Value> {
 }
 
 fn qiniu_openclaw_models() -> Vec<Value> {
+    vec![json!({
+        "id": "gpt-5.5",
+        "name": "GPT-5.5",
+        "contextWindow": 400000,
+    })]
+}
+
+fn fenno_opencode_settings_config(base_url: &str) -> Value {
+    json!({
+        "npm": "@ai-sdk/openai-compatible",
+        "name": "FennoAI",
+        "options": {
+            "baseURL": base_url,
+            "setCacheKey": true,
+        },
+        "models": {
+            "gpt-5.5": {
+                "name": "GPT-5.5",
+            },
+        },
+    })
+}
+
+fn fenno_hermes_models() -> Vec<Value> {
+    vec![json!({
+        "id": "gpt-5.5",
+        "name": "GPT-5.5",
+    })]
+}
+
+fn fenno_openclaw_models() -> Vec<Value> {
     vec![json!({
         "id": "gpt-5.5",
         "name": "GPT-5.5",
@@ -720,6 +771,11 @@ impl ProviderAddFormState {
                 obj.insert("category".to_string(), json!("aggregator"));
                 obj.insert("icon".to_string(), json!("qiniu"));
             }
+        } else if preset.id == "fenno" {
+            if let Some(obj) = extra.as_object_mut() {
+                obj.insert("category".to_string(), json!("aggregator"));
+                obj.insert("icon".to_string(), json!("fenno"));
+            }
         }
         self.extra = extra;
         self.name.set(preset.provider_name);
@@ -733,11 +789,12 @@ impl ProviderAddFormState {
             }
             AppType::Codex => {
                 self.codex_base_url.set(preset.codex_base_url);
-                self.codex_model.set(if preset.id == "qiniu" {
-                    "gpt-5.5"
-                } else {
-                    "gpt-5.4"
-                });
+                self.codex_model
+                    .set(if preset.id == "qiniu" || preset.id == "fenno" {
+                        "gpt-5.5"
+                    } else {
+                        "gpt-5.4"
+                    });
                 self.codex_wire_api = CodexWireApi::Responses;
                 self.codex_requires_openai_auth = true;
                 self.reset_codex_local_routing_state();
@@ -797,6 +854,17 @@ impl ProviderAddFormState {
                     self.opencode_model_context_limit.set("");
                     self.opencode_model_output_limit.set("");
                     self.opencode_model_original_id = Some("gpt-5.5".to_string());
+                } else if preset.id == "fenno" {
+                    self.extra["settingsConfig"] =
+                        fenno_opencode_settings_config(preset.opencode_base_url);
+                    self.opencode_npm_package.set("@ai-sdk/openai-compatible");
+                    self.opencode_api_key.set("");
+                    self.opencode_base_url.set(preset.opencode_base_url);
+                    self.opencode_model_id.set("gpt-5.5");
+                    self.opencode_model_name.set("GPT-5.5");
+                    self.opencode_model_context_limit.set("");
+                    self.opencode_model_output_limit.set("");
+                    self.opencode_model_original_id = Some("gpt-5.5".to_string());
                 } else {
                     self.opencode_npm_package.set("@ai-sdk/openai-compatible");
                     self.opencode_api_key.set("");
@@ -821,6 +889,12 @@ impl ProviderAddFormState {
                     });
                     self.hermes_api_mode = HERMES_DEFAULT_API_MODE.to_string();
                     self.hermes_models = qiniu_hermes_models();
+                } else if preset.id == "fenno" {
+                    self.extra["settingsConfig"] = json!({
+                        "name": "fenno",
+                    });
+                    self.hermes_api_mode = HERMES_DEFAULT_API_MODE.to_string();
+                    self.hermes_models = fenno_hermes_models();
                 } else {
                     self.hermes_api_mode = HERMES_DEFAULT_API_MODE.to_string();
                     self.hermes_models = Vec::new();
@@ -876,6 +950,17 @@ impl ProviderAddFormState {
                     self.opencode_npm_package.set(OPENCLAW_DEFAULT_API_PROTOCOL);
                     self.openclaw_user_agent = false;
                     self.openclaw_models = qiniu_openclaw_models();
+                    self.opencode_model_id.set("gpt-5.5");
+                    self.opencode_model_name.set("GPT-5.5");
+                    self.opencode_model_context_limit.set("400000");
+                    self.opencode_model_output_limit.set("");
+                    self.opencode_model_original_id = Some("gpt-5.5".to_string());
+                } else if preset.id == "fenno" {
+                    self.opencode_api_key.set("");
+                    self.opencode_base_url.set(preset.openclaw_base_url);
+                    self.opencode_npm_package.set(OPENCLAW_DEFAULT_API_PROTOCOL);
+                    self.openclaw_user_agent = false;
+                    self.openclaw_models = fenno_openclaw_models();
                     self.opencode_model_id.set("gpt-5.5");
                     self.opencode_model_name.set("GPT-5.5");
                     self.opencode_model_context_limit.set("400000");

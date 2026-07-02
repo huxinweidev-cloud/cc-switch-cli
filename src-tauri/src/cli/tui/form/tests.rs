@@ -105,6 +105,7 @@ fn provider_add_form_template_labels_follow_explicit_support_matrix() {
             "Codex",
             "* ClaudeAPI",
             "* Qiniu",
+            "* FennoAI",
             "* PackyCode",
             "* Cubence",
             "* RunAPI",
@@ -120,6 +121,7 @@ fn provider_add_form_template_labels_follow_explicit_support_matrix() {
             "Custom",
             "OpenAI Official",
             "* Qiniu",
+            "* FennoAI",
             "* PackyCode",
             "* Cubence",
             "* RunAPI",
@@ -148,6 +150,7 @@ fn provider_add_form_template_labels_follow_explicit_support_matrix() {
         vec![
             "Custom",
             "* Qiniu",
+            "* FennoAI",
             "* Cubence",
             "* RunAPI",
             "* AICodeMirror"
@@ -165,7 +168,7 @@ fn provider_add_form_template_labels_follow_explicit_support_matrix() {
     let hermes_labels = ProviderAddFormState::new(AppType::Hermes).template_labels();
     assert_eq!(
         hermes_labels,
-        vec!["Custom", "* Qiniu", "* Cubence", "* RunAPI"]
+        vec!["Custom", "* Qiniu", "* FennoAI", "* Cubence", "* RunAPI"]
     );
 
     let openclaw_labels = ProviderAddFormState::new(AppType::OpenClaw).template_labels();
@@ -174,6 +177,7 @@ fn provider_add_form_template_labels_follow_explicit_support_matrix() {
         vec![
             "Custom",
             "* Qiniu",
+            "* FennoAI",
             "* Cubence",
             "* RunAPI",
             "* AICodeMirror"
@@ -249,6 +253,11 @@ fn cli_provider_templates_match_tui_serializer_output() {
         (AppType::OpenCode, ProviderAddTemplate::Qiniu, "* Qiniu"),
         (AppType::Hermes, ProviderAddTemplate::Qiniu, "* Qiniu"),
         (AppType::OpenClaw, ProviderAddTemplate::Qiniu, "* Qiniu"),
+        (AppType::Claude, ProviderAddTemplate::Fenno, "* FennoAI"),
+        (AppType::Codex, ProviderAddTemplate::Fenno, "* FennoAI"),
+        (AppType::OpenCode, ProviderAddTemplate::Fenno, "* FennoAI"),
+        (AppType::Hermes, ProviderAddTemplate::Fenno, "* FennoAI"),
+        (AppType::OpenClaw, ProviderAddTemplate::Fenno, "* FennoAI"),
     ] {
         assert_cli_template_matches_tui_serializer(app_type, template, label);
     }
@@ -3233,6 +3242,7 @@ fn provider_add_form_opencode_exposes_supported_sponsor_presets() {
         vec![
             "Custom",
             "* Qiniu",
+            "* FennoAI",
             "* Cubence",
             "* RunAPI",
             "* AICodeMirror"
@@ -3257,6 +3267,7 @@ fn provider_add_form_openclaw_uses_dedicated_template_defs() {
         vec![
             "Custom",
             "* Qiniu",
+            "* FennoAI",
             "* Cubence",
             "* RunAPI",
             "* AICodeMirror"
