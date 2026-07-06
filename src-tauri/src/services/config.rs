@@ -343,6 +343,20 @@ impl ConfigService {
                         &mut restored,
                     )?;
                 }
+                // Guarantee a non-official snapshot never stores ChatGPT OAuth
+                // material — even if the token-restore step above rebuilt auth
+                // from an already-polluted stored template (issue #328).
+                if ProviderService::codex_live_write_category(provider) != Some("official") {
+                    if let Some(obj) = restored.as_object_mut() {
+                        let sanitized = crate::codex_config::sanitize_codex_third_party_auth(
+                            obj.get("auth"),
+                            obj.get("config").and_then(serde_json::Value::as_str),
+                            None,
+                            None,
+                        );
+                        obj.insert("auth".to_string(), sanitized);
+                    }
+                }
                 target.settings_config = ProviderService::normalize_settings_config_for_storage(
                     &AppType::Codex,
                     provider,

@@ -976,6 +976,20 @@ impl ProviderService {
                         );
                     }
                 }
+                // Guarantee a non-official snapshot never stores ChatGPT OAuth
+                // material — even if the token-restore step above rebuilt auth
+                // from an already-polluted stored template (issue #328).
+                if Self::codex_live_write_category(&provider) != Some("official") {
+                    if let Some(obj) = settings_for_storage.as_object_mut() {
+                        let sanitized = crate::codex_config::sanitize_codex_third_party_auth(
+                            obj.get("auth"),
+                            obj.get("config").and_then(Value::as_str),
+                            None,
+                            None,
+                        );
+                        obj.insert("auth".to_string(), sanitized);
+                    }
+                }
                 let mut snapshot_provider = provider.clone();
                 snapshot_provider.settings_config = settings_for_storage;
 

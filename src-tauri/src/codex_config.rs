@@ -338,6 +338,34 @@ pub fn should_restore_codex_provider_token_for_backfill(
     !has_oauth_login || has_provider_api_key
 }
 
+/// Reduce a Codex auth value to the third-party API-key credential, dropping any
+/// ChatGPT OAuth login material.
+///
+/// Third-party (non-official) Codex providers authenticate with `OPENAI_API_KEY`.
+/// A stray `codex login` can leave ChatGPT OAuth material (`tokens`,
+/// `last_refresh`, `auth_mode = "chatgpt"`, ...) in the live `auth.json` while a
+/// third-party provider is active. That material must never be attributed to,
+/// stored on, or written back for a third-party provider, otherwise Codex keeps
+/// authenticating through the official login against the third-party endpoint
+/// (issue #328). The API key is sourced from `auth`/`config_text` first (an
+/// `experimental_bearer_token` counts), then from the `fallback_*` pair so a key
+/// that only survives in a stored snapshot is not lost when the live
+/// `auth.json` was overwritten by an OAuth login.
+pub fn sanitize_codex_third_party_auth(
+    auth: Option<&Value>,
+    config_text: Option<&str>,
+    fallback_auth: Option<&Value>,
+    fallback_config_text: Option<&str>,
+) -> Value {
+    let key = extract_codex_api_key(auth, config_text)
+        .or_else(|| extract_codex_api_key(fallback_auth, fallback_config_text));
+    let mut sanitized = serde_json::Map::new();
+    if let Some(key) = key {
+        sanitized.insert("OPENAI_API_KEY".to_string(), Value::String(key));
+    }
+    Value::Object(sanitized)
+}
+
 fn parse_codex_positive_u64(value: Option<&Value>) -> Option<u64> {
     match value {
         Some(Value::Number(n)) => n.as_u64().filter(|value| *value > 0),
@@ -1203,6 +1231,23 @@ pub fn write_codex_live_for_provider(
             None
         };
     let config_text = unified_official_config.as_deref().or(config_text);
+
+    // A third-party provider must authenticate with its API key, never with a
+    // stray ChatGPT OAuth login that leaked into auth.json (e.g. from running
+    // `codex login` while it was active). Strip OAuth material for non-official
+    // providers, recovering the key from a config bearer token when auth.json
+    // only carried OAuth (issue #328). Official providers own auth.json.
+    let sanitized_auth = if category == Some("official") {
+        None
+    } else {
+        Some(sanitize_codex_third_party_auth(
+            Some(auth),
+            config_text,
+            None,
+            None,
+        ))
+    };
+    let auth = sanitized_auth.as_ref().unwrap_or(auth);
 
     let should_write_auth = (category == Some("official") && codex_auth_has_login_material(auth))
         || (category != Some("official")

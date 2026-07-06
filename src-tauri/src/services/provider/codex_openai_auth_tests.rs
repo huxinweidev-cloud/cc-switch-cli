@@ -196,6 +196,113 @@ fn switch_codex_overwrites_config_toml_respecting_auth_mode() {
 }
 
 #[test]
+#[serial]
+fn switch_codex_third_party_discards_stray_chatgpt_oauth_after_login() {
+    // Regression for issue #328: running `codex login` (ChatGPT OAuth) out-of-band
+    // while a third-party provider is active must not leave the ChatGPT login in
+    // auth.json when switching back to the third-party provider. A third-party
+    // provider authenticates with its API key, so switching to/away from it must
+    // never capture or write ChatGPT OAuth material.
+    let temp_home = TempDir::new().expect("create temp home");
+    let _env = TestEnvGuard::isolated(temp_home.path());
+    std::fs::create_dir_all(crate::codex_config::get_codex_config_dir())
+        .expect("create ~/.codex (initialized)");
+
+    let mut config = MultiAppConfig::default();
+    config.ensure_app(&AppType::Codex);
+    {
+        let manager = config
+            .get_manager_mut(&AppType::Codex)
+            .expect("codex manager");
+        manager.providers.insert(
+            "thirdparty".to_string(),
+            Provider::with_id(
+                "thirdparty".to_string(),
+                "Third Party".to_string(),
+                json!({
+                    "auth": { "OPENAI_API_KEY": "sk-thirdparty" },
+                    "config": "model_provider = \"custom\"\nmodel = \"gpt-5.2-codex\"\n\n[model_providers.custom]\nbase_url = \"http://localhost:8317/v1\"\nwire_api = \"responses\"\n"
+                }),
+                Some("custom".to_string()),
+            ),
+        );
+        manager.providers.insert(
+            "official".to_string(),
+            Provider::with_id(
+                "official".to_string(),
+                "OpenAI".to_string(),
+                json!({
+                    "auth": {},
+                    "config": "model_provider = \"openai\"\nmodel = \"gpt-5.2-codex\"\n"
+                }),
+                Some("official".to_string()),
+            ),
+        );
+        manager.current = "thirdparty".to_string();
+    }
+
+    let state = state_from_config(config);
+
+    // Start on the third-party provider (clean api-key auth.json).
+    ProviderService::switch(&state, AppType::Codex, "thirdparty").expect("switch to thirdparty");
+
+    // Simulate `codex login` (ChatGPT) rewriting live auth.json with OAuth material.
+    crate::config::write_json_file(
+        &get_codex_auth_path(),
+        &json!({
+            "auth_mode": "chatgpt",
+            "OPENAI_API_KEY": null,
+            "tokens": { "access_token": "oauth-access-token", "account_id": "acc-1" },
+            "last_refresh": "2026-07-06T00:00:00Z"
+        }),
+    )
+    .expect("simulate codex login (chatgpt)");
+
+    // Switch to official (backfill must not pollute the third-party snapshot),
+    // then back to the third-party.
+    ProviderService::switch(&state, AppType::Codex, "official").expect("switch to official");
+
+    // The stored third-party snapshot must not have captured the ChatGPT OAuth.
+    let stored = state.db.get_all_providers("codex").expect("get providers");
+    let tp = stored.get("thirdparty").expect("thirdparty exists");
+    let tp_auth = tp
+        .settings_config
+        .get("auth")
+        .cloned()
+        .unwrap_or(Value::Null);
+    assert!(
+        tp_auth.pointer("/tokens/access_token").is_none(),
+        "third-party snapshot must not capture ChatGPT OAuth tokens: {tp_auth}"
+    );
+    assert_eq!(
+        tp_auth.get("OPENAI_API_KEY").and_then(Value::as_str),
+        Some("sk-thirdparty"),
+        "third-party snapshot must keep its API key: {tp_auth}"
+    );
+
+    ProviderService::switch(&state, AppType::Codex, "thirdparty")
+        .expect("switch back to thirdparty");
+
+    let auth_final: Value =
+        crate::config::read_json_file(&get_codex_auth_path()).expect("auth.json final");
+    let cfg_final = std::fs::read_to_string(get_codex_config_path()).expect("config.toml final");
+
+    assert!(
+        auth_final.pointer("/tokens/access_token").is_none(),
+        "live auth.json must not retain ChatGPT OAuth tokens after switching to third-party: {auth_final}"
+    );
+    assert_eq!(
+        auth_final.get("OPENAI_API_KEY").and_then(Value::as_str),
+        Some("sk-thirdparty"),
+        "live auth.json must carry the third-party API key: {auth_final}"
+    );
+    assert!(
+        cfg_final.contains("base_url = \"http://localhost:8317/v1\""),
+        "config.toml should point at the third-party endpoint: {cfg_final}"
+    );
+}
+
+#[test]
 fn migrate_legacy_codex_config_noop_for_new_format() {
     let new_format = "model_provider = \"openai\"\nmodel = \"gpt-4o\"\n\n[model_providers.openai]\nbase_url = \"https://api.openai.com/v1\"\nwire_api = \"chat\"\n";
     let provider = Provider::with_id("p1".to_string(), "OpenAI".to_string(), json!({}), None);
