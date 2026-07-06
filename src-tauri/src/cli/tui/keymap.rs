@@ -51,6 +51,31 @@ pub(crate) fn key_bar_items<I: Copy>(
         .collect()
 }
 
+/// Sentinel `shown` predicate for bindings that never appear in the key bar
+/// (hidden aliases, e.g. a reverse-direction key already covered by another
+/// chip). The help-sheet generator skips these by function identity — so use
+/// this named function rather than an inline `|_, _| false` closure.
+pub(crate) fn never(_: &super::app::App, _: &super::data::UiData) -> bool {
+    false
+}
+
+/// (display, label) pairs for the help sheet: every binding except the
+/// `never`-shown aliases, labeled for the given app/data. Unlike
+/// `key_bar_items` this does not evaluate each binding's `shown` state, so
+/// the catalog lists a page's full key vocabulary regardless of the current
+/// selection.
+pub(crate) fn help_items<I: Copy>(
+    bindings: &[Binding<I>],
+    app: &super::app::App,
+    data: &super::data::UiData,
+) -> Vec<(&'static str, &'static str)> {
+    bindings
+        .iter()
+        .filter(|binding| !std::ptr::fn_addr_eq(binding.shown, never as PredicateFn))
+        .map(|binding| (binding.display, (binding.label)(app, data)))
+        .collect()
+}
+
 pub(crate) mod providers {
     use crossterm::event::KeyCode;
 
@@ -313,6 +338,10 @@ pub(crate) mod mcp {
         super::key_bar_items(BINDINGS, app, data)
     }
 
+    pub(crate) fn help_items(app: &App, data: &UiData) -> Vec<(&'static str, &'static str)> {
+        super::help_items(BINDINGS, app, data)
+    }
+
     fn any_visible(app: &App, data: &UiData) -> bool {
         visible_mcp(&app.filter, data)
             .get(app.mcp_idx)
@@ -382,6 +411,10 @@ pub(crate) mod prompts {
 
     pub(crate) fn key_bar_items(app: &App, data: &UiData) -> Vec<(&'static str, &'static str)> {
         super::key_bar_items(BINDINGS, app, data)
+    }
+
+    pub(crate) fn help_items(app: &App, data: &UiData) -> Vec<(&'static str, &'static str)> {
+        super::help_items(BINDINGS, app, data)
     }
 
     fn any_visible(app: &App, data: &UiData) -> bool {
@@ -463,6 +496,10 @@ pub(crate) mod skills_installed {
         super::key_bar_items(BINDINGS, app, data)
     }
 
+    pub(crate) fn help_items(app: &App, data: &UiData) -> Vec<(&'static str, &'static str)> {
+        super::help_items(BINDINGS, app, data)
+    }
+
     fn any_visible(app: &App, data: &UiData) -> bool {
         visible_skills_installed(&app.filter, data)
             .get(app.skills_idx)
@@ -536,7 +573,7 @@ pub(crate) mod usage {
             keys: &[KeyCode::BackTab],
             intent: Intent::PrevMetric,
             label: |_, _| crate::t!("switch metric", "切换指标"),
-            shown: |_, _| false,
+            shown: super::never,
         },
         Binding {
             display: "L",
@@ -567,6 +604,10 @@ pub(crate) mod usage {
 
     pub(crate) fn key_bar_items(app: &App, data: &UiData) -> Vec<(&'static str, &'static str)> {
         super::key_bar_items(BINDINGS, app, data)
+    }
+
+    pub(crate) fn help_items(app: &App, data: &UiData) -> Vec<(&'static str, &'static str)> {
+        super::help_items(BINDINGS, app, data)
     }
 }
 
@@ -636,6 +677,10 @@ pub(crate) mod sessions {
 
     pub(crate) fn key_bar_items(app: &App, data: &UiData) -> Vec<(&'static str, &'static str)> {
         super::key_bar_items(BINDINGS, app, data)
+    }
+
+    pub(crate) fn help_items(app: &App, data: &UiData) -> Vec<(&'static str, &'static str)> {
+        super::help_items(BINDINGS, app, data)
     }
 
     fn show_all_label(app: &App, _: &UiData) -> &'static str {

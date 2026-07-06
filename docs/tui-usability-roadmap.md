@@ -23,9 +23,17 @@ For context — the foundations the remaining items build on:
   semantic colors (`fg_strong`, `on_accent`, `on_comment`), Settings ›
   Theme (Auto/Dark/Light, persisted), COLORFGBG auto-detection, curated
   ansi256 pins for both palettes.
+- **Help sheet generation** (`src/cli/tui/help.rs::global_help_lines`): the
+  MCP/Prompts/Sessions/Skills/Usage page lines are generated from
+  `keymap::<page>::help_items` (a `never` sentinel + `fn_addr_eq` skips
+  hidden aliases like Usage's reverse-Tab), so those hints track dispatch.
+  Providers/Config/Settings and the Hermes-only Memory line stay
+  hand-written (`texts::tui_help_line_*`) for their app-scope prose; the
+  static prelude is `texts::tui_help_prelude`. `context_help_for_app` now
+  takes `&UiData` to evaluate the keymap labels.
 - Word-wrapped, message-adaptive dialogs; breadcrumb titles on sub-pages;
   empty-state guidance on empty lists; `? more` degradation for
-  overflowing key bars; help sheet synced with actual bindings.
+  overflowing key bars.
 
 ## Remaining work
 

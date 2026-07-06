@@ -452,7 +452,7 @@ impl App {
         }
 
         let help = Overlay::Help(crate::cli::tui::help::HelpState::new(
-            crate::cli::tui::help::context_help_for_app(self),
+            crate::cli::tui::help::context_help_for_app(self, data),
         ));
         if self.overlay.can_be_covered_by_help() {
             let previous = std::mem::replace(&mut self.overlay, help);
