@@ -4135,6 +4135,27 @@ fn help_text_mentions_import_existing_for_mcp() {
 }
 
 #[test]
+fn help_text_shows_space_as_the_mcp_toggle_key() {
+    let _lock = lock_env();
+    for lang in [Language::English, Language::Chinese] {
+        let _lang = use_test_language(lang);
+        for app_type in [AppType::Claude, AppType::Hermes] {
+            let help = texts::tui_help_text_for_app(&app_type);
+            // The MCP toggle handler listens for Space (content_entities.rs);
+            // the help sheet used to claim `x` here.
+            assert!(
+                help.contains("MCP: Space") || help.contains("MCP：Space"),
+                "help for {app_type:?}/{lang:?} should document Space as the MCP toggle"
+            );
+            assert!(
+                !help.contains("x toggle current"),
+                "stale `x` toggle wording in help for {app_type:?}/{lang:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn mcp_page_shows_summary_bar() {
     let _lock = lock_env();
     let _no_color = EnvGuard::remove("NO_COLOR");
