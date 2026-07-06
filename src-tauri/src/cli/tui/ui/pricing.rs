@@ -13,7 +13,10 @@ pub(super) fn render_pricing(
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(pane_border_style(app, Focus::Content, theme))
-        .title(pricing_text("Model Pricing", "模型定价"));
+        .title(breadcrumb_title(&[
+            pricing_text("Usage Statistics", "使用统计"),
+            pricing_text("Model Pricing", "模型定价"),
+        ]));
     frame.render_widget(outer.clone(), area);
 
     let chunks = Layout::default()
@@ -25,21 +28,20 @@ pub(super) fn render_pricing(
         ])
         .split(outer.inner(area));
 
-    if app.focus == Focus::Content {
-        render_key_bar_center(
-            frame,
-            chunks[0],
-            theme,
-            &[
-                ("↑↓/Pg", texts::tui_key_select()),
-                ("Enter", texts::tui_key_edit()),
-                ("d", texts::tui_key_delete()),
-                ("/", texts::tui_filter_title()),
-                ("r", texts::tui_key_refresh()),
-                ("Esc", texts::tui_key_close()),
-            ],
-        );
-    }
+    render_page_key_bar(
+        frame,
+        chunks[0],
+        theme,
+        &[
+            ("↑↓/Pg", texts::tui_key_select()),
+            ("Enter", texts::tui_key_edit()),
+            ("d", texts::tui_key_delete()),
+            ("/", texts::tui_filter_title()),
+            ("r", texts::tui_key_refresh()),
+            ("Esc", texts::tui_key_close()),
+        ],
+        app.focus == Focus::Content,
+    );
 
     render_summary_bar(frame, chunks[1], theme, pricing_summary_line(app, data));
     render_pricing_table(frame, app, data, chunks[2], theme);

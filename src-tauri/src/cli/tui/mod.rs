@@ -2,6 +2,7 @@ mod app;
 mod data;
 mod form;
 pub(crate) mod help;
+mod keymap;
 mod route;
 mod runtime_actions;
 mod runtime_skills;
@@ -10,7 +11,7 @@ mod terminal;
 #[cfg(test)]
 mod tests;
 mod text_edit;
-mod theme;
+pub(crate) mod theme;
 mod ui;
 
 use std::collections::{HashMap, HashSet};

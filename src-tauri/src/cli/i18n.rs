@@ -573,18 +573,18 @@ pub mod texts {
 
     pub fn tui_help_text() -> &'static str {
         if is_chinese() {
-            "[ ]  切换应用\n←→  切换菜单/内容焦点\n↑↓ 或 h/j/k/l  移动\n/   过滤\nEsc  返回\n?   显示/关闭帮助\n\n文本输入：Ctrl+A/E 行首/行尾，Ctrl+U/K 删除行片段，Ctrl+W 删除前词，Alt+B/F 按词移动\n\n页面快捷键（在页面内容区顶部显示）：\n- 供应商：Space 切换，a 新增，e 编辑，d 删除，t 测试，r 刷新，o 临时启动，f 管理故障转移，x 设为默认\n- MCP：x 启用/禁用(当前应用)，m 选择应用，a 添加，e 编辑，i 导入已有，d 删除\n- 提示词：Space 启用/禁用，a 新增，Enter 查看，e 编辑，d 删除\n- 技能：Enter 详情，x 启用/禁用(当前应用)，m 选择应用，d 卸载，i 导入已有\n- 配置：Enter 打开/执行，e 编辑片段\n- 设置：Enter 应用"
+            "[ ]  切换应用\n←→  切换菜单/内容焦点\n↑↓ 或 h/j/k/l  移动\n/   过滤\nEsc  返回\n?   显示/关闭帮助\n\n文本输入：Ctrl+A/E 行首/行尾，Ctrl+U/K 删除行片段，Ctrl+W 删除前词，Alt+B/F 按词移动\n\n页面快捷键（在页面内容区顶部显示）：\n- 供应商：Space 切换，Enter/e 编辑，a 新增，c 复制，d 删除，t 测试，r 刷新，o 临时启动(Claude/Codex)，f 管理故障转移(Claude/Codex/Gemini)，x 设为默认(OpenClaw)\n- MCP：Space 启用/禁用(当前应用)，m 选择应用，a 添加，e 编辑，i 导入已有，d 删除\n- 提示词：Space 启用/禁用，a 新增，Enter 查看，e 编辑，d 删除\n- 会话：Enter 查看，R 恢复，d 删除，r 刷新，a 全部供应商\n- 技能：Enter 详情，Space 启用/禁用(当前应用)，m 选择应用，f 发现，i 导入已有，d 卸载\n- 使用统计：1/2/3 时间范围，c 自定义范围，Tab 切换指标，L 明细，P 价格，r 刷新\n- 配置：Enter 打开/执行，e 编辑片段\n- 设置：Enter 应用"
         } else {
-            "[ ]  switch app\n←→  focus menu/content\n↑↓ or h/j/k/l  move\n/   filter\nEsc  back\n?   toggle help\n\nText input: Ctrl+A/E move line, Ctrl+U/K delete line parts, Ctrl+W delete word, Alt+B/F move word\n\nPage keys (shown at the top of each page):\n- Providers: Space switch, a add, e edit, d delete, t test, r refresh, o launch temp, f manage failover, x set default\n- MCP: x toggle current, m select apps, a add, e edit, i import existing, d delete\n- Prompts: Space toggle, a add, Enter view, e edit, d delete\n- Skills: Enter details, x toggle current, m select apps, d uninstall, i import existing\n- Config: Enter open/run, e edit snippet\n- Settings: Enter apply"
+            "[ ]  switch app\n←→  focus menu/content\n↑↓ or h/j/k/l  move\n/   filter\nEsc  back\n?   toggle help\n\nText input: Ctrl+A/E move line, Ctrl+U/K delete line parts, Ctrl+W delete word, Alt+B/F move word\n\nPage keys (shown at the top of each page):\n- Providers: Space switch, Enter/e edit, a add, c copy, d delete, t test, r refresh, o launch temp (Claude/Codex), f manage failover (Claude/Codex/Gemini), x set default (OpenClaw)\n- MCP: Space toggle current, m select apps, a add, e edit, i import existing, d delete\n- Prompts: Space toggle, a add, Enter view, e edit, d delete\n- Sessions: Enter view, R restore, d delete, r refresh, a all providers\n- Skills: Enter details, Space toggle current, m select apps, f discover, i import existing, d uninstall\n- Usage: 1/2/3 range, c custom range, Tab switch metric, L details, P pricing, r reload\n- Config: Enter open/run, e edit snippet\n- Settings: Enter apply"
         }
     }
 
     pub fn tui_help_text_for_app(app_type: &crate::app_config::AppType) -> &'static str {
         if matches!(app_type, crate::app_config::AppType::Hermes) {
             if is_chinese() {
-                "[ ]  切换应用\n←→  切换菜单/内容焦点\n↑↓ 或 h/j/k/l  移动\n/   过滤\nEsc  返回\n?   显示/关闭帮助\n\n文本输入：Ctrl+A/E 行首/行尾，Ctrl+U/K 删除行片段，Ctrl+W 删除前词，Alt+B/F 按词移动\n\n页面快捷键（在页面内容区顶部显示）：\n- 供应商：Space 添加/移除，a 新增，e 编辑，d 删除，t 测试，r 刷新，f 管理故障转移，x 启用\n- MCP：x 启用/禁用(当前应用)，m 选择应用，a 添加，e 编辑，i 导入已有，d 删除\n- 记忆管理：Enter 编辑，Space/x 启用/禁用，o 打开目录\n- 技能：Enter 详情，x 启用/禁用(当前应用)，m 选择应用，d 卸载，i 导入已有\n- 设置：Enter 应用"
+                "[ ]  切换应用\n←→  切换菜单/内容焦点\n↑↓ 或 h/j/k/l  移动\n/   过滤\nEsc  返回\n?   显示/关闭帮助\n\n文本输入：Ctrl+A/E 行首/行尾，Ctrl+U/K 删除行片段，Ctrl+W 删除前词，Alt+B/F 按词移动\n\n页面快捷键（在页面内容区顶部显示）：\n- 供应商：Space 添加/移除，Enter/e 编辑，a 新增，c 复制，d 删除，t 测试，r 刷新，x 启用\n- MCP：Space 启用/禁用(当前应用)，m 选择应用，a 添加，e 编辑，i 导入已有，d 删除\n- 记忆管理：Enter 编辑，Space/x 启用/禁用，o 打开目录\n- 会话：Enter 查看，R 恢复，d 删除，r 刷新，a 全部供应商\n- 技能：Enter 详情，Space 启用/禁用(当前应用)，m 选择应用，f 发现，i 导入已有，d 卸载\n- 使用统计：1/2/3 时间范围，c 自定义范围，Tab 切换指标，L 明细，P 价格，r 刷新\n- 设置：Enter 应用"
             } else {
-                "[ ]  switch app\n←→  focus menu/content\n↑↓ or h/j/k/l  move\n/   filter\nEsc  back\n?   toggle help\n\nText input: Ctrl+A/E move line, Ctrl+U/K delete line parts, Ctrl+W delete word, Alt+B/F move word\n\nPage keys (shown at the top of each page):\n- Providers: Space add/remove, a add, e edit, d delete, t test, r refresh, f manage failover, x enable\n- MCP: x toggle current, m select apps, a add, e edit, i import existing, d delete\n- Memory: Enter edit, Space/x toggle, o open directory\n- Skills: Enter details, x toggle current, m select apps, d uninstall, i import existing\n- Settings: Enter apply"
+                "[ ]  switch app\n←→  focus menu/content\n↑↓ or h/j/k/l  move\n/   filter\nEsc  back\n?   toggle help\n\nText input: Ctrl+A/E move line, Ctrl+U/K delete line parts, Ctrl+W delete word, Alt+B/F move word\n\nPage keys (shown at the top of each page):\n- Providers: Space add/remove, Enter/e edit, a add, c copy, d delete, t test, r refresh, x enable\n- MCP: Space toggle current, m select apps, a add, e edit, i import existing, d delete\n- Memory: Enter edit, Space/x toggle, o open directory\n- Sessions: Enter view, R restore, d delete, r refresh, a all providers\n- Skills: Enter details, Space toggle current, m select apps, f discover, i import existing, d uninstall\n- Usage: 1/2/3 range, c custom range, Tab switch metric, L details, P pricing, r reload\n- Settings: Enter apply"
             }
         } else {
             tui_help_text()
@@ -3280,6 +3280,38 @@ pub mod texts {
         }
     }
 
+    pub fn tui_mcp_empty_title() -> &'static str {
+        if is_chinese() {
+            "还没有 MCP 服务器"
+        } else {
+            "No MCP servers yet"
+        }
+    }
+
+    pub fn tui_mcp_empty_subtitle() -> &'static str {
+        if is_chinese() {
+            "新增一个服务器，或从各应用的现有配置中导入"
+        } else {
+            "Add a server, or import the ones already configured in your apps"
+        }
+    }
+
+    pub fn tui_prompts_empty_title() -> &'static str {
+        if is_chinese() {
+            "还没有提示词"
+        } else {
+            "No prompts yet"
+        }
+    }
+
+    pub fn tui_prompts_empty_subtitle() -> &'static str {
+        if is_chinese() {
+            "新增提示词后可在应用间一键切换系统提示"
+        } else {
+            "Add a prompt to switch system prompts with one key"
+        }
+    }
+
     pub fn tui_key_import_current_config() -> &'static str {
         if is_chinese() {
             "导入当前配置"
@@ -3501,6 +3533,14 @@ pub mod texts {
             "发现"
         } else {
             "discover"
+        }
+    }
+
+    pub fn tui_key_more() -> &'static str {
+        if is_chinese() {
+            "更多"
+        } else {
+            "more"
         }
     }
 
@@ -3824,6 +3864,30 @@ pub mod texts {
         }
     }
 
+    pub fn tui_key_sessions_all() -> &'static str {
+        if is_chinese() {
+            "全部"
+        } else {
+            "show all"
+        }
+    }
+
+    pub fn tui_key_sessions_all_active() -> &'static str {
+        if is_chinese() {
+            "全部 (Esc返回)"
+        } else {
+            "showing all (Esc back)"
+        }
+    }
+
+    pub fn tui_sessions_searching(query: &str) -> String {
+        if is_chinese() {
+            format!("搜索中: \"{query}\"...")
+        } else {
+            format!("Searching: \"{query}\"...")
+        }
+    }
+
     pub fn tui_key_takeover() -> &'static str {
         if is_chinese() {
             "接管"
@@ -4023,6 +4087,39 @@ pub mod texts {
             "语言"
         } else {
             "Language"
+        }
+    }
+
+    pub fn tui_settings_theme_label() -> &'static str {
+        if is_chinese() {
+            "主题"
+        } else {
+            "Theme"
+        }
+    }
+
+    pub fn tui_settings_theme_mode_name(mode: crate::cli::tui::theme::ThemeMode) -> &'static str {
+        use crate::cli::tui::theme::ThemeMode;
+        if is_chinese() {
+            match mode {
+                ThemeMode::Auto => "自动",
+                ThemeMode::Dark => "深色",
+                ThemeMode::Light => "浅色",
+            }
+        } else {
+            match mode {
+                ThemeMode::Auto => "Auto",
+                ThemeMode::Dark => "Dark",
+                ThemeMode::Light => "Light",
+            }
+        }
+    }
+
+    pub fn tui_toast_theme_changed(mode_name: &str) -> String {
+        if is_chinese() {
+            format!("主题已切换为{mode_name}")
+        } else {
+            format!("Theme set to {mode_name}")
         }
     }
 
@@ -10354,10 +10451,11 @@ pub mod texts {
     }
 
     pub fn language_changed() -> &'static str {
+        // Rendered as a success toast, which already prepends a checkmark.
         if is_chinese() {
-            "✓ 语言已更改"
+            "语言已更改"
         } else {
-            "✓ Language changed"
+            "Language changed"
         }
     }
 
@@ -10753,18 +10851,20 @@ pub mod texts {
     }
 
     pub fn common_config_snippet_saved() -> &'static str {
+        // Rendered as a success toast, which already prepends a checkmark.
         if is_chinese() {
-            "✓ 已保存通用配置片段"
+            "已保存通用配置片段"
         } else {
-            "✓ Common config snippet saved"
+            "Common config snippet saved"
         }
     }
 
     pub fn common_config_snippet_cleared() -> &'static str {
+        // Rendered as a success toast, which already prepends a checkmark.
         if is_chinese() {
-            "✓ 已清除通用配置片段"
+            "已清除通用配置片段"
         } else {
-            "✓ Common config snippet cleared"
+            "Common config snippet cleared"
         }
     }
 

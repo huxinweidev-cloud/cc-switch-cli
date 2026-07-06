@@ -8,7 +8,8 @@ pub(super) fn render_skills_discover(
     theme: &super::theme::Theme,
 ) {
     let title = format!(
-        "{} — {}",
+        "{} › {} — {}",
+        texts::menu_manage_skills(),
         texts::tui_skills_discover_title(),
         if app.skills_discover_query.trim().is_empty() {
             texts::tui_skills_discover_query_empty()
@@ -21,7 +22,7 @@ pub(super) fn render_skills_discover(
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(pane_border_style(app, Focus::Content, theme))
-        .title(title);
+        .title(format!(" {} ", title));
     frame.render_widget(outer.clone(), area);
     let inner = outer.inner(area);
 
@@ -36,19 +37,18 @@ pub(super) fn render_skills_discover(
 
     render_skills_discover_source_tabs(frame, app, chunks[0], theme);
 
-    if app.focus == Focus::Content {
-        render_key_bar_center(
-            frame,
-            chunks[1],
-            theme,
-            &[
-                ("Enter", texts::tui_key_install()),
-                ("f", texts::tui_key_search()),
-                ("r", texts::tui_key_refresh()),
-                ("e", texts::tui_key_repo_manager()),
-            ],
-        );
-    }
+    render_page_key_bar(
+        frame,
+        chunks[1],
+        theme,
+        &[
+            ("Enter", texts::tui_key_install()),
+            ("f", texts::tui_key_search()),
+            ("r", texts::tui_key_refresh()),
+            ("e", texts::tui_key_repo_manager()),
+        ],
+        app.focus == Focus::Content,
+    );
 
     let query = app.filter.query_lower();
     let visible = app

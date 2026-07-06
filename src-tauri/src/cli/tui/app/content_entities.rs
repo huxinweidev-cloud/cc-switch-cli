@@ -233,19 +233,29 @@ impl App {
     }
 
     pub(crate) fn on_providers_key(&mut self, key: KeyEvent, data: &UiData) -> Action {
+        use crate::cli::tui::keymap::providers::Intent;
+
         let visible = visible_providers(&self.app_type, &self.filter, data);
         match key.code {
             KeyCode::Up => {
                 self.provider_idx = self.provider_idx.saturating_sub(1);
-                Action::None
+                return Action::None;
             }
             KeyCode::Down => {
                 if !visible.is_empty() {
                     self.provider_idx = (self.provider_idx + 1).min(visible.len() - 1);
                 }
-                Action::None
+                return Action::None;
             }
-            KeyCode::Enter => {
+            _ => {}
+        }
+
+        let Some(intent) = crate::cli::tui::keymap::providers::intent_for(key.code) else {
+            return Action::None;
+        };
+
+        match intent {
+            Intent::Primary => {
                 if data.providers.rows.is_empty() {
                     return Action::ProviderImportLiveConfig;
                 }
@@ -260,18 +270,18 @@ impl App {
                 self.open_provider_edit_form(row, data);
                 Action::None
             }
-            KeyCode::Char('a') => {
+            Intent::Add => {
                 self.open_provider_add_form(data);
                 Action::None
             }
-            KeyCode::Char('c') => {
+            Intent::Copy => {
                 let Some(row) = visible.get(self.provider_idx) else {
                     return Action::None;
                 };
                 self.open_provider_copy_confirm(row);
                 Action::None
             }
-            KeyCode::Char('e') => {
+            Intent::Edit => {
                 let Some(row) = visible.get(self.provider_idx) else {
                     return Action::None;
                 };
@@ -282,19 +292,19 @@ impl App {
                 self.open_provider_edit_form(row, data);
                 Action::None
             }
-            KeyCode::Char('s') | KeyCode::Char(' ') => {
+            Intent::Switch => {
                 let Some(row) = visible.get(self.provider_idx) else {
                     return Action::None;
                 };
                 self.provider_switch_action(row)
             }
-            KeyCode::Char('x') => {
+            Intent::SetDefault => {
                 let Some(row) = visible.get(self.provider_idx) else {
                     return Action::None;
                 };
                 self.provider_set_default_action(row)
             }
-            KeyCode::Char('d') => {
+            Intent::Delete => {
                 let Some(row) = visible.get(self.provider_idx) else {
                     return Action::None;
                 };
@@ -312,14 +322,14 @@ impl App {
                 self.open_provider_delete_confirm(row);
                 Action::None
             }
-            KeyCode::Char('t') => {
+            Intent::Test => {
                 let Some(row) = visible.get(self.provider_idx) else {
                     return Action::None;
                 };
                 self.open_provider_test_menu(row);
                 Action::None
             }
-            KeyCode::Char('o') => {
+            Intent::LaunchTemp => {
                 let Some(row) = visible.get(self.provider_idx) else {
                     return Action::None;
                 };
@@ -328,7 +338,7 @@ impl App {
                 }
                 Action::ProviderLaunchTemporary { id: row.id.clone() }
             }
-            KeyCode::Char('f') => {
+            Intent::Failover => {
                 if !supports_failover_controls(&self.app_type) {
                     return Action::None;
                 }
@@ -343,8 +353,7 @@ impl App {
                 self.overlay = Overlay::FailoverQueueManager { selected };
                 Action::None
             }
-            KeyCode::Char('<') | KeyCode::Char('>') => Action::None,
-            KeyCode::Char('r') => {
+            Intent::RefreshQuota => {
                 let Some(row) = visible.get(self.provider_idx) else {
                     return Action::None;
                 };
@@ -354,35 +363,44 @@ impl App {
                 }
                 Action::ProviderQuotaRefresh { id: row.id.clone() }
             }
-            _ => Action::None,
         }
     }
 
     pub(crate) fn on_mcp_key(&mut self, key: KeyEvent, data: &UiData) -> Action {
+        use crate::cli::tui::keymap::mcp::Intent;
+
         let visible = visible_mcp(&self.filter, data);
         match key.code {
             KeyCode::Up => {
                 self.mcp_idx = self.mcp_idx.saturating_sub(1);
-                Action::None
+                return Action::None;
             }
             KeyCode::Down => {
                 if !visible.is_empty() {
                     self.mcp_idx = (self.mcp_idx + 1).min(visible.len() - 1);
                 }
-                Action::None
+                return Action::None;
             }
-            KeyCode::Char('a') => {
+            _ => {}
+        }
+
+        let Some(intent) = crate::cli::tui::keymap::mcp::intent_for(key.code) else {
+            return Action::None;
+        };
+
+        match intent {
+            Intent::Add => {
                 self.open_mcp_add_form();
                 Action::None
             }
-            KeyCode::Char('e') => {
+            Intent::Edit => {
                 let Some(row) = visible.get(self.mcp_idx) else {
                     return Action::None;
                 };
                 self.open_mcp_edit_form(row);
                 Action::None
             }
-            KeyCode::Char(' ') => {
+            Intent::Toggle => {
                 let Some(row) = visible.get(self.mcp_idx) else {
                     return Action::None;
                 };
@@ -392,7 +410,7 @@ impl App {
                     enabled: !enabled,
                 }
             }
-            KeyCode::Char('m') => {
+            Intent::Apps => {
                 let Some(row) = visible.get(self.mcp_idx) else {
                     return Action::None;
                 };
@@ -404,8 +422,8 @@ impl App {
                 };
                 Action::None
             }
-            KeyCode::Char('i') => Action::McpImport,
-            KeyCode::Char('d') => {
+            Intent::Import => Action::McpImport,
+            Intent::Delete => {
                 let Some(row) = visible.get(self.mcp_idx) else {
                     return Action::None;
                 };
@@ -416,28 +434,37 @@ impl App {
                 });
                 Action::None
             }
-            _ => Action::None,
         }
     }
 
     pub(crate) fn on_prompts_key(&mut self, key: KeyEvent, data: &UiData) -> Action {
+        use crate::cli::tui::keymap::prompts::Intent;
+
         let visible = visible_prompts(&self.filter, data);
         match key.code {
-            KeyCode::Char('a') => {
-                self.open_prompt_create_form(data);
-                Action::None
-            }
             KeyCode::Up => {
                 self.prompt_idx = self.prompt_idx.saturating_sub(1);
-                Action::None
+                return Action::None;
             }
             KeyCode::Down => {
                 if !visible.is_empty() {
                     self.prompt_idx = (self.prompt_idx + 1).min(visible.len() - 1);
                 }
+                return Action::None;
+            }
+            _ => {}
+        }
+
+        let Some(intent) = crate::cli::tui::keymap::prompts::intent_for(key.code) else {
+            return Action::None;
+        };
+
+        match intent {
+            Intent::Add => {
+                self.open_prompt_create_form(data);
                 Action::None
             }
-            KeyCode::Enter => {
+            Intent::View => {
                 let Some(row) = visible.get(self.prompt_idx) else {
                     return Action::None;
                 };
@@ -449,7 +476,7 @@ impl App {
                 });
                 Action::None
             }
-            KeyCode::Char(' ') => {
+            Intent::Toggle => {
                 let Some(row) = visible.get(self.prompt_idx) else {
                     return Action::None;
                 };
@@ -459,7 +486,7 @@ impl App {
                     Action::PromptActivate { id: row.id.clone() }
                 }
             }
-            KeyCode::Char('d') => {
+            Intent::Delete => {
                 let Some(row) = visible.get(self.prompt_idx) else {
                     return Action::None;
                 };
@@ -477,7 +504,7 @@ impl App {
                 });
                 Action::None
             }
-            KeyCode::Char('e') => {
+            Intent::Edit => {
                 let Some(row) = visible.get(self.prompt_idx) else {
                     return Action::None;
                 };
@@ -489,7 +516,6 @@ impl App {
                 )));
                 Action::None
             }
-            _ => Action::None,
         }
     }
 

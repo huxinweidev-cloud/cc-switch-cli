@@ -93,10 +93,12 @@ fn tui_usage_empty_state_renders_dashboard_shell() {
     assert!(all.contains("7 days"), "{all}");
     assert!(all.contains("30 days"), "{all}");
     assert!(all.contains("custom range"), "{all}");
-    assert!(all.contains("switch panel"), "{all}");
+    // Tab cycles the trend metric on this page; "switch panel" belongs to
+    // the UsageLogs route only.
+    assert!(all.contains("switch metric"), "{all}");
+    assert!(!all.contains("switch panel"), "{all}");
     assert!(all.contains("details"), "{all}");
     assert!(all.contains("pricing"), "{all}");
-    assert!(!all.contains("metric"), "{all}");
     assert!(!all.contains("Provider Stats"), "{all}");
 }
 
@@ -295,10 +297,15 @@ fn tui_usage_overview_keeps_metric_values_near_labels() {
     let primary_y = line_index(&all, "Real Tokens");
     let secondary_y = line_index(&all, "Input");
     let tertiary_y = line_index(&all, "Errors");
-    let cache_border_y = all
-        .lines()
-        .position(|line| line.contains('╭'))
-        .unwrap_or_else(|| panic!("missing cache border in:\n{all}"));
+    // The cache box now uses the shared plain border; locate its top
+    // border as the first box corner after the metrics rows.
+    let cache_border_y = tertiary_y
+        + 1
+        + all
+            .lines()
+            .skip(tertiary_y + 1)
+            .position(|line| line.contains("┌"))
+            .unwrap_or_else(|| panic!("missing cache border in:\n{all}"));
     assert_eq!(secondary_y - primary_y, 1, "{all}");
     assert_eq!(tertiary_y - secondary_y, 1, "{all}");
     assert_eq!(cache_border_y - tertiary_y, 1, "{all}");
@@ -333,10 +340,15 @@ fn tui_usage_overview_short_height_keeps_even_spacing() {
     let primary_y = line_index(&all, "Real Tokens");
     let secondary_y = line_index(&all, "Input");
     let tertiary_y = line_index(&all, "Errors");
-    let cache_border_y = all
-        .lines()
-        .position(|line| line.contains('╭'))
-        .unwrap_or_else(|| panic!("missing cache border in:\n{all}"));
+    // The cache box now uses the shared plain border; locate its top
+    // border as the first box corner after the metrics rows.
+    let cache_border_y = tertiary_y
+        + 1
+        + all
+            .lines()
+            .skip(tertiary_y + 1)
+            .position(|line| line.contains("┌"))
+            .unwrap_or_else(|| panic!("missing cache border in:\n{all}"));
     assert_eq!(secondary_y - primary_y, 1, "{all}");
     assert_eq!(tertiary_y - secondary_y, 1, "{all}");
     assert_eq!(cache_border_y - tertiary_y, 1, "{all}");
@@ -474,7 +486,7 @@ fn tui_usage_details_tables_follow_selected_range() {
     };
 
     let week = all_text(&render_with_size(&app, &data, 160, 40));
-    assert!(week.contains("Usage Details"), "{week}");
+    assert!(week.contains("Usage Statistics › Details"), "{week}");
     assert!(week.contains("Model Stats"), "{week}");
     assert!(week.contains("Provider Stats"), "{week}");
     assert!(week.contains("Request Logs"), "{week}");
@@ -1506,7 +1518,8 @@ fn cell_style_signature(cell: &ratatui::buffer::Cell) -> (Color, Color, Modifier
 }
 
 fn block_title_needle(title: &str) -> String {
-    format!("┌{}", buffer_cell_text(title))
+    // Block titles carry one column of padding on each side.
+    format!("┌ {}", buffer_cell_text(title))
 }
 
 fn block_label_needle(label: &str) -> String {
@@ -2239,8 +2252,20 @@ fn managed_auth_cancel_confirm_renders_above_login_toast() {
         all.contains(texts::tui_confirm_managed_auth_cancel_title()),
         "{all}"
     );
-    assert!(all.contains("Press Enter to cancel"), "{all}");
-    assert!(all.contains("Esc to keep waiting"), "{all}");
+    // The message may wrap at any word boundary, so match it on the
+    // border-stripped, whitespace-normalized text instead of a single row.
+    let flattened = all
+        .chars()
+        .map(|ch| match ch {
+            '│' | '┌' | '┐' | '└' | '┘' | '─' | '├' | '┤' => ' ',
+            other => other,
+        })
+        .collect::<String>();
+    let flattened = flattened.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        flattened.contains("Press Enter to cancel, or Esc to keep waiting."),
+        "{all}"
+    );
 
     let key_bar_row = all
         .lines()
@@ -3788,7 +3813,7 @@ fn skills_page_renders_sync_method_and_installed_rows() {
 }
 
 #[test]
-fn skills_page_empty_state_keeps_mcp_style_table() {
+fn skills_page_empty_state_keeps_summary_and_shows_guidance() {
     let _lock = lock_env();
     let _no_color = EnvGuard::remove("NO_COLOR");
 
@@ -3800,12 +3825,11 @@ fn skills_page_empty_state_keeps_mcp_style_table() {
     let buf = render(&app, &data);
     let all = all_text(&buf);
 
-    assert!(all.contains(texts::header_name()));
-    assert!(all.contains(AppType::Claude.as_str()));
-    assert!(all.contains(AppType::OpenCode.as_str()));
-    assert!(all.contains(AppType::Hermes.as_str()));
-    assert!(!all.contains(texts::tui_skills_empty_title()));
-    assert!(!all.contains(texts::tui_skills_empty_subtitle()));
+    // The summary bar stays; the blank table body is replaced with the
+    // shared empty-state guidance (same style as MCP/Prompts/Providers).
+    assert!(all.contains(&texts::tui_skills_installed_counts(0, 0, 0, 0, 0)));
+    assert!(all.contains(texts::tui_skills_empty_title()));
+    assert!(all.contains(texts::tui_skills_empty_subtitle()));
 }
 
 #[test]
@@ -4088,7 +4112,27 @@ fn mcp_page_uses_space_toggle_key() {
     app.route = Route::Mcp;
     app.focus = Focus::Content;
 
-    let data = minimal_data(&app.app_type);
+    // Row-dependent chips (toggle) only show when a row is selectable.
+    let mut data = minimal_data(&app.app_type);
+    data.mcp.rows = vec![super::super::data::McpRow {
+        id: "m1".to_string(),
+        server: crate::app_config::McpServer {
+            id: "m1".to_string(),
+            name: "Server".to_string(),
+            server: json!({}),
+            apps: crate::app_config::McpApps {
+                claude: true,
+                codex: false,
+                gemini: false,
+                opencode: false,
+                hermes: false,
+            },
+            description: None,
+            homepage: None,
+            docs: None,
+            tags: vec![],
+        },
+    }];
     let buf = render(&app, &data);
     let all = all_text(&buf);
 
@@ -4119,6 +4163,131 @@ fn help_text_mentions_import_existing_for_mcp() {
     assert!(
         help.contains("i import existing") || help.contains("i 导入已有"),
         "help text should use the same import wording for MCP and Skills"
+    );
+}
+
+#[test]
+fn help_text_shows_space_as_the_mcp_toggle_key() {
+    let _lock = lock_env();
+    for lang in [Language::English, Language::Chinese] {
+        let _lang = use_test_language(lang);
+        for app_type in [AppType::Claude, AppType::Hermes] {
+            let help = texts::tui_help_text_for_app(&app_type);
+            // The MCP toggle handler listens for Space (content_entities.rs);
+            // the help sheet used to claim `x` here.
+            assert!(
+                help.contains("MCP: Space") || help.contains("MCP：Space"),
+                "help for {app_type:?}/{lang:?} should document Space as the MCP toggle"
+            );
+            assert!(
+                !help.contains("x toggle current"),
+                "stale `x` toggle wording in help for {app_type:?}/{lang:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn page_key_bar_stays_visible_while_nav_has_focus() {
+    let _lock = lock_env();
+    let _lang = use_test_language(Language::English);
+    let prev = std::env::var("NO_COLOR").ok();
+    std::env::set_var("NO_COLOR", "1");
+    let _restore_no_color = EnvGuard {
+        key: "NO_COLOR",
+        prev,
+    };
+
+    let mut app = App::new(Some(AppType::Claude));
+    app.route = Route::Mcp;
+    app.focus = Focus::Nav;
+    let data = minimal_data(&app.app_type);
+
+    // Page keys used to vanish whenever the nav pane had focus, hiding the
+    // available actions exactly when a user is deciding where to go.
+    let buf = render(&app, &data);
+    let all = all_text(&buf);
+    assert!(
+        all.contains("a=add"),
+        "key bar should stay visible (dimmed) with nav focus: {all}"
+    );
+}
+
+#[test]
+fn empty_lists_show_guidance_instead_of_blank_space() {
+    let _lock = lock_env();
+    let _lang = use_test_language(Language::English);
+    let _no_color = EnvGuard::remove("NO_COLOR");
+
+    for (route, needle) in [
+        (Route::Mcp, "No MCP servers yet"),
+        (Route::Prompts, "No prompts yet"),
+        (Route::Skills, "No installed skills"),
+    ] {
+        let mut app = App::new(Some(AppType::Claude));
+        app.route = route;
+        app.focus = Focus::Content;
+        let data = minimal_data(&app.app_type);
+        let buf = render(&app, &data);
+        let all = all_text(&buf);
+        assert!(
+            all.contains(needle),
+            "empty list should show guidance ({needle}): {all}"
+        );
+    }
+}
+
+#[test]
+fn provider_form_truncates_overflowing_values_with_ellipsis() {
+    let _lock = lock_env();
+    let _lang = use_test_language(Language::English);
+    let _no_color = EnvGuard::remove("NO_COLOR");
+
+    let mut app = App::new(Some(AppType::Claude));
+    app.route = Route::Providers;
+    app.focus = Focus::Content;
+    app.form = Some(crate::cli::tui::form::FormState::ProviderAdd(
+        crate::cli::tui::form::ProviderAddFormState::new(AppType::Claude),
+    ));
+    let data = minimal_data(&app.app_type);
+
+    let buf = render(&app, &data);
+    let row = (0..buf.area.height)
+        .map(|y| line_at(&buf, y))
+        .find(|line| line.contains("Anthropic Messages"))
+        .expect("api format row should render");
+
+    // The value column is too narrow for the full label at 120 cols; it
+    // used to be cut dead ("…Messages (Nativ") with no truncation marker.
+    assert!(
+        row.contains('…'),
+        "cut-off value should end with an ellipsis: {row:?}"
+    );
+}
+
+#[test]
+fn key_bar_shows_more_hint_when_chips_overflow() {
+    let _lock = lock_env();
+    let _lang = use_test_language(Language::English);
+    let prev = std::env::var("NO_COLOR").ok();
+    std::env::set_var("NO_COLOR", "1");
+    let _restore_no_color = EnvGuard {
+        key: "NO_COLOR",
+        prev,
+    };
+
+    let mut app = App::new(Some(AppType::Claude));
+    app.route = Route::Usage;
+    app.focus = Focus::Content;
+    let data = minimal_data(&app.app_type);
+
+    // At 80 columns the Usage key bar cannot hold all chips; it used to be
+    // cut mid-chip. It must now end with a "? more" hint instead.
+    let buf = render_with_size(&app, &data, 80, 35);
+    let all = all_text(&buf);
+    assert!(
+        all.contains("?=more"),
+        "overflowing key bar should end with a more-hint: {all}"
     );
 }
 
@@ -4465,6 +4634,46 @@ fn form_save_before_close_confirm_overlay_shows_save_exit_and_cancel_actions() {
     assert!(key_bar_row.contains(&enter_hint), "{key_bar_row}");
     assert!(key_bar_row.contains(&n_hint), "{key_bar_row}");
     assert!(key_bar_row.contains(&esc_hint), "{key_bar_row}");
+}
+
+#[test]
+fn common_config_notice_overlay_shows_all_paragraphs_without_mid_word_breaks() {
+    let _lock = lock_env();
+    let _lang = use_test_language(Language::English);
+
+    let mut app = App::new(Some(AppType::Claude));
+    app.route = Route::Providers;
+    app.focus = Focus::Content;
+    app.overlay = Overlay::Confirm(ConfirmOverlay {
+        title: texts::tui_common_config_notice_title().to_string(),
+        message: texts::tui_common_config_notice_message("claude"),
+        action: ConfirmAction::CommonConfigNotice,
+    });
+    let data = minimal_data(&app.app_type);
+
+    let buf = render(&app, &data);
+    let all = all_text(&buf);
+
+    // The dialog grows with its message: the last paragraph (F4 / Ctrl+S
+    // instructions) used to be clipped by the fixed-height overlay.
+    assert!(
+        all.contains("F4"),
+        "expected the extract-shortcut paragraph to be visible"
+    );
+    assert!(
+        all.contains("Ctrl+S"),
+        "expected the save-shortcut paragraph to be visible"
+    );
+
+    // Word wrapping keeps words intact: under the old per-character wrap,
+    // these words were split across rows ("setting" / "s shared",
+    // "default t" / "o attaching") and never appeared whole on any row.
+    for word in ["settings", "attaching", "providers."] {
+        assert!(
+            (0..buf.area.height).any(|y| line_at(&buf, y).contains(word)),
+            "expected {word:?} to render unbroken on a single row"
+        );
+    }
 }
 
 #[test]
@@ -4907,6 +5116,14 @@ fn speedtest_result_overlay_is_compact_when_lines_are_short() {
     assert!(
         overlay_width < 70,
         "short result overlay should be compact, got width {overlay_width}"
+    );
+
+    // The compact rect must leave room for every line: the last one
+    // ("Status: …") used to be clipped by a one-row chrome undercount.
+    let status_line = texts::tui_speedtest_line_status("200");
+    assert!(
+        (0..buf.area.height).any(|y| line_at(&buf, y).contains(status_line.trim())),
+        "last compact overlay line should be visible"
     );
 }
 
@@ -8045,8 +8262,10 @@ fn openclaw_agents_route_render_field_labels_use_white_foreground() {
     let workspace_label_cell =
         content_cell_at(&app, &buf, workspace_label_col, workspace_row_index);
 
-    assert_eq!(primary_label_cell.fg, Color::White);
-    assert_eq!(workspace_label_cell.fg, Color::White);
+    // Field labels use the theme's strong foreground (was hardcoded white).
+    let expected = theme_for(&app.app_type).fg_strong;
+    assert_eq!(primary_label_cell.fg, expected);
+    assert_eq!(workspace_label_cell.fg, expected);
 }
 
 #[test]
@@ -8470,8 +8689,13 @@ fn workspace_daily_memory_route_render_keeps_existing_structure() {
         !content.contains(&buffer_cell_text("Workspace 文件")),
         "{content}"
     );
+    // The workspace name is allowed (and expected) in the breadcrumb title.
     assert!(
-        !content.contains(&buffer_cell_text(texts::tui_openclaw_workspace_title())),
+        content.contains(&buffer_cell_text(&format!(
+            "{} › {}",
+            texts::tui_openclaw_workspace_title(),
+            texts::tui_openclaw_daily_memory_title()
+        ))),
         "{content}"
     );
 }
@@ -8707,7 +8931,9 @@ fn failover_queue_overlay_renders_enabled_state_and_toggle_hint() {
     let all = all_text(&render(&app, &data));
 
     assert!(all.contains("Automatic failover: enabled"), "{all}");
-    assert!(all.contains("f enable/disable"), "{all}");
+    assert!(all.contains("f auto failover"), "{all}");
+    // The reorder hint must survive the width-degrade logic in English.
+    assert!(all.contains("</>/K/J move"), "{all}");
     assert!(
         all.contains("Auto failover uses only checked providers"),
         "{all}"
@@ -8729,7 +8955,7 @@ fn failover_queue_overlay_renders_disabled_state_and_toggle_hint() {
     let all = all_text(&render(&app, &data));
 
     assert!(all.contains("Automatic failover: disabled"), "{all}");
-    assert!(all.contains("f enable/disable"), "{all}");
+    assert!(all.contains("f auto failover"), "{all}");
     assert!(all.contains("Direct provider selection is used"), "{all}");
 }
 

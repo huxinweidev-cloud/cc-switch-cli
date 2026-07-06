@@ -74,7 +74,7 @@ pub(super) fn render_main(
         Style::default().add_modifier(Modifier::BOLD)
     } else {
         Style::default()
-            .fg(Color::White)
+            .fg(theme.fg_strong)
             .add_modifier(Modifier::BOLD)
     };
 
@@ -254,7 +254,7 @@ pub(super) fn render_main(
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(pane_border_style(app, Focus::Content, theme))
-        .title(texts::welcome_title());
+        .title(format!(" {} ", texts::welcome_title()));
     frame.render_widget(block.clone(), area);
 
     let inner = block.inner(area);
@@ -310,14 +310,12 @@ pub(super) fn render_main(
         render_logo_hero(frame, hero_chunks[0], theme);
     }
 
+    // theme.surface as a foreground is nearly invisible on the dark
+    // background; use the muted comment color like other hints.
     frame.render_widget(
         Paragraph::new(Line::raw(texts::tui_main_hint()))
             .alignment(Alignment::Center)
-            .style(
-                Style::default()
-                    .fg(theme.surface)
-                    .add_modifier(Modifier::ITALIC),
-            ),
+            .style(Style::default().fg(theme.comment)),
         hero_chunks[1],
     );
 }
@@ -670,7 +668,7 @@ fn render_local_env_tool_cell(
         Style::default().add_modifier(Modifier::BOLD)
     } else {
         Style::default()
-            .fg(Color::White)
+            .fg(theme.fg_strong)
             .add_modifier(Modifier::BOLD)
     };
 

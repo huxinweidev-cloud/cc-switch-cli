@@ -16,7 +16,7 @@ pub(super) fn render_usage(
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(pane_border_style(app, Focus::Content, theme))
-        .title(usage_text("Usage Statistics", "使用统计"));
+        .title(format!(" {} ", usage_text("Usage Statistics", "使用统计")));
     frame.render_widget(outer.clone(), area);
     let inner = outer.inner(area);
 
@@ -30,23 +30,8 @@ pub(super) fn render_usage(
         ])
         .split(inner);
 
-    if app.focus == Focus::Content {
-        render_key_bar_center(
-            frame,
-            chunks[0],
-            theme,
-            &[
-                ("1", usage_text("Today", "今日")),
-                ("2", usage_text("7 days", "7天")),
-                ("3", usage_text("30 days", "30天")),
-                ("C", usage_text("custom range", "自定义区间")),
-                ("Tab", texts::tui_key_pane()),
-                ("L", usage_text("details", "详情")),
-                ("P", usage_text("pricing", "模型定价")),
-                ("r", texts::tui_key_refresh()),
-            ],
-        );
-    }
+    let keys = crate::cli::tui::keymap::usage::key_bar_items(app, data);
+    render_page_key_bar(frame, chunks[0], theme, &keys, app.focus == Focus::Content);
 
     render_summary_bar(frame, chunks[1], theme, usage_summary_line(app, data));
     render_usage_metrics(frame, app, data, chunks[2], theme);
@@ -65,7 +50,10 @@ pub(super) fn render_usage_logs(
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(pane_border_style(app, Focus::Content, theme))
-        .title(usage_text("Usage Details", "用量详情"));
+        .title(breadcrumb_title(&[
+            usage_text("Usage Statistics", "使用统计"),
+            usage_text("Details", "详情"),
+        ]));
     frame.render_widget(outer.clone(), area);
 
     let chunks = Layout::default()
@@ -78,20 +66,19 @@ pub(super) fn render_usage_logs(
         ])
         .split(outer.inner(area));
 
-    if app.focus == Focus::Content {
-        render_key_bar_center(
-            frame,
-            chunks[0],
-            theme,
-            &[
-                ("Tab", texts::tui_key_pane()),
-                ("↑↓/Pg", texts::tui_key_select()),
-                ("Enter", texts::tui_key_details()),
-                ("r", texts::tui_key_refresh()),
-                ("Esc", texts::tui_key_close()),
-            ],
-        );
-    }
+    render_page_key_bar(
+        frame,
+        chunks[0],
+        theme,
+        &[
+            ("Tab", texts::tui_key_pane()),
+            ("↑↓/Pg", texts::tui_key_select()),
+            ("Enter", texts::tui_key_details()),
+            ("r", texts::tui_key_refresh()),
+            ("Esc", texts::tui_key_close()),
+        ],
+        app.focus == Focus::Content,
+    );
 
     render_usage_detail_tabs(frame, app, chunks[1], theme);
     render_summary_bar(
@@ -115,7 +102,11 @@ pub(super) fn render_usage_log_detail(
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(pane_border_style(app, Focus::Content, theme))
-        .title(usage_text("Usage Log Detail", "用量日志详情"));
+        .title(breadcrumb_title(&[
+            usage_text("Usage Statistics", "使用统计"),
+            usage_text("Details", "详情"),
+            usage_text("Log", "日志"),
+        ]));
     frame.render_widget(outer.clone(), area);
 
     let chunks = Layout::default()
@@ -123,17 +114,16 @@ pub(super) fn render_usage_log_detail(
         .constraints([Constraint::Length(1), Constraint::Min(0)])
         .split(outer.inner(area));
 
-    if app.focus == Focus::Content {
-        render_key_bar_center(
-            frame,
-            chunks[0],
-            theme,
-            &[
-                ("r", texts::tui_key_refresh()),
-                ("Esc", texts::tui_key_close()),
-            ],
-        );
-    }
+    render_page_key_bar(
+        frame,
+        chunks[0],
+        theme,
+        &[
+            ("r", texts::tui_key_refresh()),
+            ("Esc", texts::tui_key_close()),
+        ],
+        app.focus == Focus::Content,
+    );
 
     let row = data
         .usage
@@ -561,7 +551,7 @@ fn render_usage_cache_hit_line(
     let ratio = rate.unwrap_or_default().clamp(0.0, 100.0) / 100.0;
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
+        .border_type(BorderType::Plain)
         .border_style(Style::default().fg(theme.dim));
     let inner = inset_horizontal(block.inner(area), CONTENT_INSET_LEFT, CONTENT_INSET_LEFT);
     if inner.width < 12 || inner.height == 0 {
@@ -609,7 +599,7 @@ fn render_usage_trend(
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(Style::default().fg(theme.dim))
-        .title(title);
+        .title(format!(" {} ", title));
     frame.render_widget(block.clone(), area);
     let inner = inset_horizontal(block.inner(area), CONTENT_INSET_LEFT, 4);
 
@@ -783,7 +773,7 @@ fn render_usage_detail_tabs(
         }
         let style = if app.usage.pane == pane {
             Style::default()
-                .fg(Color::Black)
+                .fg(theme.on_accent)
                 .bg(theme.accent)
                 .add_modifier(Modifier::BOLD)
         } else {
@@ -1199,7 +1189,7 @@ fn detail_line(
         Span::raw(" "),
         Span::styled(
             value.as_ref().to_string(),
-            Style::default().fg(Color::White),
+            Style::default().fg(theme.fg_strong),
         ),
     ])
 }
@@ -1307,7 +1297,7 @@ fn usage_metric_style(metric: UsageMetric, theme: &super::theme::Theme) -> Style
     match metric {
         UsageMetric::Cost => Style::default().fg(theme.accent),
         UsageMetric::Tokens => Style::default().fg(theme.ok),
-        UsageMetric::Requests => Style::default().fg(Color::White),
+        UsageMetric::Requests => Style::default().fg(theme.fg_strong),
         UsageMetric::Errors => Style::default().fg(theme.err),
     }
 }

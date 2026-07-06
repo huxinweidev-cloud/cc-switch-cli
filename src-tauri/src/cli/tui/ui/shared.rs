@@ -16,7 +16,7 @@ pub(super) fn selection_style(theme: &super::theme::Theme) -> Style {
         Style::default().add_modifier(Modifier::REVERSED)
     } else {
         Style::default()
-            .fg(Color::Black)
+            .fg(theme.on_accent)
             .bg(theme.accent)
             .add_modifier(Modifier::BOLD)
     }
@@ -26,7 +26,7 @@ pub(super) fn inactive_chip_style(theme: &super::theme::Theme) -> Style {
     if theme.no_color {
         Style::default()
     } else {
-        Style::default().fg(Color::White).bg(theme.surface)
+        Style::default().fg(theme.fg_strong).bg(theme.surface)
     }
 }
 
@@ -35,7 +35,7 @@ pub(super) fn active_chip_style(theme: &super::theme::Theme) -> Style {
         Style::default().add_modifier(Modifier::REVERSED)
     } else {
         Style::default()
-            .fg(Color::Black)
+            .fg(theme.on_accent)
             .bg(theme.accent)
             .add_modifier(Modifier::BOLD)
     }
@@ -105,6 +105,135 @@ pub(super) fn truncate_to_display_width(text: &str, width: u16) -> String {
     }
     out.push('…');
     out
+}
+
+/// Standard page shell: the outer bordered block with a padded title, the
+/// page key bar (always visible, dimmed without content focus), and an
+/// optional summary bar. Returns the body rect below them.
+pub(super) fn render_page_frame(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    theme: &super::theme::Theme,
+    app: &App,
+    title: &str,
+    keys: &[(&str, &str)],
+    summary: Option<String>,
+) -> Rect {
+    let outer = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Plain)
+        .border_style(pane_border_style(app, Focus::Content, theme))
+        .title(format!(" {} ", title));
+    frame.render_widget(outer.clone(), area);
+    let inner = outer.inner(area);
+
+    let constraints = if summary.is_some() {
+        vec![
+            Constraint::Length(1),
+            Constraint::Length(3),
+            Constraint::Min(0),
+        ]
+    } else {
+        vec![Constraint::Length(1), Constraint::Min(0)]
+    };
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(constraints)
+        .split(inner);
+
+    render_page_key_bar(frame, chunks[0], theme, keys, app.focus == Focus::Content);
+    if let Some(summary) = summary {
+        render_summary_bar(frame, chunks[1], theme, summary);
+    }
+
+    *chunks.last().expect("page frame always has a body chunk")
+}
+
+/// Sub-page titles show their place in the hierarchy (" Usage › Details ")
+/// so nesting depth stays visible and Esc's destination is predictable.
+pub(super) fn breadcrumb_title(segments: &[&str]) -> String {
+    format!(" {} ", segments.join(" › "))
+}
+
+/// Centered guidance for empty list screens: a bold title, a muted
+/// subtitle, and key chips for the actions that create the first entry.
+/// The first action renders as the primary (accent) chip.
+pub(super) fn render_empty_state(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    theme: &super::theme::Theme,
+    title: &str,
+    subtitle: &str,
+    actions: &[(&str, &str)],
+) {
+    let title_style = Style::default().add_modifier(Modifier::BOLD);
+    let subtitle_style = Style::default().fg(theme.comment);
+    let primary_style = if theme.no_color {
+        Style::default().add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+            .fg(theme.on_accent)
+            .bg(theme.accent)
+            .add_modifier(Modifier::BOLD)
+    };
+    let secondary_style = if theme.no_color {
+        Style::default()
+    } else {
+        Style::default()
+            .fg(theme.dim)
+            .bg(theme.surface)
+            .add_modifier(Modifier::BOLD)
+    };
+
+    let mut content_lines = vec![
+        Line::styled(title.to_string(), title_style),
+        Line::raw(""),
+        Line::styled(subtitle.to_string(), subtitle_style),
+        Line::raw(""),
+    ];
+    for (idx, (key, label)) in actions.iter().enumerate() {
+        let style = if idx == 0 {
+            primary_style
+        } else {
+            secondary_style
+        };
+        content_lines.push(Line::from(vec![Span::styled(
+            format!("  {key}  {label}  "),
+            style,
+        )]));
+    }
+
+    let top_padding = area.height.saturating_sub(content_lines.len() as u16) / 2;
+    let mut lines = Vec::with_capacity(top_padding as usize + content_lines.len());
+    for _ in 0..top_padding {
+        lines.push(Line::raw(""));
+    }
+    lines.extend(content_lines);
+
+    frame.render_widget(
+        Paragraph::new(lines)
+            .alignment(Alignment::Center)
+            .wrap(Wrap { trim: false }),
+        area,
+    );
+}
+
+/// Two-column field tables clip the value cell silently at the pane edge;
+/// pre-truncate the value with an ellipsis so a cut-off reads as one.
+pub(super) fn truncated_value_cell(
+    value: &str,
+    table_width: u16,
+    label_col_width: u16,
+    theme: &super::theme::Theme,
+) -> String {
+    let symbol_width = UnicodeWidthStr::width(highlight_symbol(theme)) as u16;
+    // Chrome left of the value column: label column + 1 column spacing +
+    // the selection highlight symbol.
+    let value_width = table_width
+        .saturating_sub(label_col_width)
+        .saturating_sub(1)
+        .saturating_sub(symbol_width);
+    truncate_to_display_width(value, value_width)
 }
 
 pub(super) fn format_sync_time_local_to_minute(ts: i64) -> Option<String> {
@@ -507,6 +636,89 @@ pub(super) fn key_bar_line(theme: &super::theme::Theme, items: &[(&str, &str)]) 
     Line::from(spans)
 }
 
+fn key_bar_chip_width(key: &str, value: &str) -> usize {
+    UnicodeWidthStr::width(key) + 1 + UnicodeWidthStr::width(value)
+}
+
+/// How many leading chips fit into `width`, mirroring key_bar_line's
+/// layout: 1-column padding on each side, 2 columns between chips.
+fn key_bar_fit_count(items: &[(&str, &str)], width: u16) -> usize {
+    let width = width as usize;
+    let mut used = 2usize;
+    let mut count = 0usize;
+    for (idx, (key, value)) in items.iter().enumerate() {
+        let mut chip = key_bar_chip_width(key, value);
+        if idx > 0 {
+            chip += 2;
+        }
+        if used + chip > width {
+            break;
+        }
+        used += chip;
+        count += 1;
+    }
+    count
+}
+
+/// Key bars are single-row: chips past the available width used to be
+/// silently cut off mid-list. Keep the leading (highest-priority) chips
+/// that fit and close with a "? more" hint pointing at the help sheet.
+fn key_bar_items_for_width<'a>(
+    items: &'a [(&'a str, &'a str)],
+    width: u16,
+) -> Vec<(&'a str, &'a str)> {
+    if key_bar_fit_count(items, width) == items.len() {
+        return items.to_vec();
+    }
+
+    let more = texts::tui_key_more();
+    let reserved = (key_bar_chip_width("?", more) + 2) as u16;
+    let count = key_bar_fit_count(items, width.saturating_sub(reserved));
+    let mut fitted = items[..count].to_vec();
+    fitted.push(("?", more));
+    fitted
+}
+
+fn key_bar_line_dimmed(theme: &super::theme::Theme, items: &[(&str, &str)]) -> Line<'static> {
+    if theme.no_color {
+        return key_bar_line(theme, items);
+    }
+
+    let base = Style::default().fg(theme.comment);
+    let key = base.add_modifier(Modifier::BOLD);
+
+    let mut spans: Vec<Span<'static>> = vec![Span::styled(" ", base)];
+    for (idx, (k, v)) in items.iter().enumerate() {
+        if idx > 0 {
+            spans.push(Span::styled("  ", base));
+        }
+        spans.push(Span::styled((*k).to_string(), key));
+        spans.push(Span::styled(" ", base));
+        spans.push(Span::styled((*v).to_string(), base));
+    }
+    spans.push(Span::styled(" ", base));
+    Line::from(spans)
+}
+
+/// Page-level key bar: always visible so the available actions can be
+/// discovered while the nav pane has focus; rendered muted (no chip
+/// background) until the content pane is focused.
+pub(super) fn render_page_key_bar(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    theme: &super::theme::Theme,
+    items: &[(&str, &str)],
+    focused: bool,
+) {
+    let fitted = key_bar_items_for_width(items, area.width);
+    let line = if focused {
+        key_bar_line(theme, &fitted)
+    } else {
+        key_bar_line_dimmed(theme, &fitted)
+    };
+    frame.render_widget(Paragraph::new(line).alignment(Alignment::Center), area);
+}
+
 /// Render a left-aligned key bar. Used for main-screen footers where keys
 /// are read left-to-right in priority order.
 pub(super) fn render_key_bar(
@@ -515,10 +727,9 @@ pub(super) fn render_key_bar(
     theme: &super::theme::Theme,
     items: &[(&str, &str)],
 ) {
+    let fitted = key_bar_items_for_width(items, area.width);
     frame.render_widget(
-        Paragraph::new(key_bar_line(theme, items))
-            .alignment(Alignment::Left)
-            .wrap(Wrap { trim: false }),
+        Paragraph::new(key_bar_line(theme, &fitted)).alignment(Alignment::Left),
         area,
     );
 }
@@ -531,10 +742,9 @@ pub(super) fn render_key_bar_center(
     theme: &super::theme::Theme,
     items: &[(&str, &str)],
 ) {
+    let fitted = key_bar_items_for_width(items, area.width);
     frame.render_widget(
-        Paragraph::new(key_bar_line(theme, items))
-            .alignment(Alignment::Center)
-            .wrap(Wrap { trim: false }),
+        Paragraph::new(key_bar_line(theme, &fitted)).alignment(Alignment::Center),
         area,
     );
 }
@@ -571,6 +781,19 @@ pub(super) fn inset_left(area: Rect, left: u16) -> Rect {
         x: area.x + left,
         y: area.y,
         width: area.width - left,
+        height: area.height,
+    }
+}
+
+pub(super) fn inset_horizontal(area: Rect, inset: u16) -> Rect {
+    let shrink = inset.saturating_mul(2);
+    if area.width <= shrink {
+        return area;
+    }
+    Rect {
+        x: area.x + inset,
+        y: area.y,
+        width: area.width - shrink,
         height: area.height,
     }
 }

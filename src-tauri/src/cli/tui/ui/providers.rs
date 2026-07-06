@@ -62,22 +62,6 @@ fn provider_proxy_badge_style(badge: ProviderProxyBadge, theme: &super::theme::T
     }
 }
 
-fn provider_switch_key_label(app_type: &AppType) -> &'static str {
-    if app_type.is_additive_mode() {
-        texts::tui_key_add_remove()
-    } else {
-        texts::tui_key_switch()
-    }
-}
-
-fn provider_default_key_label(app_type: &AppType) -> &'static str {
-    if matches!(app_type, AppType::Hermes) {
-        texts::tui_key_enable()
-    } else {
-        texts::tui_key_set_default()
-    }
-}
-
 fn failover_queue_label(data: &UiData, provider_id: &str) -> String {
     failover_queue_position(data, provider_id)
         .map(|position| format!("#{position}"))
@@ -128,52 +112,16 @@ fn provider_name_with_quota_line(
 }
 
 fn render_provider_empty_state(frame: &mut Frame<'_>, area: Rect, theme: &super::theme::Theme) {
-    let title_style = Style::default().add_modifier(Modifier::BOLD);
-    let subtitle_style = Style::default().fg(theme.comment);
-    let primary_style = if theme.no_color {
-        Style::default().add_modifier(Modifier::BOLD)
-    } else {
-        Style::default()
-            .fg(Color::White)
-            .bg(theme.accent)
-            .add_modifier(Modifier::BOLD)
-    };
-    let secondary_style = if theme.no_color {
-        Style::default()
-    } else {
-        Style::default()
-            .fg(theme.dim)
-            .bg(theme.surface)
-            .add_modifier(Modifier::BOLD)
-    };
-
-    let content_lines = vec![
-        Line::styled(texts::tui_provider_empty_title(), title_style),
-        Line::raw(""),
-        Line::styled(texts::tui_provider_empty_subtitle(), subtitle_style),
-        Line::raw(""),
-        Line::from(vec![Span::styled(
-            format!("  Enter  {}  ", texts::tui_key_import_current_config()),
-            primary_style,
-        )]),
-        Line::from(vec![Span::styled(
-            format!("  a  {}  ", texts::tui_key_add_provider()),
-            secondary_style,
-        )]),
-    ];
-
-    let top_padding = area.height.saturating_sub(content_lines.len() as u16) / 2;
-    let mut lines = Vec::with_capacity(top_padding as usize + content_lines.len());
-    for _ in 0..top_padding {
-        lines.push(Line::raw(""));
-    }
-    lines.extend(content_lines);
-
-    frame.render_widget(
-        Paragraph::new(lines)
-            .alignment(Alignment::Center)
-            .wrap(Wrap { trim: false }),
+    render_empty_state(
+        frame,
         area,
+        theme,
+        texts::tui_provider_empty_title(),
+        texts::tui_provider_empty_subtitle(),
+        &[
+            ("Enter", texts::tui_key_import_current_config()),
+            ("a", texts::tui_key_add_provider()),
+        ],
     );
 }
 
@@ -209,71 +157,23 @@ pub(super) fn render_providers(
     let header_style = Style::default().fg(theme.dim).add_modifier(Modifier::BOLD);
     let table_style = Style::default();
 
-    let outer = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Plain)
-        .border_style(pane_border_style(app, Focus::Content, theme))
-        .title(texts::menu_manage_providers());
-    frame.render_widget(outer.clone(), area);
-    let inner = outer.inner(area);
-
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Min(0)])
-        .split(inner);
-
     let visible = provider_rows_filtered(app, data);
-    let selected_supports_quota = visible
-        .get(app.provider_idx)
-        .is_some_and(|row| data::quota_target_for_provider(&app.app_type, row).is_some());
-    if app.focus == Focus::Content {
-        let mut keys = Vec::new();
-        if data.providers.rows.is_empty() {
-            // While the cold-switched app is still loading, don't offer
-            // import/add — the list isn't really empty, just not here yet.
-            if !data.providers.loading {
-                keys.push(("Enter", texts::tui_key_import_current_config()));
-                keys.push(("a", texts::tui_key_add_provider()));
-            }
-        } else if visible.is_empty() {
-            keys.push(("a", texts::tui_key_add()));
-        } else {
-            keys.push(("Space", provider_switch_key_label(&app.app_type)));
-            keys.push(("a", texts::tui_key_add()));
-            // Theoretically we should use "duplicate" here.
-            // However this word is too long to fit in the key hint area,
-            // and key "d" is already used for delete, so we use "copy" here to make it shorter and avoid confusion.
-            keys.push(("c", texts::tui_key_copy()));
-            if let Some(row) = visible.get(app.provider_idx) {
-                if !data::provider_is_read_only(&app.app_type, row) {
-                    keys.push(("e", texts::tui_key_edit()));
-                    keys.push(("d", texts::tui_key_delete()));
-                }
-            }
-            keys.push(("t", texts::tui_key_test()));
-            if selected_supports_quota {
-                keys.push(("r", texts::tui_key_refresh()));
-            }
-            if crate::cli::tui::app::supports_temporary_provider_launch(&app.app_type) {
-                keys.push(("o", texts::tui_key_launch_temp()));
-            }
-            if crate::cli::tui::app::supports_failover_controls(&app.app_type) {
-                keys.push(("f", texts::tui_key_failover()));
-            }
-            if let Some(row) = visible.get(app.provider_idx) {
-                if matches!(app.app_type, AppType::OpenClaw | AppType::Hermes) && row.is_in_config {
-                    keys.push(("x", provider_default_key_label(&app.app_type)));
-                }
-            }
-        }
-        render_key_bar_center(frame, chunks[0], theme, &keys);
-    }
+    let keys = crate::cli::tui::keymap::providers::key_bar_items(app, data);
+    let body = render_page_frame(
+        frame,
+        area,
+        theme,
+        app,
+        texts::menu_manage_providers(),
+        &keys,
+        None,
+    );
 
     if data.providers.rows.is_empty() {
         if data.providers.loading {
-            render_provider_loading_state(frame, chunks[1], theme);
+            render_provider_loading_state(frame, body, theme);
         } else {
-            render_provider_empty_state(frame, chunks[1], theme);
+            render_provider_empty_state(frame, body, theme);
         }
         return;
     }
@@ -336,7 +236,7 @@ pub(super) fn render_providers(
     let mut state = TableState::default();
     state.select(Some(app.provider_idx));
 
-    frame.render_stateful_widget(table, inset_left(chunks[1], CONTENT_INSET_LEFT), &mut state);
+    frame.render_stateful_widget(table, inset_left(body, CONTENT_INSET_LEFT), &mut state);
 }
 
 #[cfg(test)]

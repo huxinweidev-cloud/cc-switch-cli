@@ -21,47 +21,22 @@ pub(super) fn render_sessions(
         &app.sessions.deep_search_results,
     );
 
-    let outer = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Plain)
-        .border_style(pane_border_style(app, Focus::Content, theme))
-        .title(texts::tui_sessions_title());
-    frame.render_widget(outer.clone(), area);
-    let inner = outer.inner(area);
-
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(1),
-            Constraint::Length(3),
-            Constraint::Min(0),
-        ])
-        .split(inner);
-
-    if app.focus == Focus::Content {
-        render_key_bar_center(
-            frame,
-            chunks[0],
-            theme,
-            &[
-                ("↑↓", texts::tui_key_select()),
-                ("←→/h/l", texts::tui_key_pane()),
-                ("Enter", texts::tui_key_view()),
-                ("R", texts::tui_key_restore()),
-                ("d", texts::tui_key_delete()),
-                ("r", texts::tui_key_refresh()),
-                (
-                    "a",
-                    if app.sessions.show_all_providers {
-                        "全部 (Esc返回)"
-                    } else {
-                        "全部"
-                    },
-                ),
-            ],
-        );
-    }
-
+    let keys = [
+        ("↑↓", texts::tui_key_select()),
+        ("←→/h/l", texts::tui_key_pane()),
+        ("Enter", texts::tui_key_view()),
+        ("R", texts::tui_key_restore()),
+        ("d", texts::tui_key_delete()),
+        ("r", texts::tui_key_refresh()),
+        (
+            "a",
+            if app.sessions.show_all_providers {
+                texts::tui_key_sessions_all_active()
+            } else {
+                texts::tui_key_sessions_all()
+            },
+        ),
+    ];
     let summary = if app.sessions.loading && !app.sessions.loaded_once {
         texts::tui_sessions_loading_summary().to_string()
     } else if app.sessions.deep_search_active.is_some() {
@@ -73,16 +48,24 @@ pub(super) fn render_sessions(
             _ => "⠸",
         };
         let query = app.sessions.deep_search_query.as_deref().unwrap_or("");
-        format!("{spinner} 搜索中: \"{query}\"...")
+        format!("{spinner} {}", texts::tui_sessions_searching(query))
     } else {
         texts::tui_sessions_summary(app.sessions.rows.len(), visible.len())
     };
-    render_summary_bar(frame, chunks[1], theme, summary);
+    let frame_body = render_page_frame(
+        frame,
+        area,
+        theme,
+        app,
+        texts::tui_sessions_title(),
+        &keys,
+        Some(summary),
+    );
 
     let body = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(44), Constraint::Percentage(56)])
-        .split(chunks[2]);
+        .split(frame_body);
 
     render_session_list(frame, app, &visible, body[0], theme);
     render_session_detail(frame, app, &visible, body[1], theme);
@@ -99,7 +82,7 @@ fn render_session_list(
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(session_pane_border_style(app, SessionsPane::List, theme))
-        .title(texts::menu_manage_sessions());
+        .title(format!(" {} ", texts::menu_manage_sessions()));
     frame.render_widget(block.clone(), area);
     let inner = block.inner(area);
 
@@ -256,7 +239,7 @@ fn render_session_overview(
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(Style::default().fg(theme.dim))
-        .title(texts::tui_sessions_overview_title());
+        .title(format!(" {} ", texts::tui_sessions_overview_title()));
     frame.render_widget(block.clone(), area);
 
     let Some(session) = session else {
@@ -337,7 +320,7 @@ fn render_session_messages(
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(session_pane_border_style(app, SessionsPane::Detail, theme))
-        .title(texts::tui_sessions_messages_title());
+        .title(format!(" {} ", texts::tui_sessions_messages_title()));
     frame.render_widget(block.clone(), area);
     let inner = block.inner(area);
 

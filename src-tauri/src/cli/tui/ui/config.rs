@@ -60,7 +60,7 @@ pub(super) fn render_config(
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(pane_border_style(app, Focus::Content, theme))
-        .title(texts::tui_config_title());
+        .title(format!(" {} ", texts::tui_config_title()));
     frame.render_widget(outer.clone(), area);
     let inner = outer.inner(area);
 
@@ -69,13 +69,11 @@ pub(super) fn render_config(
         .constraints([Constraint::Length(1), Constraint::Min(0)])
         .split(inner);
 
-    if app.focus == Focus::Content {
-        let mut keys = vec![("Enter", texts::tui_key_select())];
-        if matches!(items.get(app.config_idx), Some(ConfigItem::CommonSnippet)) {
-            keys.push(("e", texts::tui_key_edit_snippet()));
-        }
-        render_key_bar_center(frame, chunks[0], theme, &keys);
+    let mut keys = vec![("Enter", texts::tui_key_select())];
+    if matches!(items.get(app.config_idx), Some(ConfigItem::CommonSnippet)) {
+        keys.push(("e", texts::tui_key_edit_snippet()));
     }
+    render_page_key_bar(frame, chunks[0], theme, &keys, app.focus == Focus::Content);
 
     let table = Table::new(rows, [Constraint::Min(10)])
         .block(Block::default().borders(Borders::NONE))
@@ -103,7 +101,10 @@ pub(super) fn render_config_webdav(
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(pane_border_style(app, Focus::Content, theme))
-        .title(texts::tui_config_webdav_title());
+        .title(breadcrumb_title(&[
+            texts::tui_config_title(),
+            texts::tui_config_webdav_title(),
+        ]));
     frame.render_widget(outer.clone(), area);
     let inner = outer.inner(area);
 
@@ -112,16 +113,14 @@ pub(super) fn render_config_webdav(
         .constraints([Constraint::Length(1), Constraint::Min(0)])
         .split(inner);
 
-    if app.focus == Focus::Content {
-        let mut keys = vec![("Enter", texts::tui_key_select())];
-        if matches!(
-            items.get(app.config_webdav_idx),
-            Some(WebDavConfigItem::Settings)
-        ) {
-            keys.push(("e", texts::tui_key_edit()));
-        }
-        render_key_bar_center(frame, chunks[0], theme, &keys);
+    let mut keys = vec![("Enter", texts::tui_key_select())];
+    if matches!(
+        items.get(app.config_webdav_idx),
+        Some(WebDavConfigItem::Settings)
+    ) {
+        keys.push(("e", texts::tui_key_edit()));
     }
+    render_page_key_bar(frame, chunks[0], theme, &keys, app.focus == Focus::Content);
 
     let table = Table::new(rows, [Constraint::Min(10)])
         .block(Block::default().borders(Borders::NONE))
@@ -358,7 +357,7 @@ fn render_section_block(
             theme.comment
         }));
     if let Some(title) = title {
-        block = block.title(title);
+        block = block.title(format!(" {} ", title));
     }
     frame.render_widget(block.clone(), area);
     frame.render_widget(
@@ -547,7 +546,7 @@ fn render_openclaw_env_route(
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(pane_border_style(app, Focus::Content, theme))
-        .title(title);
+        .title(format!(" {} ", title));
     frame.render_widget(outer.clone(), area);
     let inner = outer.inner(area);
 
@@ -580,18 +579,17 @@ fn render_openclaw_env_route(
         ])
         .split(inner);
 
-    if app.focus == Focus::Content {
-        render_key_bar_center(
-            frame,
-            chunks[0],
-            theme,
-            &[
-                ("Enter", texts::tui_key_edit()),
-                ("e", texts::tui_key_edit()),
-                ("Esc", texts::tui_key_close()),
-            ],
-        );
-    }
+    render_page_key_bar(
+        frame,
+        chunks[0],
+        theme,
+        &[
+            ("Enter", texts::tui_key_edit()),
+            ("e", texts::tui_key_edit()),
+            ("Esc", texts::tui_key_close()),
+        ],
+        app.focus == Focus::Content,
+    );
 
     if has_warnings {
         render_warning_banner(frame, chunks[1], theme, &section_warnings);
@@ -836,7 +834,7 @@ fn render_openclaw_tools_section_block(
         .border_style(openclaw_tools_section_border_style(theme, primary));
     if let Some(title) = title {
         block = block.title(Line::styled(
-            title.to_string(),
+            format!(" {title} "),
             openclaw_tools_section_title_style(theme, primary),
         ));
     }
@@ -893,7 +891,7 @@ fn render_openclaw_tools_route(
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(pane_border_style(app, Focus::Content, theme))
-        .title(title);
+        .title(format!(" {} ", title));
     frame.render_widget(outer.clone(), area);
     let inner = outer.inner(area);
 
@@ -930,19 +928,23 @@ fn render_openclaw_tools_route(
         ])
         .split(inner);
 
-    if app.focus == Focus::Content {
-        let key_bar_items = if load_failed {
-            vec![("Esc", texts::tui_key_close())]
-        } else {
-            vec![
-                ("Enter", texts::tui_key_edit()),
-                ("e", texts::tui_key_edit()),
-                ("Del/Backspace", texts::tui_key_delete()),
-                ("Esc", texts::tui_key_close()),
-            ]
-        };
-        render_key_bar_center(frame, chunks[0], theme, &key_bar_items);
-    }
+    let key_bar_items = if load_failed {
+        vec![("Esc", texts::tui_key_close())]
+    } else {
+        vec![
+            ("Enter", texts::tui_key_edit()),
+            ("e", texts::tui_key_edit()),
+            ("Del/Backspace", texts::tui_key_delete()),
+            ("Esc", texts::tui_key_close()),
+        ]
+    };
+    render_page_key_bar(
+        frame,
+        chunks[0],
+        theme,
+        &key_bar_items,
+        app.focus == Focus::Content,
+    );
 
     if has_parse_warning {
         render_warning_banner(frame, chunks[1], theme, &parse_warnings);
@@ -1208,7 +1210,7 @@ fn openclaw_agents_field_row(
     let label_style = if selected && theme.no_color {
         row_style
     } else {
-        row_style.fg(ratatui::style::Color::White)
+        row_style.fg(theme.fg_strong)
     };
     let value_style = if selected && theme.no_color {
         row_style
@@ -1340,7 +1342,7 @@ fn render_openclaw_agents_section_block(
         .border_style(Style::default().fg(theme.dim));
     if let Some(title) = title {
         block = block.title(Line::styled(
-            title.to_string(),
+            format!(" {title} "),
             Style::default().fg(theme.comment),
         ));
     }
@@ -1400,7 +1402,7 @@ fn render_openclaw_agents_route(
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(pane_border_style(app, Focus::Content, theme))
-        .title(title);
+        .title(format!(" {} ", title));
     frame.render_widget(outer.clone(), area);
     let inner = outer.inner(area);
 
@@ -1437,18 +1439,22 @@ fn render_openclaw_agents_route(
         ])
         .split(inner);
 
-    if app.focus == Focus::Content {
-        let key_bar_items = if load_failed {
-            vec![("Esc", texts::tui_key_close())]
-        } else {
-            vec![
-                ("Enter", texts::tui_key_edit()),
-                ("Del", texts::tui_key_delete()),
-                ("Esc", texts::tui_key_close()),
-            ]
-        };
-        render_key_bar_center(frame, chunks[0], theme, &key_bar_items);
-    }
+    let key_bar_items = if load_failed {
+        vec![("Esc", texts::tui_key_close())]
+    } else {
+        vec![
+            ("Enter", texts::tui_key_edit()),
+            ("Del", texts::tui_key_delete()),
+            ("Esc", texts::tui_key_close()),
+        ]
+    };
+    render_page_key_bar(
+        frame,
+        chunks[0],
+        theme,
+        &key_bar_items,
+        app.focus == Focus::Content,
+    );
 
     if has_parse_warning {
         render_warning_banner(frame, chunks[1], theme, &parse_warnings);
@@ -2077,7 +2083,7 @@ fn render_openclaw_workspace_section_block(
         .border_type(BorderType::Plain)
         .border_style(openclaw_workspace_section_border_style(theme, primary));
     if let Some(title) = title {
-        block = block.title(title);
+        block = block.title(format!(" {} ", title));
     }
     frame.render_widget(block.clone(), area);
 
@@ -2148,7 +2154,7 @@ fn render_openclaw_workspace(
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(pane_border_style(app, Focus::Content, theme))
-        .title(texts::tui_openclaw_workspace_title());
+        .title(format!(" {} ", texts::tui_openclaw_workspace_title()));
     frame.render_widget(outer.clone(), area);
     let inner = outer.inner(area);
     let chunks = Layout::default()
@@ -2156,17 +2162,16 @@ fn render_openclaw_workspace(
         .constraints([Constraint::Length(1), Constraint::Min(0)])
         .split(inner);
 
-    if app.focus == Focus::Content {
-        render_key_bar_center(
-            frame,
-            chunks[0],
-            theme,
-            &[
-                ("Enter", texts::tui_key_open()),
-                ("o", texts::tui_key_open_directory()),
-            ],
-        );
-    }
+    render_page_key_bar(
+        frame,
+        chunks[0],
+        theme,
+        &[
+            ("Enter", texts::tui_key_open()),
+            ("o", texts::tui_key_open_directory()),
+        ],
+        app.focus == Focus::Content,
+    );
 
     let max_filename_len = crate::commands::workspace::ALLOWED_FILES
         .iter()
@@ -2319,7 +2324,10 @@ fn render_openclaw_daily_memory(
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(pane_border_style(app, Focus::Content, theme))
-        .title(texts::tui_openclaw_daily_memory_title());
+        .title(breadcrumb_title(&[
+            texts::tui_openclaw_workspace_title(),
+            texts::tui_openclaw_daily_memory_title(),
+        ]));
     frame.render_widget(outer.clone(), area);
     let inner = outer.inner(area);
     let chunks = Layout::default()
@@ -2331,19 +2339,18 @@ fn render_openclaw_daily_memory(
         ])
         .split(inner);
 
-    if app.focus == Focus::Content {
-        render_key_bar_center(
-            frame,
-            chunks[0],
-            theme,
-            &[
-                ("Enter", texts::tui_key_open()),
-                ("a", texts::tui_key_create()),
-                ("d", texts::tui_key_delete()),
-                ("o", texts::tui_key_open_directory()),
-            ],
-        );
-    }
+    render_page_key_bar(
+        frame,
+        chunks[0],
+        theme,
+        &[
+            ("Enter", texts::tui_key_open()),
+            ("a", texts::tui_key_create()),
+            ("d", texts::tui_key_delete()),
+            ("o", texts::tui_key_open_directory()),
+        ],
+        app.focus == Focus::Content,
+    );
 
     frame.render_widget(
         Paragraph::new(format!(
@@ -2393,7 +2400,7 @@ pub(super) fn render_hermes_memory(
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(pane_border_style(app, Focus::Content, theme))
-        .title(texts::tui_hermes_memory_title());
+        .title(format!(" {} ", texts::tui_hermes_memory_title()));
     frame.render_widget(outer.clone(), area);
     let inner = outer.inner(area);
     let chunks = Layout::default()
@@ -2405,18 +2412,17 @@ pub(super) fn render_hermes_memory(
         ])
         .split(inner);
 
-    if app.focus == Focus::Content {
-        render_key_bar_center(
-            frame,
-            chunks[0],
-            theme,
-            &[
-                ("Enter", texts::tui_key_edit()),
-                ("Space/x", texts::tui_key_toggle()),
-                ("o", texts::tui_key_open_directory()),
-            ],
-        );
-    }
+    render_page_key_bar(
+        frame,
+        chunks[0],
+        theme,
+        &[
+            ("Enter", texts::tui_key_edit()),
+            ("Space/x", texts::tui_key_toggle()),
+            ("o", texts::tui_key_open_directory()),
+        ],
+        app.focus == Focus::Content,
+    );
 
     frame.render_widget(
         Paragraph::new(format!(
@@ -2523,75 +2529,83 @@ pub(super) fn render_settings(
     let claude_plugin_integration = crate::settings::get_enable_claude_plugin_integration();
     let codex_unified_session_history = crate::settings::unify_codex_session_history();
 
-    let rows_data = super::app::SettingsItem::ALL
-        .iter()
-        .map(|item| match item {
-            super::app::SettingsItem::Language => (
-                texts::tui_settings_header_language().to_string(),
-                language.display_name().to_string(),
-            ),
-            super::app::SettingsItem::VisibleAppsMode => (
-                texts::tui_settings_visible_apps_mode_label().to_string(),
-                match visible_apps_mode {
-                    crate::settings::VisibleAppsMode::Auto => {
-                        texts::tui_settings_visible_apps_mode_auto().to_string()
-                    }
-                    crate::settings::VisibleAppsMode::Manual => {
-                        texts::tui_settings_visible_apps_mode_manual().to_string()
-                    }
-                },
-            ),
-            super::app::SettingsItem::VisibleApps => (
-                texts::tui_settings_visible_apps_label().to_string(),
-                visible_apps_summary(&visible_apps),
-            ),
-            super::app::SettingsItem::OpenClawConfigDir => (
-                texts::tui_settings_openclaw_config_dir_label().to_string(),
-                openclaw_config_dir.clone().unwrap_or_else(|| {
-                    texts::tui_settings_openclaw_config_dir_default_value().to_string()
-                }),
-            ),
-            super::app::SettingsItem::ManagedAccounts => (
-                texts::tui_settings_managed_accounts_title().to_string(),
-                managed_accounts_summary(app),
-            ),
-            super::app::SettingsItem::SkipClaudeOnboarding => (
-                texts::skip_claude_onboarding_label().to_string(),
-                if skip_claude_onboarding {
-                    texts::enabled().to_string()
-                } else {
-                    texts::disabled().to_string()
-                },
-            ),
-            super::app::SettingsItem::ClaudePluginIntegration => (
-                texts::enable_claude_plugin_integration_label().to_string(),
-                if claude_plugin_integration {
-                    texts::enabled().to_string()
-                } else {
-                    texts::disabled().to_string()
-                },
-            ),
-            super::app::SettingsItem::CodexUnifiedSessionHistory => (
-                texts::codex_unified_session_history_label().to_string(),
-                if codex_unified_session_history {
-                    texts::enabled().to_string()
-                } else {
-                    texts::disabled().to_string()
-                },
-            ),
-            super::app::SettingsItem::Proxy => (
-                texts::tui_config_item_proxy().to_string(),
-                format!(
-                    "{}:{}",
-                    data.proxy.configured_listen_address, data.proxy.configured_listen_port,
+    let rows_data =
+        super::app::SettingsItem::ALL
+            .iter()
+            .map(|item| match item {
+                super::app::SettingsItem::Language => (
+                    texts::tui_settings_header_language().to_string(),
+                    language.display_name().to_string(),
                 ),
-            ),
-            super::app::SettingsItem::CheckForUpdates => (
-                texts::tui_settings_check_for_updates().to_string(),
-                format!("v{}", env!("CARGO_PKG_VERSION")),
-            ),
-        })
-        .collect::<Vec<_>>();
+                super::app::SettingsItem::Theme => (
+                    texts::tui_settings_theme_label().to_string(),
+                    texts::tui_settings_theme_mode_name(
+                        crate::cli::tui::theme::configured_theme_mode(),
+                    )
+                    .to_string(),
+                ),
+                super::app::SettingsItem::VisibleAppsMode => (
+                    texts::tui_settings_visible_apps_mode_label().to_string(),
+                    match visible_apps_mode {
+                        crate::settings::VisibleAppsMode::Auto => {
+                            texts::tui_settings_visible_apps_mode_auto().to_string()
+                        }
+                        crate::settings::VisibleAppsMode::Manual => {
+                            texts::tui_settings_visible_apps_mode_manual().to_string()
+                        }
+                    },
+                ),
+                super::app::SettingsItem::VisibleApps => (
+                    texts::tui_settings_visible_apps_label().to_string(),
+                    visible_apps_summary(&visible_apps),
+                ),
+                super::app::SettingsItem::OpenClawConfigDir => (
+                    texts::tui_settings_openclaw_config_dir_label().to_string(),
+                    openclaw_config_dir.clone().unwrap_or_else(|| {
+                        texts::tui_settings_openclaw_config_dir_default_value().to_string()
+                    }),
+                ),
+                super::app::SettingsItem::ManagedAccounts => (
+                    texts::tui_settings_managed_accounts_title().to_string(),
+                    managed_accounts_summary(app),
+                ),
+                super::app::SettingsItem::SkipClaudeOnboarding => (
+                    texts::skip_claude_onboarding_label().to_string(),
+                    if skip_claude_onboarding {
+                        texts::enabled().to_string()
+                    } else {
+                        texts::disabled().to_string()
+                    },
+                ),
+                super::app::SettingsItem::ClaudePluginIntegration => (
+                    texts::enable_claude_plugin_integration_label().to_string(),
+                    if claude_plugin_integration {
+                        texts::enabled().to_string()
+                    } else {
+                        texts::disabled().to_string()
+                    },
+                ),
+                super::app::SettingsItem::CodexUnifiedSessionHistory => (
+                    texts::codex_unified_session_history_label().to_string(),
+                    if codex_unified_session_history {
+                        texts::enabled().to_string()
+                    } else {
+                        texts::disabled().to_string()
+                    },
+                ),
+                super::app::SettingsItem::Proxy => (
+                    texts::tui_config_item_proxy().to_string(),
+                    format!(
+                        "{}:{}",
+                        data.proxy.configured_listen_address, data.proxy.configured_listen_port,
+                    ),
+                ),
+                super::app::SettingsItem::CheckForUpdates => (
+                    texts::tui_settings_check_for_updates().to_string(),
+                    format!("v{}", env!("CARGO_PKG_VERSION")),
+                ),
+            })
+            .collect::<Vec<_>>();
 
     let label_col_width = field_label_column_width(
         rows_data
@@ -2615,7 +2629,7 @@ pub(super) fn render_settings(
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(pane_border_style(app, Focus::Content, theme))
-        .title(texts::menu_settings());
+        .title(format!(" {} ", texts::menu_settings()));
     frame.render_widget(outer.clone(), area);
     let inner = outer.inner(area);
 
@@ -2624,14 +2638,13 @@ pub(super) fn render_settings(
         .constraints([Constraint::Length(1), Constraint::Min(0)])
         .split(inner);
 
-    if app.focus == Focus::Content {
-        render_key_bar_center(
-            frame,
-            chunks[0],
-            theme,
-            &[("Enter", texts::tui_key_apply())],
-        );
-    }
+    render_page_key_bar(
+        frame,
+        chunks[0],
+        theme,
+        &[("Enter", texts::tui_key_apply())],
+        app.focus == Focus::Content,
+    );
 
     let table = Table::new(
         rows,
@@ -2672,7 +2685,10 @@ pub(super) fn render_settings_managed_accounts(
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(pane_border_style(app, Focus::Content, theme))
-        .title(texts::tui_settings_managed_accounts_title());
+        .title(breadcrumb_title(&[
+            texts::menu_settings(),
+            texts::tui_settings_managed_accounts_title(),
+        ]));
     frame.render_widget(outer.clone(), area);
     let inner = outer.inner(area);
 
@@ -2685,10 +2701,8 @@ pub(super) fn render_settings_managed_accounts(
         ])
         .split(inner);
 
-    if app.focus == Focus::Content {
-        let keys = managed_account_key_items(app);
-        render_key_bar_center(frame, chunks[0], theme, &keys);
-    }
+    let keys = managed_account_key_items(app);
+    render_page_key_bar(frame, chunks[0], theme, &keys, app.focus == Focus::Content);
 
     render_summary_bar(frame, chunks[1], theme, managed_accounts_page_summary(app));
 
@@ -2780,7 +2794,7 @@ fn render_managed_account_list(
         } else {
             Style::default().fg(theme.dim)
         })
-        .title(texts::tui_managed_accounts_list_title());
+        .title(format!(" {} ", texts::tui_managed_accounts_list_title()));
     frame.render_widget(block.clone(), area);
     let inner = inset_left(block.inner(area), CONTENT_INSET_LEFT);
 
@@ -2925,7 +2939,7 @@ fn render_managed_account_detail_panel(
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(Style::default().fg(theme.dim))
-        .title(texts::tui_managed_accounts_details_title());
+        .title(format!(" {} ", texts::tui_managed_accounts_details_title()));
     frame.render_widget(block.clone(), area);
     let inner = inset_left(block.inner(area), CONTENT_INSET_LEFT);
 
@@ -3168,7 +3182,10 @@ pub(super) fn render_settings_proxy(
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(pane_border_style(app, Focus::Content, theme))
-        .title(texts::tui_settings_proxy_title());
+        .title(breadcrumb_title(&[
+            texts::menu_settings(),
+            texts::tui_settings_proxy_title(),
+        ]));
     frame.render_widget(outer.clone(), area);
     let inner = outer.inner(area);
 
@@ -3181,20 +3198,24 @@ pub(super) fn render_settings_proxy(
         ])
         .split(inner);
 
-    if app.focus == Focus::Content {
-        let key_label = match LocalProxySettingsItem::ALL.get(app.settings_proxy_idx) {
-            Some(LocalProxySettingsItem::AutoFailover) => texts::tui_key_toggle(),
-            Some(LocalProxySettingsItem::ListenAddress) if data.proxy.running => "",
-            Some(LocalProxySettingsItem::ListenPort)
-                if data.proxy.has_active_worker_for(&app.app_type) =>
-            {
-                ""
-            }
-            _ => texts::tui_key_edit(),
-        };
-        if !key_label.is_empty() {
-            render_key_bar_center(frame, chunks[0], theme, &[("Enter", key_label)]);
+    let key_label = match LocalProxySettingsItem::ALL.get(app.settings_proxy_idx) {
+        Some(LocalProxySettingsItem::AutoFailover) => texts::tui_key_toggle(),
+        Some(LocalProxySettingsItem::ListenAddress) if data.proxy.running => "",
+        Some(LocalProxySettingsItem::ListenPort)
+            if data.proxy.has_active_worker_for(&app.app_type) =>
+        {
+            ""
         }
+        _ => texts::tui_key_edit(),
+    };
+    if !key_label.is_empty() {
+        render_page_key_bar(
+            frame,
+            chunks[0],
+            theme,
+            &[("Enter", key_label)],
+            app.focus == Focus::Content,
+        );
     }
 
     let table = Table::new(

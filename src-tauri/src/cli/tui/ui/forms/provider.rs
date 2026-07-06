@@ -228,7 +228,7 @@ pub(crate) fn render_provider_add_form(
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(pane_border_style(app, Focus::Content, theme))
-        .title(title);
+        .title(format!(" {} ", title));
     frame.render_widget(outer.clone(), area);
     let inner = outer.inner(area);
 
@@ -288,7 +288,7 @@ pub(crate) fn render_provider_add_form(
             matches!(provider.focus, FormFocus::Fields),
             theme,
         ))
-        .title(texts::tui_form_fields_title());
+        .title(format!(" {} ", texts::tui_form_fields_title()));
     frame.render_widget(fields_block.clone(), body[0]);
     let fields_inner = fields_block.inner(body[0]);
 
@@ -319,6 +319,7 @@ pub(crate) fn render_provider_add_form(
     ])
     .style(Style::default().fg(theme.dim).add_modifier(Modifier::BOLD));
 
+    let table_area = fields_chunks[0];
     let rows = fields
         .iter()
         .zip(rows_data.iter())
@@ -332,7 +333,15 @@ pub(crate) fn render_provider_add_form(
                 ])
                 .style(Style::default().fg(theme.dim))
             } else {
-                Row::new(vec![Cell::from(cell_pad(label)), Cell::from(value.clone())])
+                Row::new(vec![
+                    Cell::from(cell_pad(label)),
+                    Cell::from(truncated_value_cell(
+                        value,
+                        table_area.width,
+                        label_col_width,
+                        theme,
+                    )),
+                ])
             }
         });
 
@@ -349,7 +358,6 @@ pub(crate) fn render_provider_add_form(
     if !fields.is_empty() {
         state.select(Some(provider.field_idx.min(fields.len() - 1)));
     }
-    let table_area = fields_chunks[0];
     let editor_area = fields_chunks[1];
     frame.render_stateful_widget(table, table_area, &mut state);
 
@@ -518,7 +526,7 @@ fn render_quick_config_form(
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(pane_border_style(app, Focus::Content, theme))
-        .title(title.to_string());
+        .title(format!(" {title} "));
     frame.render_widget(outer.clone(), area);
     let inner = outer.inner(area);
 
@@ -533,7 +541,7 @@ fn render_quick_config_form(
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(focus_block_style(true, theme))
-        .title(texts::tui_form_fields_title());
+        .title(format!(" {} ", texts::tui_form_fields_title()));
     frame.render_widget(fields_block.clone(), chunks[1]);
     let fields_inner = fields_block.inner(chunks[1]);
 
@@ -557,7 +565,15 @@ fn render_quick_config_form(
     .style(Style::default().fg(theme.dim).add_modifier(Modifier::BOLD));
 
     let rows = rows_data.iter().map(|(label, value)| {
-        Row::new(vec![Cell::from(cell_pad(label)), Cell::from(value.clone())])
+        Row::new(vec![
+            Cell::from(cell_pad(label)),
+            Cell::from(truncated_value_cell(
+                value,
+                fields_inner.width,
+                label_col_width,
+                theme,
+            )),
+        ])
     });
 
     let table = Table::new(
@@ -588,7 +604,7 @@ fn render_codex_local_routing_form(
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(pane_border_style(app, Focus::Content, theme))
-        .title(title);
+        .title(format!(" {} ", title));
     frame.render_widget(outer.clone(), area);
     let inner = outer.inner(area);
 
@@ -645,7 +661,7 @@ fn render_codex_local_routing_form(
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(focus_block_style(!on_table, theme))
-        .title(texts::tui_form_fields_title());
+        .title(format!(" {} ", texts::tui_form_fields_title()));
     frame.render_widget(fields_block.clone(), body[0]);
     let fields_inner = fields_block.inner(body[0]);
 
@@ -669,7 +685,15 @@ fn render_codex_local_routing_form(
     .style(Style::default().fg(theme.dim).add_modifier(Modifier::BOLD));
 
     let rows = rows_data.iter().map(|(label, value)| {
-        Row::new(vec![Cell::from(cell_pad(label)), Cell::from(value.clone())])
+        Row::new(vec![
+            Cell::from(cell_pad(label)),
+            Cell::from(truncated_value_cell(
+                value,
+                fields_inner.width,
+                label_col_width,
+                theme,
+            )),
+        ])
     });
 
     let table = Table::new(
@@ -785,7 +809,7 @@ fn render_codex_model_catalog_form(
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(pane_border_style(app, Focus::Content, theme))
-        .title(title);
+        .title(format!(" {} ", title));
     frame.render_widget(outer.clone(), area);
     let inner = outer.inner(area);
 
@@ -805,7 +829,7 @@ fn render_codex_model_catalog_form(
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(focus_block_style(true, theme))
-        .title(texts::tui_codex_model_catalog());
+        .title(format!(" {} ", texts::tui_codex_model_catalog()));
     frame.render_widget(block.clone(), chunks[1]);
     let table_area = block.inner(chunks[1]);
 
@@ -928,7 +952,7 @@ fn render_usage_query_form(
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(pane_border_style(app, Focus::Content, theme))
-        .title(title);
+        .title(format!(" {} ", title));
     frame.render_widget(outer.clone(), area);
     let inner = outer.inner(area);
 
@@ -974,7 +998,7 @@ fn render_usage_query_form(
             matches!(provider.focus, FormFocus::Fields),
             theme,
         ))
-        .title(texts::tui_form_fields_title());
+        .title(format!(" {} ", texts::tui_form_fields_title()));
     frame.render_widget(fields_block.clone(), body[0]);
     let fields_inner = fields_block.inner(body[0]);
 
@@ -998,7 +1022,15 @@ fn render_usage_query_form(
     .style(Style::default().fg(theme.dim).add_modifier(Modifier::BOLD));
 
     let rows = rows_data.iter().map(|(label, value)| {
-        Row::new(vec![Cell::from(cell_pad(label)), Cell::from(value.clone())])
+        Row::new(vec![
+            Cell::from(cell_pad(label)),
+            Cell::from(truncated_value_cell(
+                value,
+                fields_inner.width,
+                label_col_width,
+                theme,
+            )),
+        ])
     });
 
     let table = Table::new(
@@ -1061,7 +1093,7 @@ fn render_usage_query_info_panel(
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(Style::default().fg(theme.dim))
-        .title(texts::tui_usage_query_info());
+        .title(format!(" {} ", texts::tui_usage_query_info()));
     frame.render_widget(block.clone(), area);
     let inner = block.inner(area);
 
@@ -1097,7 +1129,10 @@ fn render_usage_query_script_preview(
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(focus_block_style(active, theme))
-        .title(texts::tui_usage_query_script_preview_title());
+        .title(format!(
+            " {} ",
+            texts::tui_usage_query_script_preview_title()
+        ));
     frame.render_widget(block.clone(), area);
     let inner = block.inner(area);
 
@@ -1137,7 +1172,7 @@ fn render_usage_query_script_help(
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(focus_block_style(active, theme))
-        .title(texts::tui_usage_query_script_help_title());
+        .title(format!(" {} ", texts::tui_usage_query_script_help_title()));
     frame.render_widget(block.clone(), area);
     let inner = block.inner(area);
 
