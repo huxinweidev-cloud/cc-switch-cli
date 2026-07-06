@@ -383,14 +383,38 @@ impl ProviderService {
             current_provider.settings_config.get("auth").cloned()
         };
 
+        // Never capture a stray ChatGPT OAuth login into a third-party provider
+        // snapshot. If the user ran `codex login` while this (non-official)
+        // provider was active, the live auth.json now carries OAuth material that
+        // does not belong to it; keep only its API key, recovering it from the
+        // config bearer token or the stored snapshot when the live auth.json lost
+        // it to that login (issue #328).
+        let is_official = Self::codex_live_write_category(&current_provider) == Some("official");
+        let stored_auth = current_provider.settings_config.get("auth");
+        let stored_config = current_provider
+            .settings_config
+            .get("config")
+            .and_then(Value::as_str);
+
         let mut snapshot_provider = current_provider.clone();
         if config_path.exists() {
             let text =
                 std::fs::read_to_string(&config_path).map_err(|e| AppError::io(&config_path, e))?;
             Self::maybe_update_codex_common_config_snippet(config, &text)?;
 
+            let capture_auth = if is_official {
+                auth.clone()
+            } else {
+                Some(crate::codex_config::sanitize_codex_third_party_auth(
+                    auth.as_ref(),
+                    Some(text.as_str()),
+                    stored_auth,
+                    stored_config,
+                ))
+            };
+
             let mut raw_settings = serde_json::Map::new();
-            if let Some(auth) = auth.clone() {
+            if let Some(auth) = capture_auth {
                 raw_settings.insert("auth".to_string(), auth);
             }
             raw_settings.insert("config".to_string(), Value::String(text));
@@ -401,8 +425,19 @@ impl ProviderService {
                 config.common_config_snippets.codex.as_deref(),
             )?;
         } else {
+            let capture_auth = if is_official {
+                auth.clone()
+            } else {
+                Some(crate::codex_config::sanitize_codex_third_party_auth(
+                    auth.as_ref(),
+                    None,
+                    stored_auth,
+                    stored_config,
+                ))
+            };
+
             let mut raw_settings = serde_json::Map::new();
-            if let Some(auth) = auth.clone() {
+            if let Some(auth) = capture_auth {
                 raw_settings.insert("auth".to_string(), auth);
             }
             snapshot_provider.settings_config = Value::Object(raw_settings);
@@ -474,13 +509,29 @@ impl ProviderService {
                 cfg_text,
                 profile,
             )?;
-        let category = Self::codex_live_write_category(provider);
-        // Mirror upstream write_codex_live_for_provider: official providers with
-        // login material write auth.json; third-party providers write auth.json
-        // unless preserve_codex_official_auth_on_switch is set (then auth.json is
+        let is_official = Self::codex_live_write_category(provider) == Some("official");
+        // Mirror upstream write_codex_live_for_provider: official providers own
+        // auth.json; third-party providers write auth.json unless
+        // preserve_codex_official_auth_on_switch is set (then auth.json is
         // preserved and the API key rides in config.toml's bearer token).
-        let should_write_auth = category == Some("official")
+        let should_write_auth = is_official
             || (!force_sync && !crate::settings::preserve_codex_official_auth_on_switch());
+
+        // A third-party provider must authenticate with its API key, never with a
+        // stray ChatGPT OAuth login that leaked into auth.json (e.g. from running
+        // `codex login` while it was active). Strip OAuth material for non-official
+        // providers before writing auth.json, recovering the key from config.toml's
+        // bearer token when the live auth.json lost it (issue #328).
+        let write_auth = if is_official {
+            auth.clone()
+        } else {
+            crate::codex_config::sanitize_codex_third_party_auth(
+                Some(auth),
+                Some(cfg_text),
+                None,
+                None,
+            )
+        };
 
         // config.toml is a clean OVERWRITE with the provider's effective config.
         // When auth.json is preserved (third-party + preserve flag) the API key
@@ -489,7 +540,7 @@ impl ProviderService {
             prepared_config.config_text.clone()
         } else {
             crate::codex_config::prepare_codex_provider_live_config(
-                auth,
+                &write_auth,
                 &prepared_config.config_text,
             )?
         };
@@ -499,10 +550,14 @@ impl ProviderService {
         // ChatGPT OAuth cache when auth is preserved. An empty/null incoming auth
         // removes the stale live auth.json rather than writing an empty file.
         let auth = if should_write_auth {
-            if auth.is_null() || auth.as_object().is_some_and(serde_json::Map::is_empty) {
+            if write_auth.is_null()
+                || write_auth
+                    .as_object()
+                    .is_some_and(serde_json::Map::is_empty)
+            {
                 PreparedCodexAuthWrite::Delete
             } else {
-                PreparedCodexAuthWrite::Write(auth.clone())
+                PreparedCodexAuthWrite::Write(write_auth)
             }
         } else {
             PreparedCodexAuthWrite::Preserve
