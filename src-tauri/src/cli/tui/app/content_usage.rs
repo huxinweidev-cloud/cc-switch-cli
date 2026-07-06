@@ -40,22 +40,33 @@ impl UsagePane {
 
 impl App {
     pub(crate) fn on_usage_key(&mut self, key: KeyEvent, data: &UiData) -> Action {
-        let is_backtab = matches!(key.code, KeyCode::BackTab)
-            || (matches!(key.code, KeyCode::Tab) && key.modifiers.contains(KeyModifiers::SHIFT));
-        match key.code {
-            KeyCode::Char('1') => {
+        use crate::cli::tui::keymap::usage::Intent;
+
+        // Shift+Tab may arrive as Tab+SHIFT instead of BackTab; the
+        // registry matches key codes only, so pre-check the modifier form.
+        if matches!(key.code, KeyCode::Tab) && key.modifiers.contains(KeyModifiers::SHIFT) {
+            self.usage.metric = self.usage.metric.previous();
+            return Action::None;
+        }
+
+        let Some(intent) = crate::cli::tui::keymap::usage::intent_for(key.code) else {
+            return Action::None;
+        };
+
+        match intent {
+            Intent::RangeToday => {
                 self.set_usage_range(data::UsageRangePreset::Today, data);
                 Action::None
             }
-            KeyCode::Char('2') => {
+            Intent::RangeSevenDays => {
                 self.set_usage_range(data::UsageRangePreset::SevenDays, data);
                 Action::None
             }
-            KeyCode::Char('3') => {
+            Intent::RangeThirtyDays => {
                 self.set_usage_range(data::UsageRangePreset::ThirtyDays, data);
                 Action::None
             }
-            KeyCode::Char('C') | KeyCode::Char('c') => {
+            Intent::CustomRange => {
                 let input = match self.usage.range {
                     data::UsageRangePreset::Custom(range) => range.label(),
                     _ => data::usage_custom_range_default_input(),
@@ -69,15 +80,15 @@ impl App {
                 });
                 Action::None
             }
-            _ if is_backtab => {
+            Intent::PrevMetric => {
                 self.usage.metric = self.usage.metric.previous();
                 Action::None
             }
-            KeyCode::Tab => {
+            Intent::NextMetric => {
                 self.usage.metric = self.usage.metric.next();
                 Action::None
             }
-            KeyCode::Char('L') => {
+            Intent::OpenLogs => {
                 self.usage.pane = UsagePane::Models;
                 self.usage.selected_idx = self.usage.selected_idx.min(
                     data.usage
@@ -93,7 +104,7 @@ impl App {
                 );
                 self.push_route_and_switch(Route::UsageLogs)
             }
-            KeyCode::Char('P') | KeyCode::Char('p') => {
+            Intent::OpenPricing => {
                 let pricing_len = visible_pricing_rows(&self.filter, data).len();
                 self.pricing.selected_idx = if pricing_len == 0 {
                     0
@@ -102,8 +113,7 @@ impl App {
                 };
                 self.push_route_and_switch(Route::Pricing)
             }
-            KeyCode::Char('r') => Action::ReloadData,
-            _ => Action::None,
+            Intent::Reload => Action::ReloadData,
         }
     }
 

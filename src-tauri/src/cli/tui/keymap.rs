@@ -471,6 +471,105 @@ pub(crate) mod skills_installed {
     }
 }
 
+pub(crate) mod usage {
+    use crossterm::event::KeyCode;
+
+    use super::Binding;
+    use crate::cli::i18n::texts;
+    use crate::cli::tui::app::App;
+    use crate::cli::tui::data::UiData;
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(crate) enum Intent {
+        RangeToday,
+        RangeSevenDays,
+        RangeThirtyDays,
+        CustomRange,
+        NextMetric,
+        PrevMetric,
+        OpenLogs,
+        OpenPricing,
+        Reload,
+    }
+
+    pub(crate) const BINDINGS: &[Binding<Intent>] = &[
+        Binding {
+            display: "1",
+            keys: &[KeyCode::Char('1')],
+            intent: Intent::RangeToday,
+            label: |_, _| crate::t!("Today", "今日"),
+            shown: |_, _| true,
+        },
+        Binding {
+            display: "2",
+            keys: &[KeyCode::Char('2')],
+            intent: Intent::RangeSevenDays,
+            label: |_, _| crate::t!("7 days", "7天"),
+            shown: |_, _| true,
+        },
+        Binding {
+            display: "3",
+            keys: &[KeyCode::Char('3')],
+            intent: Intent::RangeThirtyDays,
+            label: |_, _| crate::t!("30 days", "30天"),
+            shown: |_, _| true,
+        },
+        Binding {
+            display: "c",
+            keys: &[KeyCode::Char('c'), KeyCode::Char('C')],
+            intent: Intent::CustomRange,
+            label: |_, _| crate::t!("custom range", "自定义区间"),
+            shown: |_, _| true,
+        },
+        // Tab cycles the trend metric here; pane switching only exists on
+        // the UsageLogs route. Shift+Tab arrives as either BackTab or
+        // Tab+SHIFT, so the handler pre-checks the modifier variant.
+        Binding {
+            display: "Tab",
+            keys: &[KeyCode::Tab],
+            intent: Intent::NextMetric,
+            label: |_, _| crate::t!("switch metric", "切换指标"),
+            shown: |_, _| true,
+        },
+        Binding {
+            display: "Shift+Tab",
+            keys: &[KeyCode::BackTab],
+            intent: Intent::PrevMetric,
+            label: |_, _| crate::t!("switch metric", "切换指标"),
+            shown: |_, _| false,
+        },
+        Binding {
+            display: "L",
+            keys: &[KeyCode::Char('L')],
+            intent: Intent::OpenLogs,
+            label: |_, _| crate::t!("details", "详情"),
+            shown: |_, _| true,
+        },
+        Binding {
+            display: "P",
+            keys: &[KeyCode::Char('P'), KeyCode::Char('p')],
+            intent: Intent::OpenPricing,
+            label: |_, _| crate::t!("pricing", "模型定价"),
+            shown: |_, _| true,
+        },
+        Binding {
+            display: "r",
+            keys: &[KeyCode::Char('r')],
+            intent: Intent::Reload,
+            label: |_, _| texts::tui_key_refresh(),
+            shown: |_, _| true,
+        },
+    ];
+
+    pub(crate) fn intent_for(key: KeyCode) -> Option<Intent> {
+        super::intent_for(BINDINGS, key)
+    }
+
+    pub(crate) fn key_bar_items(app: &App, data: &UiData) -> Vec<(&'static str, &'static str)> {
+        super::key_bar_items(BINDINGS, app, data)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::providers::{self, Intent};
