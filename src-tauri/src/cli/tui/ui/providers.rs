@@ -128,52 +128,16 @@ fn provider_name_with_quota_line(
 }
 
 fn render_provider_empty_state(frame: &mut Frame<'_>, area: Rect, theme: &super::theme::Theme) {
-    let title_style = Style::default().add_modifier(Modifier::BOLD);
-    let subtitle_style = Style::default().fg(theme.comment);
-    let primary_style = if theme.no_color {
-        Style::default().add_modifier(Modifier::BOLD)
-    } else {
-        Style::default()
-            .fg(Color::White)
-            .bg(theme.accent)
-            .add_modifier(Modifier::BOLD)
-    };
-    let secondary_style = if theme.no_color {
-        Style::default()
-    } else {
-        Style::default()
-            .fg(theme.dim)
-            .bg(theme.surface)
-            .add_modifier(Modifier::BOLD)
-    };
-
-    let content_lines = vec![
-        Line::styled(texts::tui_provider_empty_title(), title_style),
-        Line::raw(""),
-        Line::styled(texts::tui_provider_empty_subtitle(), subtitle_style),
-        Line::raw(""),
-        Line::from(vec![Span::styled(
-            format!("  Enter  {}  ", texts::tui_key_import_current_config()),
-            primary_style,
-        )]),
-        Line::from(vec![Span::styled(
-            format!("  a  {}  ", texts::tui_key_add_provider()),
-            secondary_style,
-        )]),
-    ];
-
-    let top_padding = area.height.saturating_sub(content_lines.len() as u16) / 2;
-    let mut lines = Vec::with_capacity(top_padding as usize + content_lines.len());
-    for _ in 0..top_padding {
-        lines.push(Line::raw(""));
-    }
-    lines.extend(content_lines);
-
-    frame.render_widget(
-        Paragraph::new(lines)
-            .alignment(Alignment::Center)
-            .wrap(Wrap { trim: false }),
+    render_empty_state(
+        frame,
         area,
+        theme,
+        texts::tui_provider_empty_title(),
+        texts::tui_provider_empty_subtitle(),
+        &[
+            ("Enter", texts::tui_key_import_current_config()),
+            ("a", texts::tui_key_add_provider()),
+        ],
     );
 }
 

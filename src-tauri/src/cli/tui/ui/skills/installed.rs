@@ -81,6 +81,21 @@ pub(super) fn render_skills_installed(
     .row_highlight_style(selection_style(theme))
     .highlight_symbol(highlight_symbol(theme));
 
+    if data.skills.installed.is_empty() {
+        render_empty_state(
+            frame,
+            chunks[2],
+            theme,
+            texts::tui_skills_empty_title(),
+            texts::tui_skills_empty_subtitle(),
+            &[
+                ("f", texts::tui_key_discover()),
+                ("i", texts::tui_skills_action_import_existing()),
+            ],
+        );
+        return;
+    }
+
     let mut state = TableState::default();
     state.select(Some(app.skills_idx));
     frame.render_stateful_widget(table, inset_left(chunks[2], CONTENT_INSET_LEFT), &mut state);

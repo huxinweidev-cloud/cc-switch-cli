@@ -3280,6 +3280,38 @@ pub mod texts {
         }
     }
 
+    pub fn tui_mcp_empty_title() -> &'static str {
+        if is_chinese() {
+            "还没有 MCP 服务器"
+        } else {
+            "No MCP servers yet"
+        }
+    }
+
+    pub fn tui_mcp_empty_subtitle() -> &'static str {
+        if is_chinese() {
+            "新增一个服务器，或从各应用的现有配置中导入"
+        } else {
+            "Add a server, or import the ones already configured in your apps"
+        }
+    }
+
+    pub fn tui_prompts_empty_title() -> &'static str {
+        if is_chinese() {
+            "还没有提示词"
+        } else {
+            "No prompts yet"
+        }
+    }
+
+    pub fn tui_prompts_empty_subtitle() -> &'static str {
+        if is_chinese() {
+            "新增提示词后可在应用间一键切换系统提示"
+        } else {
+            "Add a prompt to switch system prompts with one key"
+        }
+    }
+
     pub fn tui_key_import_current_config() -> &'static str {
         if is_chinese() {
             "导入当前配置"

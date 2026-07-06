@@ -142,6 +142,21 @@ pub(super) fn render_mcp(
     .row_highlight_style(selection_style(theme))
     .highlight_symbol(highlight_symbol(theme));
 
+    if data.mcp.rows.is_empty() {
+        render_empty_state(
+            frame,
+            chunks[2],
+            theme,
+            texts::tui_mcp_empty_title(),
+            texts::tui_mcp_empty_subtitle(),
+            &[
+                ("a", texts::tui_key_add()),
+                ("i", texts::tui_mcp_action_import_existing()),
+            ],
+        );
+        return;
+    }
+
     let mut state = TableState::default();
     state.select(Some(app.mcp_idx));
 

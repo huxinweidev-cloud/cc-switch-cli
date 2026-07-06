@@ -107,6 +107,69 @@ pub(super) fn truncate_to_display_width(text: &str, width: u16) -> String {
     out
 }
 
+/// Centered guidance for empty list screens: a bold title, a muted
+/// subtitle, and key chips for the actions that create the first entry.
+/// The first action renders as the primary (accent) chip.
+pub(super) fn render_empty_state(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    theme: &super::theme::Theme,
+    title: &str,
+    subtitle: &str,
+    actions: &[(&str, &str)],
+) {
+    let title_style = Style::default().add_modifier(Modifier::BOLD);
+    let subtitle_style = Style::default().fg(theme.comment);
+    let primary_style = if theme.no_color {
+        Style::default().add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+            .fg(Color::White)
+            .bg(theme.accent)
+            .add_modifier(Modifier::BOLD)
+    };
+    let secondary_style = if theme.no_color {
+        Style::default()
+    } else {
+        Style::default()
+            .fg(theme.dim)
+            .bg(theme.surface)
+            .add_modifier(Modifier::BOLD)
+    };
+
+    let mut content_lines = vec![
+        Line::styled(title.to_string(), title_style),
+        Line::raw(""),
+        Line::styled(subtitle.to_string(), subtitle_style),
+        Line::raw(""),
+    ];
+    for (idx, (key, label)) in actions.iter().enumerate() {
+        let style = if idx == 0 {
+            primary_style
+        } else {
+            secondary_style
+        };
+        content_lines.push(Line::from(vec![Span::styled(
+            format!("  {key}  {label}  "),
+            style,
+        )]));
+    }
+
+    let top_padding = area.height.saturating_sub(content_lines.len() as u16) / 2;
+    let mut lines = Vec::with_capacity(top_padding as usize + content_lines.len());
+    for _ in 0..top_padding {
+        lines.push(Line::raw(""));
+    }
+    lines.extend(content_lines);
+
+    frame.render_widget(
+        Paragraph::new(lines)
+            .alignment(Alignment::Center)
+            .wrap(Wrap { trim: false }),
+        area,
+    );
+}
+
 /// Two-column field tables clip the value cell silently at the pane edge;
 /// pre-truncate the value with an ellipsis so a cut-off reads as one.
 pub(super) fn truncated_value_cell(

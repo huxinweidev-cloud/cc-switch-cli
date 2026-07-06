@@ -3800,7 +3800,7 @@ fn skills_page_renders_sync_method_and_installed_rows() {
 }
 
 #[test]
-fn skills_page_empty_state_keeps_mcp_style_table() {
+fn skills_page_empty_state_keeps_summary_and_shows_guidance() {
     let _lock = lock_env();
     let _no_color = EnvGuard::remove("NO_COLOR");
 
@@ -3812,12 +3812,11 @@ fn skills_page_empty_state_keeps_mcp_style_table() {
     let buf = render(&app, &data);
     let all = all_text(&buf);
 
-    assert!(all.contains(texts::header_name()));
-    assert!(all.contains(AppType::Claude.as_str()));
-    assert!(all.contains(AppType::OpenCode.as_str()));
-    assert!(all.contains(AppType::Hermes.as_str()));
-    assert!(!all.contains(texts::tui_skills_empty_title()));
-    assert!(!all.contains(texts::tui_skills_empty_subtitle()));
+    // The summary bar stays; the blank table body is replaced with the
+    // shared empty-state guidance (same style as MCP/Prompts/Providers).
+    assert!(all.contains(&texts::tui_skills_installed_counts(0, 0, 0, 0, 0)));
+    assert!(all.contains(texts::tui_skills_empty_title()));
+    assert!(all.contains(texts::tui_skills_empty_subtitle()));
 }
 
 #[test]
@@ -4152,6 +4151,30 @@ fn help_text_shows_space_as_the_mcp_toggle_key() {
                 "stale `x` toggle wording in help for {app_type:?}/{lang:?}"
             );
         }
+    }
+}
+
+#[test]
+fn empty_lists_show_guidance_instead_of_blank_space() {
+    let _lock = lock_env();
+    let _lang = use_test_language(Language::English);
+    let _no_color = EnvGuard::remove("NO_COLOR");
+
+    for (route, needle) in [
+        (Route::Mcp, "No MCP servers yet"),
+        (Route::Prompts, "No prompts yet"),
+        (Route::Skills, "No installed skills"),
+    ] {
+        let mut app = App::new(Some(AppType::Claude));
+        app.route = route;
+        app.focus = Focus::Content;
+        let data = minimal_data(&app.app_type);
+        let buf = render(&app, &data);
+        let all = all_text(&buf);
+        assert!(
+            all.contains(needle),
+            "empty list should show guidance ({needle}): {all}"
+        );
     }
 }
 
