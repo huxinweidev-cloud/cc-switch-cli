@@ -235,6 +235,9 @@ pub(crate) fn handle_action(
             if let Err(err) = tx.send(SessionReq::Refresh {
                 request_id,
                 provider_id,
+                // Manual `r` reload forces a full re-parse (ignore the mtime/size
+                // snapshot); the fresh results still refresh the persistent cache.
+                force: true,
             }) {
                 ctx.app.sessions.fail_scan(request_id, err.to_string());
                 ctx.app.push_toast(

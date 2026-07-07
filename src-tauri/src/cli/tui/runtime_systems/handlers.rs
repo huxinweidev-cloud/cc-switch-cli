@@ -108,6 +108,32 @@ pub(crate) fn handle_local_env_msg(app: &mut App, msg: LocalEnvMsg) {
 
 pub(crate) fn handle_session_msg(app: &mut App, msg: SessionMsg) {
     match msg {
+        SessionMsg::ScanCachedSnapshot { request_id, rows } => {
+            // Stale first paint: show the cached list immediately while the
+            // revalidating scan continues. Keep the refresh indicator on.
+            if app.sessions.apply_cached_snapshot(request_id, rows) {
+                let visible_len = crate::cli::tui::app::visible_sessions_for_state(
+                    &app.filter,
+                    &app.app_type,
+                    app.sessions.show_all_providers,
+                    &app.sessions.rows,
+                    app.sessions.detail_key.as_deref(),
+                    app.sessions.messages_loaded,
+                    &app.sessions.messages,
+                    app.sessions.deep_search_query.as_deref(),
+                    &app.sessions.deep_search_results,
+                )
+                .len();
+                if visible_len == 0 {
+                    app.sessions.selected_idx = 0;
+                } else {
+                    app.sessions.selected_idx = app.sessions.selected_idx.min(visible_len - 1);
+                }
+                if app.sessions.deep_search_query.is_some() {
+                    app.pending_deep_search = app.sessions.deep_search_query.clone();
+                }
+            }
+        }
         SessionMsg::ScanFinished { request_id, result } => match result {
             Ok(rows) => {
                 if app.sessions.finish_scan(request_id, rows) {

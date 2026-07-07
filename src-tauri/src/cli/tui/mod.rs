@@ -1598,6 +1598,9 @@ fn queue_sessions_refresh_if_needed(
     if let Err(err) = tx.send(runtime_systems::SessionReq::Refresh {
         request_id,
         provider_id,
+        // Entering the page uses the cached snapshot + delta revalidate; only
+        // manual `r` forces a full re-parse.
+        force: false,
     }) {
         app.sessions.fail_scan(request_id, err.to_string());
         app.push_toast(

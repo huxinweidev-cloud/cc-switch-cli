@@ -688,14 +688,54 @@ fn handle_session_req(req: SessionReq, tx: &mpsc::Sender<SessionMsg>) -> Result<
         SessionReq::Refresh {
             request_id,
             provider_id,
+            force,
         } => {
-            let result = std::panic::catch_unwind(|| {
-                if provider_id == "all" {
-                    crate::session_manager::scan_sessions()
-                } else {
-                    crate::session_manager::scan_sessions_for_provider(&provider_id)
+            // Open the sidecar scan-cache store (a separate local database file —
+            // the synced main database is not involved). If it cannot be opened,
+            // fall back to the original in-memory-only full scan so the page
+            // still works.
+            let Ok(store) = crate::session_manager::scan_cache_store::ScanCacheStore::open() else {
+                let result = std::panic::catch_unwind(|| {
+                    if provider_id == "all" {
+                        crate::session_manager::scan_sessions()
+                    } else {
+                        crate::session_manager::scan_sessions_for_provider(&provider_id)
+                    }
+                })
+                .map_err(|_| "session scan panicked".to_string());
+                return tx
+                    .send(SessionMsg::ScanFinished { request_id, result })
+                    .map_err(|_| ());
+            };
+
+            // Phase 1 (stale): paint the cached snapshot immediately. Skipped on a
+            // forced reload and when the cache is empty (first-ever run).
+            if !force {
+                let snapshot = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    crate::session_manager::load_scan_cache_snapshot(&store, &provider_id)
+                }))
+                .unwrap_or_default();
+                if !snapshot.is_empty() {
+                    let _ = tx.send(SessionMsg::ScanCachedSnapshot {
+                        request_id,
+                        rows: snapshot,
+                    });
                 }
-            })
+            }
+
+            // Phase 2 (revalidate): stat the directories, re-parse only changed
+            // files, persist the delta, and send the final authoritative list.
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                if provider_id == "all" {
+                    crate::session_manager::scan_sessions_cached(&store, force)
+                } else {
+                    crate::session_manager::scan_sessions_cached_for_provider(
+                        &store,
+                        &provider_id,
+                        force,
+                    )
+                }
+            }))
             .map_err(|_| "session scan panicked".to_string());
             tx.send(SessionMsg::ScanFinished { request_id, result })
                 .map_err(|_| ())
@@ -1761,6 +1801,7 @@ mod tests {
         tx.send(SessionReq::Refresh {
             request_id: 2,
             provider_id: "claude".to_string(),
+            force: false,
         })
         .expect("queue refresh");
         drop(tx);
@@ -1769,6 +1810,7 @@ mod tests {
             SessionReq::Refresh {
                 request_id: 1,
                 provider_id: "claude".to_string(),
+                force: false,
             },
             &rx,
         );

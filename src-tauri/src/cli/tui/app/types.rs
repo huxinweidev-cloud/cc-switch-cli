@@ -305,6 +305,26 @@ impl SessionsState {
         true
     }
 
+    /// Apply the stale-while-revalidate first paint: the list built from the
+    /// persistent DB cache, delivered before the revalidating scan finishes. The
+    /// rows become interactive immediately, but `loading`/`scan_active` stay set
+    /// so the header keeps showing the refresh indicator and the eventual
+    /// `finish_scan` (same request id) still applies. The in-memory scan cache is
+    /// deliberately not written here — only the final, complete list is cached.
+    /// Returns true when the snapshot was applied (still the active scan).
+    pub(crate) fn apply_cached_snapshot(
+        &mut self,
+        request_id: u64,
+        rows: Vec<crate::session_manager::SessionMeta>,
+    ) -> bool {
+        if self.scan_active != Some(request_id) {
+            return false;
+        }
+        self.loaded_once = true;
+        self.rows = rows;
+        true
+    }
+
     /// Restore this provider's list from the in-memory scan cache, skipping the
     /// disk scan entirely. The cache is valid for the whole run; a manual reload
     /// (`r`) bypasses this and re-scans. Returns true on a hit.
