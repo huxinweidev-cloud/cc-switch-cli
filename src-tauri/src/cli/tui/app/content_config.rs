@@ -742,6 +742,23 @@ impl App {
                     }
                     Action::None
                 }
+                Some(SettingsItem::Icons) => {
+                    let next = crate::cli::tui::icons::configured_icon_mode().next();
+                    match crate::settings::set_icon_mode(next.code()) {
+                        Ok(()) => {
+                            self.push_toast(
+                                texts::tui_toast_icons_changed(texts::tui_settings_icon_mode_name(
+                                    next,
+                                )),
+                                ToastKind::Success,
+                            );
+                        }
+                        Err(err) => {
+                            self.push_toast(err.to_string(), ToastKind::Error);
+                        }
+                    }
+                    Action::None
+                }
                 Some(SettingsItem::VisibleAppsMode) => {
                     let current = crate::settings::get_visible_apps_settings().mode;
                     let next = match current {
