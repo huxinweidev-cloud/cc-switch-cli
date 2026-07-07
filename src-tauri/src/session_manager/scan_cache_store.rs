@@ -51,6 +51,12 @@ pub struct SyncResumeHint {
     /// `byte_offset` 前至多 64 字节的 FNV-1a 指纹：识别"同路径被整体重写成
     /// 更大文件"的轮转场景（size/mtime 校验无法覆盖）。None 视为提示无效。
     pub tail_hash: Option<i64>,
+    /// 上轮结束时"边界之后未终结尾部"的字节数（None = 无待确认尾部）。
+    /// 与 `pending_tail_hash` 一起做尾部稳定性确认：对"永远不带换行的最终
+    /// 行"，两轮之间尾部字节不变即可收敛，不再每周期复查（见驱动）。
+    pub pending_tail_len: Option<i64>,
+    /// 上轮未终结尾部（`byte_offset`→EOF）字节的 FNV-1a 指纹。
+    pub pending_tail_hash: Option<i64>,
 }
 
 impl ScanCacheStore {
@@ -124,7 +130,9 @@ impl ScanCacheStore {
                 last_line_offset INTEGER NOT NULL,
                 byte_offset INTEGER NOT NULL,
                 state TEXT,
-                tail_hash INTEGER
+                tail_hash INTEGER,
+                pending_tail_len INTEGER,
+                pending_tail_hash INTEGER
             )",
             [],
         )
@@ -132,6 +140,14 @@ impl ScanCacheStore {
         // 纯本地缓存库无版本化迁移：旧文件缺列时就地补列，失败（列已存在）忽略。
         let _ = conn.execute(
             "ALTER TABLE session_sync_resume ADD COLUMN tail_hash INTEGER",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE session_sync_resume ADD COLUMN pending_tail_len INTEGER",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE session_sync_resume ADD COLUMN pending_tail_hash INTEGER",
             [],
         );
 
@@ -309,7 +325,8 @@ impl ScanCacheStore {
         let conn = self.lock()?;
         let mut stmt = conn
             .prepare_cached(
-                "SELECT last_modified, last_line_offset, byte_offset, state, tail_hash
+                "SELECT last_modified, last_line_offset, byte_offset, state, tail_hash,
+                        pending_tail_len, pending_tail_hash
                  FROM session_sync_resume WHERE file_path = ?1",
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -322,6 +339,8 @@ impl ScanCacheStore {
                     byte_offset: row.get(2)?,
                     state: row.get(3)?,
                     tail_hash: row.get(4)?,
+                    pending_tail_len: row.get(5)?,
+                    pending_tail_hash: row.get(6)?,
                 })
             })
             .map(Some)
@@ -340,14 +359,17 @@ impl ScanCacheStore {
         // (mtime, offset) 字典序规则一致）。
         conn.execute(
             "INSERT INTO session_sync_resume
-                (file_path, last_modified, last_line_offset, byte_offset, state, tail_hash)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                (file_path, last_modified, last_line_offset, byte_offset, state, tail_hash,
+                 pending_tail_len, pending_tail_hash)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
              ON CONFLICT(file_path) DO UPDATE SET
                 last_modified = excluded.last_modified,
                 last_line_offset = excluded.last_line_offset,
                 byte_offset = excluded.byte_offset,
                 state = excluded.state,
-                tail_hash = excluded.tail_hash
+                tail_hash = excluded.tail_hash,
+                pending_tail_len = excluded.pending_tail_len,
+                pending_tail_hash = excluded.pending_tail_hash
              WHERE excluded.last_modified > session_sync_resume.last_modified
                 OR (excluded.last_modified = session_sync_resume.last_modified
                     AND excluded.byte_offset >= session_sync_resume.byte_offset)",
@@ -358,6 +380,8 @@ impl ScanCacheStore {
                 hint.byte_offset,
                 hint.state,
                 hint.tail_hash,
+                hint.pending_tail_len,
+                hint.pending_tail_hash,
             ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
@@ -467,6 +491,8 @@ mod tests {
             byte_offset: byte,
             state: None,
             tail_hash: Some(1),
+            pending_tail_len: None,
+            pending_tail_hash: None,
         };
 
         store.save_sync_resume(&hint(5, 120)).expect("save");
@@ -485,6 +511,44 @@ mod tests {
             .expect("load")
             .expect("hint");
         assert_eq!((loaded.last_modified, loaded.byte_offset), (6, 10));
+    }
+
+    /// pending_tail 两列随提示一起往返读写（尾部稳定性确认所需）。
+    #[test]
+    fn sync_resume_hint_roundtrips_pending_tail() {
+        let store = ScanCacheStore::in_memory().expect("open memory store");
+        let hint = SyncResumeHint {
+            file_path: "/p.jsonl".to_string(),
+            last_modified: 10,
+            last_line_offset: 2,
+            byte_offset: 20,
+            state: Some("{}".to_string()),
+            tail_hash: Some(7),
+            pending_tail_len: Some(5),
+            pending_tail_hash: Some(1234),
+        };
+        store.save_sync_resume(&hint).expect("save");
+        let loaded = store
+            .load_sync_resume("/p.jsonl")
+            .expect("load")
+            .expect("hint");
+        assert_eq!(loaded.pending_tail_len, Some(5));
+        assert_eq!(loaded.pending_tail_hash, Some(1234));
+
+        // 收敛写回：更大的 mtime 覆盖，pending_tail 清空为 NULL。
+        let cleared = SyncResumeHint {
+            last_modified: 11,
+            pending_tail_len: None,
+            pending_tail_hash: None,
+            ..hint
+        };
+        store.save_sync_resume(&cleared).expect("save cleared");
+        let loaded = store
+            .load_sync_resume("/p.jsonl")
+            .expect("load")
+            .expect("hint");
+        assert_eq!(loaded.pending_tail_len, None);
+        assert_eq!(loaded.pending_tail_hash, None);
     }
 
     #[test]

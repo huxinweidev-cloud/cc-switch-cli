@@ -61,6 +61,12 @@ pub(crate) struct JsonlScanOutcome {
     /// 换行边界处的状态机序列化快照（不含末尾不完整行的影响）；写进
     /// sidecar 提示，保证续传恢复的状态与恢复的字节位置严格对应。
     resume_state_json: Option<String>,
+    /// 本轮结束时"边界之后未终结尾部"的字节数（None = 无待确认尾部）。
+    /// 与 `pending_tail_hash` 一起写进 sidecar，供下轮做尾部稳定性确认：
+    /// 对永远不带换行的最终行，尾部两轮不变即收敛，不再每周期复查。
+    pending_tail_len: Option<i64>,
+    /// 上述未终结尾部字节的 FNV-1a 指纹。
+    pending_tail_hash: Option<i64>,
 }
 
 /// 基础校验：提示与主库权威行完全一致、且文件未被截断。
@@ -220,6 +226,14 @@ where
 
     // 字节续传决策（指纹校验可能移动过游标，非 Resume 路径必须归零）
     let hint = load_matching_resume_hint(resume, &file_path_str, last_modified, last_offset);
+    // 提示携带的"待确认尾部"（上轮以不完整尾行结束时记录）。只在 Resume
+    // 决策下用于尾部稳定性确认；decide_resume 会消费 hint，先取出这两列。
+    let pending_tail =
+        hint.as_ref()
+            .and_then(|h| match (h.pending_tail_len, h.pending_tail_hash) {
+                (Some(len), Some(hash)) if len > 0 => Some((len as u64, hash)),
+                _ => None,
+            });
     let decision = decide_resume::<S>(&mut file, file_len, hint, &file_path_str);
 
     // effective_last_offset：本轮用于 is_new 判断的行 offset。文件身份失效
@@ -227,6 +241,25 @@ where
     // N 行会被误当作旧行永久漏导入。
     let (mut state, mut line_offset, mut byte_pos, effective_last_offset) = match decision {
         ResumeDecision::Resume { byte_offset, state } => {
+            // 上轮以不完整尾行结束、本轮 Resume（边界前指纹已确认稳定）时，
+            // 若边界之后的尾部字节也两轮不变 → 收敛：把它当作"永远不带换行
+            // 的最终行"，直接返回边界进度 + 真实 mtime + 清空 pending_tail，
+            // 之后走正常 mtime skip，不再每周期重读尾部。
+            if let Some((tail_len, tail_hash)) = pending_tail {
+                if let Some(outcome) = try_converge_stable_tail(
+                    &mut file,
+                    file_len,
+                    byte_offset,
+                    last_offset,
+                    file_modified,
+                    tail_len,
+                    tail_hash,
+                    &state,
+                    &file_path_str,
+                ) {
+                    return Ok(Some(outcome));
+                }
+            }
             (state, last_offset, byte_offset, last_offset)
         }
         ResumeDecision::RescanFromZero => {
@@ -245,6 +278,10 @@ where
     let mut committed_line_offset = line_offset;
     let mut committed_byte_pos = byte_pos;
     let mut resume_state_json: Option<String> = None;
+    // 未终结尾部（边界→EOF）的字节数与指纹，遇到不完整尾行时固化，写进
+    // sidecar 供下轮做尾部稳定性确认。
+    let mut pending_tail_len: Option<i64> = None;
+    let mut pending_tail_hash: Option<i64> = None;
 
     let mut reader = BufReader::new(file);
     let mut raw: Vec<u8> = Vec::new();
@@ -277,6 +314,10 @@ where
             // 但持久化的 (进度, 状态) 停在边界，下个周期从边界重读该行，
             // 各 app 的 request_id 去重保证不会重复入库。
             resume_state_json = serde_json::to_string(&state).ok();
+            // raw 此刻恰好是完整的未终结尾部字节（read_until 遇 EOF 返回、
+            // 无换行），直接哈希，无需重开文件再读一遍。
+            pending_tail_len = Some(raw.len() as i64);
+            pending_tail_hash = Some(fnv1a64(&raw) as i64);
         }
 
         // 与旧 lines() 语义一致：无效 UTF-8 行跳过
@@ -302,7 +343,9 @@ where
     // 见到不完整尾行时把记录的 mtime 回退 1ns：若写入方在同一 mtime tick 内
     // 补全了该行且文件此后不再变化，单纯记录当前 mtime 会让下一轮
     // `file_modified <= last_modified` 直接跳过、该行永久漏导。回退 1ns 保证
-    // 下一轮必然复查（借助提示从边界 seek，只重读尾部，代价极小）。
+    // 下一轮必然复查（借助提示从边界 seek，只重读尾部，代价极小）。复查时
+    // 若尾部两轮不变（永远无换行的最终行），驱动会走 try_converge_stable_tail
+    // 收敛：改记真实 mtime、清空 pending_tail，从此走 mtime skip 不再复查。
     let recorded_modified = if saw_incomplete_tail {
         log::debug!("[SYNC-DRIVER] 末尾存在不完整行，记录 mtime-1 以便下轮复查: {file_path_str}");
         file_modified - 1
@@ -319,7 +362,62 @@ where
         byte_pos: committed_byte_pos,
         file_modified: recorded_modified,
         resume_state_json,
+        pending_tail_len,
+        pending_tail_hash,
     }))
+}
+
+/// 尾部稳定性确认：上轮以不完整尾行结束（sidecar 记录了 pending_tail），
+/// 本轮又走 Resume（边界前指纹已确认稳定）时调用。若文件长度恰为
+/// `byte_offset + pending_tail_len` 且该尾部字节指纹与上轮吻合，说明两轮
+/// 之间没有任何写入——这是"永远不带换行的最终行"，返回收敛 outcome：进度
+/// 停在边界、mtime 用真实值（不再 -1）、清空 pending_tail，下轮起走正常
+/// mtime skip，不再每周期重读尾部。尾部被补全/继续增长/读取失败时返回
+/// None，并把游标复位到 `byte_offset` 供后续续传读取。
+#[allow(clippy::too_many_arguments)]
+fn try_converge_stable_tail<S: Serialize>(
+    file: &mut fs::File,
+    file_len: u64,
+    byte_offset: u64,
+    boundary_line_offset: i64,
+    file_modified: i64,
+    pending_tail_len: u64,
+    pending_tail_hash: i64,
+    state: &S,
+    file_path_str: &str,
+) -> Option<JsonlScanOutcome> {
+    // 长度必须精确等于"边界 + 上轮未终结尾部长度"：文件继续增长或被补全
+    // （追加了换行 + 新行）都会破坏该等式，交回普通续传处理。
+    if file_len != byte_offset + pending_tail_len {
+        let _ = file.seek(SeekFrom::Start(byte_offset));
+        return None;
+    }
+    // 读出当前尾部字节比对指纹：等长但内容变了（如尾行被同长度改写）时识破。
+    let tail_ok = (|| {
+        file.seek(SeekFrom::Start(byte_offset)).ok()?;
+        let mut tail = vec![0u8; pending_tail_len as usize];
+        std::io::Read::read_exact(file, &mut tail).ok()?;
+        Some(fnv1a64(&tail) as i64 == pending_tail_hash)
+    })();
+    match tail_ok {
+        Some(true) => {
+            log::debug!("[SYNC-DRIVER] 尾部两轮稳定，收敛（永远无换行的最终行）: {file_path_str}");
+            Some(JsonlScanOutcome {
+                line_offset: boundary_line_offset,
+                byte_pos: byte_offset,
+                file_modified,
+                resume_state_json: serde_json::to_string(state).ok(),
+                pending_tail_len: None,
+                pending_tail_hash: None,
+            })
+        }
+        // 尾部变了或读取抖动：复位游标，按普通续传处理（本轮若仍以不完整
+        // 行结束会更新 pending_tail）。
+        _ => {
+            let _ = file.seek(SeekFrom::Start(byte_offset));
+            None
+        }
+    }
 }
 
 /// 主库进度提交成功后，把字节位置、状态机快照与尾部指纹写回 sidecar
@@ -339,6 +437,9 @@ pub(crate) fn save_resume_hint(
         byte_offset: outcome.byte_pos as i64,
         state: outcome.resume_state_json.clone(),
         tail_hash: compute_tail_hash(file_path_str, outcome.byte_pos),
+        // 收敛 outcome 携带 None：写回 NULL 清空待确认尾部；下轮不再复查。
+        pending_tail_len: outcome.pending_tail_len,
+        pending_tail_hash: outcome.pending_tail_hash,
     };
     if let Err(err) = store.save_sync_resume(&hint) {
         log::debug!("[SESSION-SYNC] 写入字节续传提示失败 ({file_path_str}): {err}");
@@ -484,6 +585,68 @@ mod tests {
         );
         assert_eq!(second.out().line_offset, 3);
         assert_eq!(second.out().byte_pos, 19);
+    }
+
+    /// 稳定的无换行尾行：首轮记 mtime-1 + pending 提示；次轮文件未变、尾部
+    /// 两轮稳定 → 返回收敛 outcome（真实 mtime、回调无行）；第三轮 mtime 相等
+    /// → Ok(None) 跳过。修复"永远无换行的最终行每周期重读尾部"的不收敛。
+    #[test]
+    fn stable_unterminated_tail_converges_after_recheck() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("s.jsonl");
+        // 末行永远不带换行符（写满的最终行）
+        std::fs::write(&path, "l1\nl2").expect("write");
+        let store = ScanCacheStore::in_memory().expect("store");
+
+        // 首轮：不完整尾行进回调，进度停边界，mtime 回退 1ns，记录 pending 提示
+        let first = scan_at(&path, 1_000, 0, 0, Some(&store));
+        assert_eq!(
+            first.seen,
+            vec![("l1".to_string(), true), ("l2".to_string(), true)]
+        );
+        assert_eq!(first.out().line_offset, 1);
+        assert_eq!(first.out().byte_pos, 3);
+        assert_eq!(first.out().file_modified, 999);
+        save_resume_hint(Some(&store), &path.to_string_lossy(), first.out());
+
+        // sidecar 应记下待确认尾部（"l2" = 2 字节）
+        let hint = store
+            .load_sync_resume(&path.to_string_lossy())
+            .expect("load")
+            .expect("hint");
+        assert_eq!(hint.pending_tail_len, Some(2));
+        assert!(hint.pending_tail_hash.is_some());
+
+        // 次轮：文件未变（传真实 mtime 1000 触发复查：> recorded 999）。尾部
+        // 两轮稳定 → 收敛：回调无行、进度停边界、记录真实 mtime、pending 清空
+        let second = scan_at(
+            &path,
+            1_000,
+            first.out().file_modified,
+            first.out().line_offset,
+            Some(&store),
+        );
+        assert!(second.seen.is_empty(), "收敛不应重放任何行");
+        assert_eq!(second.out().line_offset, 1);
+        assert_eq!(second.out().byte_pos, 3);
+        assert_eq!(second.out().file_modified, 1_000, "记录真实 mtime，不再 -1");
+        save_resume_hint(Some(&store), &path.to_string_lossy(), second.out());
+
+        let hint = store
+            .load_sync_resume(&path.to_string_lossy())
+            .expect("load")
+            .expect("hint");
+        assert_eq!(hint.pending_tail_len, None, "pending 已清空");
+
+        // 第三轮：mtime 相等 → 正常 mtime skip
+        let third = scan_at(
+            &path,
+            1_000,
+            second.out().file_modified,
+            second.out().line_offset,
+            Some(&store),
+        );
+        assert!(third.outcome.is_none(), "收敛后走正常 mtime skip");
     }
 
     #[test]
