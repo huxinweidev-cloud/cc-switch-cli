@@ -334,7 +334,6 @@ pub fn sync_claude_session_logs(db: &Database) -> Result<SessionSyncResult, AppE
 
     for (file_path, file_mtime) in &jsonl_files {
         result.files_scanned += 1;
-        sync_progress::add_done(1);
 
         match sync_single_file(
             db,
@@ -354,6 +353,7 @@ pub fn sync_claude_session_logs(db: &Database) -> Result<SessionSyncResult, AppE
                 result.errors.push(msg);
             }
         }
+        sync_progress::add_done(1);
     }
 
     if result.imported > 0 {

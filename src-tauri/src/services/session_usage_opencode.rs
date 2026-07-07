@@ -55,6 +55,17 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
         });
     }
 
+    // OpenCode 是单个外部数据库，进度上按 1 个数据源计；guard 确保
+    // 提前 return（未变化跳过/出错）也会计入 done。
+    crate::services::session_usage::sync_progress::add_total(1);
+    struct ProgressDoneGuard;
+    impl Drop for ProgressDoneGuard {
+        fn drop(&mut self) {
+            crate::services::session_usage::sync_progress::add_done(1);
+        }
+    }
+    let _done_on_exit = ProgressDoneGuard;
+
     let db_path_str = db_path.to_string_lossy().to_string();
 
     // 检查文件修改时间。

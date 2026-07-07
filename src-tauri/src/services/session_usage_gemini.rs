@@ -61,7 +61,6 @@ pub fn sync_gemini_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
     crate::services::session_usage::sync_progress::add_total(files.len() as u32);
 
     for file_path in &files {
-        crate::services::session_usage::sync_progress::add_done(1);
         match sync_single_gemini_file(db, file_path, &mut pricing_cache) {
             Ok((imported, skipped)) => {
                 result.imported += imported;
@@ -73,6 +72,7 @@ pub fn sync_gemini_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
                 result.errors.push(msg);
             }
         }
+        crate::services::session_usage::sync_progress::add_done(1);
     }
 
     if result.imported > 0 {

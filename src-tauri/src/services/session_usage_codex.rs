@@ -184,7 +184,6 @@ pub fn sync_codex_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
     crate::services::session_usage::sync_progress::add_total(files.len() as u32);
 
     for (file_path, file_mtime) in &files {
-        crate::services::session_usage::sync_progress::add_done(1);
         match sync_single_codex_file(
             db,
             file_path,
@@ -202,6 +201,7 @@ pub fn sync_codex_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
                 result.errors.push(msg);
             }
         }
+        crate::services::session_usage::sync_progress::add_done(1);
     }
 
     if result.imported > 0 {
