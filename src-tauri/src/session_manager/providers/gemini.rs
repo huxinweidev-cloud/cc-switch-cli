@@ -2,6 +2,8 @@ use std::path::Path;
 
 use serde_json::Value;
 
+use crate::session_manager::cache::{self, FileScanTarget};
+use crate::session_manager::scan_cache_store::ScanCacheStore;
 use crate::session_manager::{SearchSnippet, SessionMessage, SessionMeta, SessionSearchHit};
 
 use super::utils::{build_snippet, parse_timestamp_to_ms, truncate_summary};
@@ -52,6 +54,42 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
     }
 
     sessions
+}
+
+/// Cache-aware scan over `tmp/<project>/chats/*.json`.
+pub(crate) fn scan_sessions_cached(store: &ScanCacheStore, force: bool) -> Vec<SessionMeta> {
+    cache::scan_provider_cached(store, PROVIDER_ID, scan_targets(), force, parse_meta)
+}
+
+fn scan_targets() -> Vec<FileScanTarget> {
+    let tmp_dir = crate::gemini_config::get_gemini_dir().join("tmp");
+    let mut targets = Vec::new();
+    let project_dirs = match std::fs::read_dir(&tmp_dir) {
+        Ok(entries) => entries,
+        Err(_) => return targets,
+    };
+    for entry in project_dirs.flatten() {
+        let chats_dir = entry.path().join("chats");
+        if !chats_dir.is_dir() {
+            continue;
+        }
+        cache::collect_targets_recursive(&chats_dir, "json", &mut targets);
+    }
+    targets
+}
+
+/// Parse one session file, injecting `project_dir` from the sibling
+/// `<project>/.project_root` exactly like `scan_sessions` does. The cached
+/// `SessionMeta` bakes this in, so unchanged files keep the resolved directory.
+fn parse_meta(path: &Path) -> Option<SessionMeta> {
+    let mut meta = parse_session(path)?;
+    // path: tmp/<project>/chats/<session>.json → .project_root at tmp/<project>/
+    meta.project_dir = path
+        .parent()
+        .and_then(Path::parent)
+        .map(|project| project.join(".project_root"))
+        .and_then(|file| std::fs::read_to_string(file).ok());
+    Some(meta)
 }
 
 pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {

@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 use rusqlite::Connection;
 use serde_json::Value;
 
+use crate::session_manager::cache::{self, FileScanTarget};
+use crate::session_manager::scan_cache_store::ScanCacheStore;
 use crate::session_manager::{SearchSnippet, SessionMessage, SessionMeta, SessionSearchHit};
 
 use super::utils::{build_snippet, parse_timestamp_to_ms, path_basename, truncate_summary};
@@ -36,9 +38,32 @@ fn get_opencode_db_path() -> PathBuf {
 /// Scan sessions from both the legacy JSON files and the newer SQLite database,
 /// merging results with SQLite taking precedence on ID conflicts.
 pub fn scan_sessions() -> Vec<SessionMeta> {
-    let json_sessions = scan_sessions_json();
-    let sqlite_sessions = scan_sessions_sqlite();
+    merge_json_sqlite(scan_sessions_json(), scan_sessions_sqlite())
+}
 
+/// Cache-aware scan: the legacy JSON storage goes through the persistent file
+/// cache, while the SQLite database is always queried fresh (a single query, not
+/// worth caching). Results are merged with SQLite taking precedence — identical
+/// semantics to `scan_sessions`.
+pub(crate) fn scan_sessions_cached(store: &ScanCacheStore, force: bool) -> Vec<SessionMeta> {
+    let storage = get_opencode_data_dir();
+    let storage_for_parse = storage.clone();
+    let json_sessions = cache::scan_provider_cached(
+        store,
+        PROVIDER_ID,
+        scan_targets(&storage),
+        force,
+        move |path| parse_session(&storage_for_parse, path),
+    );
+    merge_json_sqlite(json_sessions, scan_sessions_sqlite())
+}
+
+/// Merge legacy-JSON and SQLite sessions, keeping the SQLite row when the same
+/// `session_id` exists in both.
+fn merge_json_sqlite(
+    json_sessions: Vec<SessionMeta>,
+    sqlite_sessions: Vec<SessionMeta>,
+) -> Vec<SessionMeta> {
     if sqlite_sessions.is_empty() {
         return json_sessions;
     }
@@ -46,7 +71,6 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
         return sqlite_sessions;
     }
 
-    // Deduplicate: keep SQLite version when the same session_id exists in both
     let sqlite_ids: std::collections::HashSet<String> = sqlite_sessions
         .iter()
         .map(|s| s.session_id.clone())
@@ -59,6 +83,12 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
         }
     }
     merged
+}
+
+fn scan_targets(storage: &Path) -> Vec<FileScanTarget> {
+    let mut targets = Vec::new();
+    cache::collect_targets_recursive(&storage.join("session"), "json", &mut targets);
+    targets
 }
 
 fn scan_sessions_json() -> Vec<SessionMeta> {

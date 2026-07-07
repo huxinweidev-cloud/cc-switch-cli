@@ -6,6 +6,8 @@ use std::path::Path;
 use serde_json::Value;
 
 use crate::openclaw_config::get_openclaw_dir;
+use crate::session_manager::cache::{self, FileScanTarget};
+use crate::session_manager::scan_cache_store::ScanCacheStore;
 use crate::{
     config::write_json_file,
     session_manager::{SearchSnippet, SessionMessage, SessionMeta, SessionSearchHit},
@@ -72,6 +74,35 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
     }
 
     sessions
+}
+
+/// Cache-aware scan over `agents/<agent>/sessions/*.jsonl`.
+pub(crate) fn scan_sessions_cached(store: &ScanCacheStore, force: bool) -> Vec<SessionMeta> {
+    cache::scan_provider_cached(store, PROVIDER_ID, scan_targets(), force, parse_meta)
+}
+
+fn scan_targets() -> Vec<FileScanTarget> {
+    let agents_dir = get_openclaw_dir().join("agents");
+    let mut targets = Vec::new();
+    let agent_entries = match std::fs::read_dir(&agents_dir) {
+        Ok(entries) => entries,
+        Err(_) => return targets,
+    };
+    for agent_entry in agent_entries.flatten() {
+        let sessions_dir = agent_entry.path().join("sessions");
+        if !sessions_dir.is_dir() {
+            continue;
+        }
+        cache::collect_targets_recursive(&sessions_dir, "jsonl", &mut targets);
+    }
+    targets
+}
+
+/// Parse one session file, resolving the sibling display-name map from the file's
+/// own `sessions/` directory so the cached title matches `scan_sessions`.
+fn parse_meta(path: &Path) -> Option<SessionMeta> {
+    let display_names = path.parent().map(load_display_names).unwrap_or_default();
+    parse_session(path, Some(&display_names))
 }
 
 pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {

@@ -7,6 +7,8 @@ use regex::Regex;
 use serde_json::Value;
 
 use crate::codex_config::get_codex_config_dir;
+use crate::session_manager::cache::{self, FileScanTarget};
+use crate::session_manager::scan_cache_store::ScanCacheStore;
 use crate::session_manager::{SearchSnippet, SessionMessage, SessionMeta, SessionSearchHit};
 
 use super::utils::{
@@ -34,6 +36,19 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
     collect_jsonl_files(&archived_root, &mut files);
 
     super::utils::parse_sessions_parallel(files, parse_session)
+}
+
+/// Cache-aware scan across the active and archived session directories.
+pub(crate) fn scan_sessions_cached(store: &ScanCacheStore, force: bool) -> Vec<SessionMeta> {
+    cache::scan_provider_cached(store, PROVIDER_ID, scan_targets(), force, parse_session)
+}
+
+fn scan_targets() -> Vec<FileScanTarget> {
+    let config_dir = get_codex_config_dir();
+    let mut targets = Vec::new();
+    cache::collect_targets_recursive(&config_dir.join("sessions"), "jsonl", &mut targets);
+    cache::collect_targets_recursive(&config_dir.join("archived_sessions"), "jsonl", &mut targets);
+    targets
 }
 
 pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {

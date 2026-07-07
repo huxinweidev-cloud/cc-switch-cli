@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 use crate::config::get_claude_config_dir;
+use crate::session_manager::cache::{self, FileScanTarget};
+use crate::session_manager::scan_cache_store::ScanCacheStore;
 use crate::session_manager::{SearchSnippet, SessionMessage, SessionMeta, SessionSearchHit};
 
 use super::utils::{
@@ -20,6 +22,20 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
     collect_jsonl_files(&root, &mut files);
 
     super::utils::parse_sessions_parallel(files, parse_session)
+}
+
+/// Cache-aware scan: reuses cached metadata for unchanged files and re-parses
+/// only new or modified `.jsonl` files. Agent sessions still parse to `None`
+/// (a cheap filename check) and are simply not cached.
+pub(crate) fn scan_sessions_cached(store: &ScanCacheStore, force: bool) -> Vec<SessionMeta> {
+    cache::scan_provider_cached(store, PROVIDER_ID, scan_targets(), force, parse_session)
+}
+
+fn scan_targets() -> Vec<FileScanTarget> {
+    let root = get_claude_config_dir().join("projects");
+    let mut targets = Vec::new();
+    cache::collect_targets_recursive(&root, "jsonl", &mut targets);
+    targets
 }
 
 pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {

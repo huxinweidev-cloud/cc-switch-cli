@@ -59,6 +59,10 @@ static DATABASE_PERMISSION_CHECK: Once = Once::new();
 
 /// 当前 Schema 版本号
 /// 每次修改表结构时递增，并在 schema.rs 中添加相应的迁移逻辑
+///
+/// 注意：本库 schema 与上游项目同步（WebDAV 亦会整库同步），本仓库不得自行
+/// 加表/加列或提升版本号；本地新增的持久化需求一律放独立 sidecar 存储
+/// （如 session_manager::scan_cache_store）。
 pub(crate) const SCHEMA_VERSION: i32 = 11;
 
 fn database_open_flags() -> OpenFlags {
