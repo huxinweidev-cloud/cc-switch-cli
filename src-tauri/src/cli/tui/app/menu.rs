@@ -452,7 +452,7 @@ impl App {
         }
 
         let help = Overlay::Help(crate::cli::tui::help::HelpState::new(
-            crate::cli::tui::help::context_help_for_app(self),
+            crate::cli::tui::help::context_help_for_app(self, data),
         ));
         if self.overlay.can_be_covered_by_help() {
             let previous = std::mem::replace(&mut self.overlay, help);
@@ -565,7 +565,9 @@ impl App {
 
         let key = self.normalize_vim_navigation_key(key);
 
-        if matches!(key.code, KeyCode::Char('?')) && self.help_shortcut_is_available() {
+        if matches!(key.code, KeyCode::Char('?') | KeyCode::Char('？'))
+            && self.help_shortcut_is_available()
+        {
             self.open_help(data);
             return Action::None;
         }
