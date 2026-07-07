@@ -18,7 +18,7 @@ use crate::proxy::usage::calculator::CostCalculator;
 use crate::proxy::usage::parser::TokenUsage;
 use crate::services::session_usage::{
     cached_model_pricing, get_all_sync_states, metadata_modified_nanos, update_sync_state_conn,
-    PricingCache, SessionSyncResult,
+    PricingCache, SessionSyncResult, SESSION_LOG_COMMIT_BATCH,
 };
 use crate::services::usage_stats::{should_skip_session_insert, DedupKey};
 use rust_decimal::Decimal;
@@ -167,11 +167,15 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
     }
     drop(opencode_conn);
 
-    // 阶段二：全部插入与同步状态更新收敛到一个主库写事务，统一提交。
+    // 阶段二：插入与同步状态更新在主库写事务内批量完成，超大历史每
+    // SESSION_LOG_COMMIT_BATCH 条消息分段提交（与 Claude/Codex 路径一致），
+    // 避免单个长事务长时间占据写锁。崩溃在分段之间时，已提交消息由
+    // request_id 去重兜底，未推进的会话级状态让下次重试。
     let mut guard = lock_conn!(db.conn);
-    let tx = guard
+    let mut tx = guard
         .transaction()
         .map_err(|e| AppError::Database(format!("开启事务失败: {e}")))?;
+    let mut since_commit: u32 = 0;
 
     for session in &pending {
         let mut session_had_error = false;
@@ -193,6 +197,16 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
                     result.skipped += 1;
                     session_had_error = true;
                 }
+            }
+
+            since_commit += 1;
+            if since_commit >= SESSION_LOG_COMMIT_BATCH {
+                tx.commit()
+                    .map_err(|e| AppError::Database(format!("提交事务失败: {e}")))?;
+                tx = guard
+                    .transaction()
+                    .map_err(|e| AppError::Database(format!("开启事务失败: {e}")))?;
+                since_commit = 0;
             }
         }
 
