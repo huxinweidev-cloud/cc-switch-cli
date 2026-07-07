@@ -20,12 +20,28 @@ pub enum IconMode {
 }
 
 impl IconMode {
+    pub fn code(&self) -> &'static str {
+        match self {
+            IconMode::Auto => "auto",
+            IconMode::Emoji => "emoji",
+            IconMode::Ascii => "ascii",
+        }
+    }
+
     pub fn parse(value: &str) -> Option<Self> {
         match value.trim().to_ascii_lowercase().as_str() {
             "auto" => Some(IconMode::Auto),
             "emoji" => Some(IconMode::Emoji),
             "ascii" | "text" => Some(IconMode::Ascii),
             _ => None,
+        }
+    }
+
+    pub fn next(&self) -> Self {
+        match self {
+            IconMode::Auto => IconMode::Emoji,
+            IconMode::Emoji => IconMode::Ascii,
+            IconMode::Ascii => IconMode::Auto,
         }
     }
 }
@@ -146,12 +162,21 @@ mod tests {
     }
 
     #[test]
-    fn icon_mode_parses_known_values() {
-        assert_eq!(IconMode::parse("auto"), Some(IconMode::Auto));
-        assert_eq!(IconMode::parse("emoji"), Some(IconMode::Emoji));
+    fn icon_mode_codes_round_trip() {
+        for mode in [IconMode::Auto, IconMode::Emoji, IconMode::Ascii] {
+            assert_eq!(IconMode::parse(mode.code()), Some(mode));
+        }
         assert_eq!(IconMode::parse(" Ascii "), Some(IconMode::Ascii));
         assert_eq!(IconMode::parse("text"), Some(IconMode::Ascii));
         assert_eq!(IconMode::parse("nerdfont"), None);
+    }
+
+    #[test]
+    fn icon_mode_cycles_through_all_variants() {
+        let start = IconMode::Auto;
+        assert_eq!(start.next(), IconMode::Emoji);
+        assert_eq!(start.next().next(), IconMode::Ascii);
+        assert_eq!(start.next().next().next(), IconMode::Auto);
     }
 
     #[test]

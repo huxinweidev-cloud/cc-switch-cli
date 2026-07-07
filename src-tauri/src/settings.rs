@@ -978,6 +978,12 @@ pub fn get_icon_mode() -> Option<String> {
         .and_then(|settings| settings.icons.clone())
 }
 
+pub fn set_icon_mode(mode: &str) -> Result<(), AppError> {
+    let mut settings = get_settings();
+    settings.icons = Some(mode.to_string());
+    update_settings(settings)
+}
+
 pub fn get_visible_apps() -> VisibleApps {
     settings_store()
         .read()

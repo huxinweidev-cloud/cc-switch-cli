@@ -4160,6 +4160,39 @@ pub mod texts {
         }
     }
 
+    pub fn tui_settings_icons_label() -> &'static str {
+        if is_chinese() {
+            "图标"
+        } else {
+            "Icons"
+        }
+    }
+
+    pub fn tui_settings_icon_mode_name(mode: crate::cli::tui::icons::IconMode) -> &'static str {
+        use crate::cli::tui::icons::IconMode;
+        if is_chinese() {
+            match mode {
+                IconMode::Auto => "自动",
+                IconMode::Emoji => "表情",
+                IconMode::Ascii => "ASCII",
+            }
+        } else {
+            match mode {
+                IconMode::Auto => "Auto",
+                IconMode::Emoji => "Emoji",
+                IconMode::Ascii => "ASCII",
+            }
+        }
+    }
+
+    pub fn tui_toast_icons_changed(mode_name: &str) -> String {
+        if is_chinese() {
+            format!("图标已切换为{mode_name}")
+        } else {
+            format!("Icons set to {mode_name}")
+        }
+    }
+
     pub fn tui_settings_header_setting() -> &'static str {
         if is_chinese() {
             "设置项"
