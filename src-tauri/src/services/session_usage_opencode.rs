@@ -42,6 +42,83 @@ struct OpenCodeMessageQueryResult {
     has_incomplete_usage: bool,
 }
 
+/// 一个待写入主库的会话（有界分批的批次元素）。
+struct PendingOpenCodeSession {
+    session_id: String,
+    sync_key: String,
+    time_updated: i64,
+    /// 消息查询完整且无 incomplete usage 时才推进会话级同步状态
+    advance_state: bool,
+    messages: Vec<(String, OpenCodeMessageData)>,
+}
+
+/// 把一个批次写入主库：一个短事务覆盖批内全部消息插入与会话级状态更新，
+/// 提交后清空批次释放内存。
+fn flush_opencode_batch(
+    db: &Database,
+    pricing_cache: &mut PricingCache,
+    batch: &mut Vec<PendingOpenCodeSession>,
+    result: &mut SessionSyncResult,
+    has_sync_errors: &mut bool,
+) -> Result<(), AppError> {
+    if batch.is_empty() {
+        return Ok(());
+    }
+
+    let mut guard = lock_conn!(db.conn);
+    let tx = guard
+        .transaction()
+        .map_err(|e| AppError::Database(format!("开启事务失败: {e}")))?;
+
+    for session in batch.iter() {
+        let mut session_had_error = false;
+
+        for (request_id, msg_data) in &session.messages {
+            match insert_opencode_message(
+                &tx,
+                pricing_cache,
+                request_id,
+                msg_data,
+                &session.session_id,
+            ) {
+                Ok(true) => result.imported += 1,
+                Ok(false) => result.skipped += 1,
+                Err(e) => {
+                    let msg = format!("OpenCode 消息插入失败 {request_id}: {e}");
+                    log::warn!("[OPENCODE-SYNC] {msg}");
+                    result.errors.push(msg);
+                    result.skipped += 1;
+                    session_had_error = true;
+                }
+            }
+        }
+
+        if session_had_error {
+            *has_sync_errors = true;
+            continue;
+        }
+
+        if !session.advance_state {
+            continue;
+        }
+
+        // 更新会话级同步状态。失败时不要推进文件级状态，确保下次可重试。
+        if let Err(e) = update_sync_state_conn(&tx, &session.sync_key, session.time_updated, 0) {
+            let msg = format!("OpenCode 会话同步状态更新失败 {}: {e}", session.sync_key);
+            log::warn!("[OPENCODE-SYNC] {msg}");
+            result.errors.push(msg);
+            *has_sync_errors = true;
+        }
+    }
+
+    tx.commit()
+        .map_err(|e| AppError::Database(format!("提交事务失败: {e}")))?;
+    drop(guard);
+
+    batch.clear();
+    Ok(())
+}
+
 /// 同步 OpenCode 使用数据
 pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
     let db_path = get_opencode_db_path();
@@ -115,19 +192,12 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
     // 查询所有会话
     let sessions = query_sessions(&opencode_conn)?;
 
-    // 阶段一（不持有主库锁）：读外部 opencode.db，收集待写消息与待更新的
-    // 会话级同步状态。绝不在主库写事务内查询/解析外部库——那会让其他
-    // 并发写入者（TUI/daemon/代理日志）等到 busy timeout。
-    struct PendingSession {
-        session_id: String,
-        sync_key: String,
-        time_updated: i64,
-        /// 消息查询完整且无 incomplete usage 时才推进会话级同步状态
-        advance_state: bool,
-        messages: Vec<(String, OpenCodeMessageData)>,
-    }
-
-    let mut pending: Vec<PendingSession> = Vec::new();
+    // 有界分批：逐会话读外部 opencode.db（期间不持主库锁），凑满约
+    // SESSION_LOG_COMMIT_BATCH 条消息就作为一个批次写入主库短事务并释放
+    // 内存。内存占用有界于单批，主库写锁窗口只覆盖每个批次的写入；批次
+    // 之间崩溃由 request_id 去重兜底，未推进的会话级状态让下次重试。
+    let mut batch: Vec<PendingOpenCodeSession> = Vec::new();
+    let mut batch_messages: usize = 0;
 
     for (session_id, time_updated) in &sessions {
         // 检查会话是否需要重新同步（从预载快照读取）
@@ -139,7 +209,7 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
 
         match query_assistant_messages(&opencode_conn, session_id) {
             Ok(query_result) => {
-                let messages = query_result
+                let messages: Vec<(String, OpenCodeMessageData)> = query_result
                     .messages
                     .into_iter()
                     .map(|(message_id, msg_data)| {
@@ -149,13 +219,25 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
                         )
                     })
                     .collect();
-                pending.push(PendingSession {
+                batch_messages += messages.len();
+                batch.push(PendingOpenCodeSession {
                     session_id: session_id.clone(),
                     sync_key,
                     time_updated: *time_updated,
                     advance_state: !query_result.has_incomplete_usage,
                     messages,
                 });
+
+                if batch_messages >= SESSION_LOG_COMMIT_BATCH as usize {
+                    flush_opencode_batch(
+                        db,
+                        &mut pricing_cache,
+                        &mut batch,
+                        &mut result,
+                        &mut has_sync_errors,
+                    )?;
+                    batch_messages = 0;
+                }
             }
             Err(e) => {
                 let msg = format!("OpenCode 会话消息查询失败 {session_id}: {e}");
@@ -167,75 +249,24 @@ pub fn sync_opencode_usage(db: &Database) -> Result<SessionSyncResult, AppError>
     }
     drop(opencode_conn);
 
-    // 阶段二：插入与同步状态更新在主库写事务内批量完成，超大历史每
-    // SESSION_LOG_COMMIT_BATCH 条消息分段提交（与 Claude/Codex 路径一致），
-    // 避免单个长事务长时间占据写锁。崩溃在分段之间时，已提交消息由
-    // request_id 去重兜底，未推进的会话级状态让下次重试。
-    let mut guard = lock_conn!(db.conn);
-    let mut tx = guard
-        .transaction()
-        .map_err(|e| AppError::Database(format!("开启事务失败: {e}")))?;
-    let mut since_commit: u32 = 0;
-
-    for session in &pending {
-        let mut session_had_error = false;
-
-        for (request_id, msg_data) in &session.messages {
-            match insert_opencode_message(
-                &tx,
-                &mut pricing_cache,
-                request_id,
-                msg_data,
-                &session.session_id,
-            ) {
-                Ok(true) => result.imported += 1,
-                Ok(false) => result.skipped += 1,
-                Err(e) => {
-                    let msg = format!("OpenCode 消息插入失败 {request_id}: {e}");
-                    log::warn!("[OPENCODE-SYNC] {msg}");
-                    result.errors.push(msg);
-                    result.skipped += 1;
-                    session_had_error = true;
-                }
-            }
-
-            since_commit += 1;
-            if since_commit >= SESSION_LOG_COMMIT_BATCH {
-                tx.commit()
-                    .map_err(|e| AppError::Database(format!("提交事务失败: {e}")))?;
-                tx = guard
-                    .transaction()
-                    .map_err(|e| AppError::Database(format!("开启事务失败: {e}")))?;
-                since_commit = 0;
-            }
-        }
-
-        if session_had_error {
-            has_sync_errors = true;
-            continue;
-        }
-
-        if !session.advance_state {
-            continue;
-        }
-
-        // 更新会话级同步状态。失败时不要推进文件级状态，确保下次可重试。
-        if let Err(e) = update_sync_state_conn(&tx, &session.sync_key, session.time_updated, 0) {
-            let msg = format!("OpenCode 会话同步状态更新失败 {}: {e}", session.sync_key);
-            log::warn!("[OPENCODE-SYNC] {msg}");
-            result.errors.push(msg);
-            has_sync_errors = true;
-        }
-    }
+    flush_opencode_batch(
+        db,
+        &mut pricing_cache,
+        &mut batch,
+        &mut result,
+        &mut has_sync_errors,
+    )?;
 
     // 仅在本轮完全成功时推进文件级状态；否则保留下次重试入口。
     if !has_sync_errors {
+        let mut guard = lock_conn!(db.conn);
+        let tx = guard
+            .transaction()
+            .map_err(|e| AppError::Database(format!("开启事务失败: {e}")))?;
         update_sync_state_conn(&tx, &db_path_str, file_modified, 0)?;
+        tx.commit()
+            .map_err(|e| AppError::Database(format!("提交事务失败: {e}")))?;
     }
-
-    tx.commit()
-        .map_err(|e| AppError::Database(format!("提交事务失败: {e}")))?;
-    drop(guard);
 
     if result.imported > 0 {
         log::info!(
