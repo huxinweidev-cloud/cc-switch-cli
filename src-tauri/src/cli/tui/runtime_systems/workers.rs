@@ -688,17 +688,29 @@ fn handle_session_req(req: SessionReq, tx: &mpsc::Sender<SessionMsg>) -> Result<
         SessionReq::Refresh {
             request_id,
             provider_id,
+            force,
         } => {
-            let result = std::panic::catch_unwind(|| {
-                if provider_id == "all" {
-                    crate::session_manager::scan_sessions()
-                } else {
-                    crate::session_manager::scan_sessions_for_provider(&provider_id)
+            // 会话扫描（尤其首扫全量解析，可达数十秒）放到一次性 detached 线程执行，
+            // worker 循环立即回去处理后续的 LoadMessages/Search/Delete，避免长扫描把
+            // 交互请求全部堵在队列里。UI 入口侧（自动进入页面 + 手动 r）都以
+            // scan_active/loading 防抖，保证同一时刻至多一个扫描在飞（详见
+            // queue_sessions_refresh_if_needed 与 Action::SessionsRefresh），故这里无需
+            // 额外的并发标志；即便偶发起了两个，旧线程的 partial/finished 带旧
+            // request_id，UI 侧按 scan_active 天然拒收，最多浪费一次 IO。
+            let tx_scan = tx.clone();
+            let provider_for_scan = provider_id.clone();
+            match std::thread::Builder::new()
+                .name("cc-switch-session-scan".to_string())
+                .spawn(move || run_session_scan(request_id, provider_for_scan, force, &tx_scan))
+            {
+                Ok(_handle) => {} // detached：不 join，worker 立即返回
+                Err(err) => {
+                    // 线程起不来（极罕见）：退回同步执行，保证功能可用（阻塞是次要问题）。
+                    log::debug!("[SESSION-SCAN] 扫描线程启动失败，同步执行: {err}");
+                    run_session_scan(request_id, provider_id, force, tx);
                 }
-            })
-            .map_err(|_| "session scan panicked".to_string());
-            tx.send(SessionMsg::ScanFinished { request_id, result })
-                .map_err(|_| ())
+            }
+            Ok(())
         }
         SessionReq::LoadMessages {
             request_id,
@@ -730,6 +742,16 @@ fn handle_session_req(req: SessionReq, tx: &mpsc::Sender<SessionMsg>) -> Result<
                             Err("Session was not deleted".to_string())
                         }
                     });
+            // 删除成功后同步清掉该会话的 sidecar 扫描缓存行，否则下次启动时
+            // stale-while-revalidate 的秒开快照会让已删除会话短暂"复活"（要等
+            // 后台重扫的 deletes 才清）。共享 helper 与 CLI `sessions delete` 一致。
+            if result.is_ok() {
+                crate::session_manager::scan_cache_store::purge_session(
+                    &provider_id,
+                    &session_id,
+                    &source_path,
+                );
+            }
             tx.send(SessionMsg::DeleteFinished {
                 request_id,
                 key,
@@ -750,6 +772,75 @@ fn handle_session_req(req: SessionReq, tx: &mpsc::Sender<SessionMsg>) -> Result<
                 .map_err(|_| ())
         }
     }
+}
+
+/// 执行一次会话扫描的两阶段逻辑（供 detached 扫描线程与线程启动失败时的同步
+/// 回退共用）：sidecar 打不开时退回旧的纯内存全量扫描；否则先用缓存快照秒开
+/// （非强制刷新时），再逐 provider 增量重扫并发 partial，最后发 ScanFinished。
+/// 全程用 catch_unwind 兜底，panic 转成 Err 结果由 UI 呈现。tx 发送失败（UI 已
+/// 退出）时静默结束。
+fn run_session_scan(
+    request_id: u64,
+    provider_id: String,
+    force: bool,
+    tx: &mpsc::Sender<SessionMsg>,
+) {
+    // Open the sidecar scan-cache store (a separate local database file — the
+    // synced main database is not involved). If it cannot be opened, fall back
+    // to the original in-memory-only full scan so the page still works.
+    let Ok(store) = crate::session_manager::scan_cache_store::ScanCacheStore::open() else {
+        let result = std::panic::catch_unwind(|| {
+            if provider_id == "all" {
+                crate::session_manager::scan_sessions()
+            } else {
+                crate::session_manager::scan_sessions_for_provider(&provider_id)
+            }
+        })
+        .map_err(|_| "session scan panicked".to_string());
+        let _ = tx.send(SessionMsg::ScanFinished { request_id, result });
+        return;
+    };
+
+    // Phase 1 (stale): paint the cached snapshot immediately. Skipped on a
+    // forced reload and when the cache is empty (first-ever run).
+    if !force {
+        let snapshot = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            crate::session_manager::load_scan_cache_snapshot(&store, &provider_id)
+        }))
+        .unwrap_or_default();
+        if !snapshot.is_empty() {
+            let _ = tx.send(SessionMsg::ScanCachedSnapshot {
+                request_id,
+                rows: snapshot,
+            });
+        }
+    }
+
+    // Phase 2 (revalidate): stat the directories, re-parse only changed files,
+    // persist the delta, and send the final authoritative list. The "all" view
+    // scans provider by provider, emitting a partial after each so a genuine
+    // full scan paints progressively.
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if provider_id == "all" {
+            let mut merged = Vec::new();
+            for pid in crate::session_manager::CACHED_PROVIDERS {
+                let rows =
+                    crate::session_manager::scan_sessions_cached_for_provider(&store, pid, force);
+                let _ = tx.send(SessionMsg::ScanPartial {
+                    request_id,
+                    provider_id: pid.to_string(),
+                    rows: rows.clone(),
+                });
+                merged.extend(rows);
+            }
+            crate::session_manager::sort_by_recent(&mut merged);
+            merged
+        } else {
+            crate::session_manager::scan_sessions_cached_for_provider(&store, &provider_id, force)
+        }
+    }))
+    .map_err(|_| "session scan panicked".to_string());
+    let _ = tx.send(SessionMsg::ScanFinished { request_id, result });
 }
 
 #[cfg(test)]
@@ -1761,6 +1852,7 @@ mod tests {
         tx.send(SessionReq::Refresh {
             request_id: 2,
             provider_id: "claude".to_string(),
+            force: false,
         })
         .expect("queue refresh");
         drop(tx);
@@ -1769,6 +1861,7 @@ mod tests {
             SessionReq::Refresh {
                 request_id: 1,
                 provider_id: "claude".to_string(),
+                force: false,
             },
             &rx,
         );

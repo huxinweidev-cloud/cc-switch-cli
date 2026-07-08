@@ -1,13 +1,24 @@
+pub mod cache;
 pub mod providers;
+pub mod scan_cache_store;
 pub mod terminal;
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 use providers::{claude, codex, gemini, hermes, openclaw, opencode};
+use scan_cache_store::ScanCacheStore;
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
+/// Session metadata as rendered on the Sessions page.
+///
+/// `Deserialize`/`Default` back the persistent scan cache: metadata is stored as
+/// JSON and read back into this struct. `#[serde(default)]` at the container
+/// level makes every field tolerant of a missing key, so a cache written by an
+/// older build that lacked a field still deserializes (the field defaults). When
+/// the shape changes incompatibly, bump `cache::SCAN_CACHE_VERSION` instead of
+/// relying on field-level tolerance.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
 pub struct SessionMeta {
     pub provider_id: String,
     pub session_id: String,
@@ -84,12 +95,7 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
     sessions.extend(r5);
     sessions.extend(r6);
 
-    sessions.sort_by(|a, b| {
-        let a_ts = a.last_active_at.or(a.created_at).unwrap_or(0);
-        let b_ts = b.last_active_at.or(b.created_at).unwrap_or(0);
-        b_ts.cmp(&a_ts)
-    });
-
+    sort_by_recent(&mut sessions);
     sessions
 }
 
@@ -104,12 +110,71 @@ pub fn scan_sessions_for_provider(provider_id: &str) -> Vec<SessionMeta> {
         _ => Vec::new(),
     };
 
+    sort_by_recent(&mut sessions);
+    sessions
+}
+
+/// Sort sessions most-recent-first by last-active (falling back to created) time.
+/// Shared by every scan entry point so the file and cache paths order identically.
+pub(crate) fn sort_by_recent(sessions: &mut [SessionMeta]) {
     sessions.sort_by(|a, b| {
         let a_ts = a.last_active_at.or(a.created_at).unwrap_or(0);
         let b_ts = b.last_active_at.or(b.created_at).unwrap_or(0);
         b_ts.cmp(&a_ts)
     });
+}
 
+/// The file-parse-backed providers, in the same order the full scan fans them out.
+/// SQLite-only sources (opencode.db / hermes state.db) are queried inside their
+/// provider module and are intentionally not covered by the file cache.
+/// pub(crate)：TUI worker 逐 provider 扫描并渐进回传时复用同一顺序。
+pub(crate) const CACHED_PROVIDERS: [&str; 6] = [
+    "codex", "claude", "opencode", "openclaw", "gemini", "hermes",
+];
+
+/// Cache-aware scan of a single provider (sorted like `scan_sessions_for_provider`).
+/// The "all providers" view iterates [`CACHED_PROVIDERS`] with this function in
+/// the TUI session worker, emitting a progressive partial after each provider.
+pub fn scan_sessions_cached_for_provider(
+    store: &ScanCacheStore,
+    provider_id: &str,
+    force: bool,
+) -> Vec<SessionMeta> {
+    let mut sessions = provider_scan_cached(store, provider_id, force);
+    sort_by_recent(&mut sessions);
+    sessions
+}
+
+fn provider_scan_cached(
+    store: &ScanCacheStore,
+    provider_id: &str,
+    force: bool,
+) -> Vec<SessionMeta> {
+    match provider_id {
+        "codex" => codex::scan_sessions_cached(store, force),
+        "claude" => claude::scan_sessions_cached(store, force),
+        "opencode" => opencode::scan_sessions_cached(store, force),
+        "openclaw" => openclaw::scan_sessions_cached(store, force),
+        "gemini" => gemini::scan_sessions_cached(store, force),
+        "hermes" => hermes::scan_sessions_cached(store, force),
+        _ => Vec::new(),
+    }
+}
+
+/// Build the stale-while-revalidate first paint entirely from the persistent
+/// cache: no directory walk, no file reads, just the JSON already stored. Returns
+/// an empty list on the first-ever run (empty cache) so the caller falls straight
+/// through to the full scan. `provider_id == "all"` merges every provider's cache.
+pub fn load_scan_cache_snapshot(store: &ScanCacheStore, provider_id: &str) -> Vec<SessionMeta> {
+    let provider = (provider_id != "all").then_some(provider_id);
+    let meta_jsons = store
+        .load_meta_json(provider, cache::SCAN_CACHE_VERSION)
+        .unwrap_or_default();
+    let mut sessions: Vec<SessionMeta> = meta_jsons
+        .iter()
+        .filter_map(|json| serde_json::from_str(json).ok())
+        .collect();
+    sort_by_recent(&mut sessions);
     sessions
 }
 

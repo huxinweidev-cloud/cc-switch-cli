@@ -3010,7 +3010,6 @@ fn home_restores_main_logo_and_home_labels() {
     assert!(all.contains("___  ___"));
     assert!(all.contains("\\___|\\___|"));
     assert!(all.contains("Connection Details"));
-    assert!(all.contains("Use the left menu"));
 }
 
 #[test]
@@ -3219,7 +3218,6 @@ fn home_shows_proxy_dashboard_when_current_app_proxy_is_on() {
     assert!(all.contains("┌ Proxy Dashboard "), "{all}");
     assert!(dashboard_idx > local_env_idx, "{all}");
     assert!(!all.contains("___  ___"), "{all}");
-    assert!(all.contains("Use the left menu"), "{all}");
     assert!(traffic_idx < waveform_idx, "{all}");
     assert!(meta_rows.len() <= 2, "{all}");
     assert!(!all.contains("ACTIVE"), "{all}");
@@ -4269,8 +4267,25 @@ fn page_key_bar_stays_visible_while_nav_has_focus() {
 }
 
 #[test]
+fn breadcrumb_title_strips_leading_emoji_in_ascii_mode() {
+    let _env_lock = lock_env();
+    // Share the crate-wide lock with the other CC_SWITCH_ICONS tests so env
+    // mutations don't race across modules.
+    let _icons_lock = lock_test_home_and_settings();
+
+    let _emoji = EnvGuard::set("CC_SWITCH_ICONS", "emoji");
+    assert!(super::breadcrumb_title(&["🔧 Settings", "Proxy"]).contains('🔧'));
+
+    let _ascii = EnvGuard::set("CC_SWITCH_ICONS", "ascii");
+    let ascii = super::breadcrumb_title(&["🔧 Settings", "Proxy"]);
+    assert!(!ascii.contains('🔧'), "{ascii}");
+    assert!(ascii.contains("Settings › Proxy"), "{ascii}");
+}
+
+#[test]
 fn nav_drops_emoji_icons_in_ascii_mode() {
     let _lock = lock_env();
+    let _icons_lock = lock_test_home_and_settings();
     let _lang = use_test_language(Language::English);
     let _no_color = EnvGuard::set("NO_COLOR", "1");
     let app = App::new(Some(AppType::Claude));

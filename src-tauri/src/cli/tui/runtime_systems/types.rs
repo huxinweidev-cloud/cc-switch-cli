@@ -68,6 +68,10 @@ pub(crate) enum SessionReq {
     Refresh {
         request_id: u64,
         provider_id: String,
+        /// When true (manual `r` reload), ignore the cached `(mtime, size)`
+        /// snapshot and re-parse every file; the fresh results still refresh the
+        /// persistent cache.
+        force: bool,
     },
     LoadMessages {
         request_id: u64,
@@ -90,6 +94,23 @@ pub(crate) enum SessionReq {
 }
 
 pub(crate) enum SessionMsg {
+    /// Stale-while-revalidate first paint: the list built straight from the
+    /// persistent cache, sent before the (slower) revalidating scan finishes so
+    /// the page renders immediately while the refresh indicator stays on.
+    ScanCachedSnapshot {
+        request_id: u64,
+        rows: Vec<crate::session_manager::SessionMeta>,
+    },
+    /// Progressive fill for the "all providers" scan: one provider's freshly
+    /// revalidated list, sent as soon as that provider finishes so a genuine
+    /// full scan (first-ever run, manual reload) paints provider by provider
+    /// instead of all at once. The refresh indicator stays on until
+    /// `ScanFinished`.
+    ScanPartial {
+        request_id: u64,
+        provider_id: String,
+        rows: Vec<crate::session_manager::SessionMeta>,
+    },
     ScanFinished {
         request_id: u64,
         result: Result<Vec<crate::session_manager::SessionMeta>, String>,

@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 use rusqlite::Connection;
 use serde_json::Value;
 
+use crate::session_manager::cache::{self, FileScanTarget};
+use crate::session_manager::scan_cache_store::ScanCacheStore;
 use crate::session_manager::{SearchSnippet, SessionMessage, SessionMeta, SessionSearchHit};
 
 use super::utils::{build_snippet, parse_timestamp_to_ms, path_basename, truncate_summary};
@@ -36,9 +38,55 @@ fn get_opencode_db_path() -> PathBuf {
 /// Scan sessions from both the legacy JSON files and the newer SQLite database,
 /// merging results with SQLite taking precedence on ID conflicts.
 pub fn scan_sessions() -> Vec<SessionMeta> {
-    let json_sessions = scan_sessions_json();
-    let sqlite_sessions = scan_sessions_sqlite();
+    merge_json_sqlite(scan_sessions_json(), scan_sessions_sqlite())
+}
 
+/// Cache-aware scan: the legacy JSON storage goes through the persistent file
+/// cache, while the SQLite database is always queried fresh (a single query, not
+/// worth caching). Results are merged with SQLite taking precedence — identical
+/// semantics to `scan_sessions`.
+pub(crate) fn scan_sessions_cached(store: &ScanCacheStore, force: bool) -> Vec<SessionMeta> {
+    let storage = get_opencode_data_dir();
+    let storage_for_parse = storage.clone();
+    let json_sessions = cache::scan_provider_cached(
+        store,
+        PROVIDER_ID,
+        scan_targets(&storage),
+        force,
+        move |path| parse_session(&storage_for_parse, path),
+        // 只缓存"summary 不依赖旁路 part/ 文件"的会话，判定见 is_cacheable。
+        is_cacheable,
+    );
+    merge_json_sqlite(json_sessions, scan_sessions_sqlite())
+}
+
+/// OpenCode 的 sidecar 扫描缓存 cacheable 谓词：仅缓存"summary 不依赖旁路
+/// part/ 文件"的会话。
+///
+/// 不能只用 `title.is_some()`：`parse_session` 会把无显式 title 的会话用
+/// directory basename 回填 `display_title`（见其内注释），于是 `meta.title`
+/// 几乎总是 `Some`，无法区分"summary 派生自 part/ 正文文件"的会话——它们的
+/// summary 晚到/变化不改变 session JSON 与 message 目录 stat，缓存会长期返回
+/// 旧 summary。
+///
+/// 改用 `parse_session` 的构造不变量：**有显式 title 时 `summary == title`
+/// （同一字符串 clone）；无显式 title 时 title 来自目录名、summary 来自 part
+/// 文本，且 `parse_session` 会把恰好等于 title 的派生 summary 丢弃为 None**。
+/// 因此 `summary == Some(title)` **当且仅当**显式 title——不再依赖"两者不同源
+/// 必不相等"的概率论证，而是由构造严格保证（巧合窗口已在 `parse_session` 消除）。
+/// 故本谓词恰好识别"无 part 文件依赖"的会话——多数会话（有显式 title）可缓存，
+/// 其余每轮重新解析，代价小且保证正确。此谓词与 `parse_session` 的 summary 构造
+/// 强绑定：改动那里必须同步审视这里（不变量已由本文件单元测试固化）。
+fn is_cacheable(meta: &SessionMeta) -> bool {
+    meta.title.is_some() && meta.summary == meta.title
+}
+
+/// Merge legacy-JSON and SQLite sessions, keeping the SQLite row when the same
+/// `session_id` exists in both.
+fn merge_json_sqlite(
+    json_sessions: Vec<SessionMeta>,
+    sqlite_sessions: Vec<SessionMeta>,
+) -> Vec<SessionMeta> {
     if sqlite_sessions.is_empty() {
         return json_sessions;
     }
@@ -46,7 +94,6 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
         return sqlite_sessions;
     }
 
-    // Deduplicate: keep SQLite version when the same session_id exists in both
     let sqlite_ids: std::collections::HashSet<String> = sqlite_sessions
         .iter()
         .map(|s| s.session_id.clone())
@@ -59,6 +106,22 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
         }
     }
     merged
+}
+
+fn scan_targets(storage: &Path) -> Vec<FileScanTarget> {
+    let mut targets = Vec::new();
+    cache::collect_targets_recursive(&storage.join("session"), "json", &mut targets);
+    // message 目录指纹只服务于**有 title** 的会话行的常规失效（例如会话新增
+    // 消息 → 目录 mtime 变 → 缓存重解析拿到更新的 last_active）。无 title 的
+    // 行由上面的 cacheable 判定直接不缓存、每轮重解析，不依赖这里的指纹；两
+    // 者分工互补。有 title 的会话混入此指纹无害，故保留。
+    let message_root = storage.join("message");
+    for target in &mut targets {
+        if let Some(stem) = target.path.file_stem().and_then(|s| s.to_str()) {
+            cache::mix_sibling_into_fingerprint(target, &message_root.join(stem));
+        }
+    }
+    targets
 }
 
 fn scan_sessions_json() -> Vec<SessionMeta> {
@@ -624,11 +687,23 @@ fn parse_session(storage: &Path, path: &Path) -> Option<SessionMeta> {
     let msg_dir = storage.join("message").join(&session_id);
     let source_path = msg_dir.to_string_lossy().to_string();
 
-    // Skip expensive I/O if title already available from session JSON
+    // 契约（scan_sessions_cached 的 cacheable 谓词依赖此不变量）：
+    //   有显式 title 时 summary == display_title（== title，同一字符串 clone），
+    //   即 `summary == Some(title)` 意味着"无 part 文件依赖"，可安全缓存；
+    //   无显式 title 时 title 来自目录名、summary 来自 part 文本。为从**构造上**
+    //   消除巧合窗口（part 文本恰好等于目录 basename 回填的 title 时会被误判可
+    //   缓存），此分支若派生 summary 等于 display_title 则丢弃为 None——与 title
+    //   相同的 summary 是冗余展示信息，丢弃无损。由此保证 `summary == Some(title)`
+    //   **当且仅当**显式 title 恒成立（而非概率成立）。
+    // 改动此处逻辑必须同步审视 scan_sessions_cached 的 cacheable 谓词。
     let summary = if has_title {
         display_title.clone()
     } else {
-        get_first_user_summary(storage, &session_id)
+        match get_first_user_summary(storage, &session_id) {
+            // 与目录名回填的 title 相同 → 冗余，置 None 以消除巧合窗口
+            Some(s) if Some(&s) == display_title.as_ref() => None,
+            other => other,
+        }
     };
 
     Some(SessionMeta {
@@ -1160,5 +1235,135 @@ mod tests {
         } else {
             std::env::remove_var("XDG_DATA_HOME");
         }
+    }
+
+    /// 契约固化：有显式 title 的会话，parse_session 让 summary == title
+    /// （同一字符串 clone），is_cacheable 判定为可缓存。
+    #[test]
+    fn parse_session_with_explicit_title_has_summary_equal_title_and_is_cacheable() {
+        let temp = tempdir().expect("tempdir");
+        let storage = temp.path();
+        let session_id = "ses_titled";
+        let session_dir = storage.join("session").join("proj");
+        std::fs::create_dir_all(&session_dir).expect("create session dir");
+
+        let session_file = session_dir.join(format!("{session_id}.json"));
+        std::fs::write(
+            &session_file,
+            format!(
+                r#"{{"id":"{session_id}","title":"My Named Session","directory":"/tmp/some-project","time":{{"created":1,"updated":2}}}}"#
+            ),
+        )
+        .expect("write session");
+
+        let meta = parse_session(storage, &session_file).expect("parse session");
+        assert_eq!(meta.title.as_deref(), Some("My Named Session"));
+        // 不变量：summary 与 title 同源同值。
+        assert_eq!(meta.summary, meta.title);
+        assert!(is_cacheable(&meta), "显式 title 的会话应可缓存");
+    }
+
+    /// 契约固化：无显式 title 但有 directory、且首条 user 消息的 part 文本非空
+    /// 且不等于目录 basename 时，title 来自目录名、summary 来自 part 文本，二者
+    /// 不同源不相等，is_cacheable 判定为不可缓存（否则 part 晚到/变化会长期显示
+    /// 旧 summary）。
+    #[test]
+    fn parse_session_without_title_derives_summary_from_parts_and_is_uncacheable() {
+        let temp = tempdir().expect("tempdir");
+        let storage = temp.path();
+        let session_id = "ses_untitled";
+        let msg_id = "msg_1";
+
+        let session_dir = storage.join("session").join("proj");
+        let message_dir = storage.join("message").join(session_id);
+        let part_dir = storage.join("part").join(msg_id);
+        std::fs::create_dir_all(&session_dir).expect("create session dir");
+        std::fs::create_dir_all(&message_dir).expect("create message dir");
+        std::fs::create_dir_all(&part_dir).expect("create part dir");
+
+        // 无 title、有 directory（basename 为 "my-project"）。
+        let session_file = session_dir.join(format!("{session_id}.json"));
+        std::fs::write(
+            &session_file,
+            format!(
+                r#"{{"id":"{session_id}","directory":"/tmp/my-project","time":{{"created":1,"updated":2}}}}"#
+            ),
+        )
+        .expect("write session");
+
+        // 首条 user 消息 + 一条 part 文本（非空且不等于目录 basename）。
+        std::fs::write(
+            message_dir.join(format!("{msg_id}.json")),
+            format!(
+                r#"{{"id":"{msg_id}","sessionID":"{session_id}","role":"user","time":{{"created":10}}}}"#
+            ),
+        )
+        .expect("write message");
+        std::fs::write(
+            part_dir.join("prt_1.json"),
+            r#"{"id":"prt_1","messageID":"msg_1","type":"text","text":"help me fix the parser bug"}"#,
+        )
+        .expect("write part");
+
+        let meta = parse_session(storage, &session_file).expect("parse session");
+        // title 来自目录名，summary 来自 part 文本 —— 不同源、必不相等。
+        assert_eq!(meta.title.as_deref(), Some("my-project"));
+        assert_eq!(meta.summary.as_deref(), Some("help me fix the parser bug"));
+        assert_ne!(meta.summary, meta.title);
+        assert!(
+            !is_cacheable(&meta),
+            "summary 派生自 part 文件的会话不可缓存"
+        );
+    }
+
+    /// 构造上消除巧合窗口：无显式 title、目录 basename 与首条 user part 文本恰好
+    /// 相同。parse_session 应把冗余的 summary 丢弃为 None（无损），is_cacheable
+    /// 判定为不可缓存——避免"summary 派生自 part 却因巧合等于 title"被误缓存。
+    #[test]
+    fn parse_session_without_title_drops_summary_equal_to_title_and_is_uncacheable() {
+        let temp = tempdir().expect("tempdir");
+        let storage = temp.path();
+        let session_id = "ses_coincide";
+        let msg_id = "msg_1";
+
+        let session_dir = storage.join("session").join("proj");
+        let message_dir = storage.join("message").join(session_id);
+        let part_dir = storage.join("part").join(msg_id);
+        std::fs::create_dir_all(&session_dir).expect("create session dir");
+        std::fs::create_dir_all(&message_dir).expect("create message dir");
+        std::fs::create_dir_all(&part_dir).expect("create part dir");
+
+        // 无 title，directory basename 为 "my-project"。
+        let session_file = session_dir.join(format!("{session_id}.json"));
+        std::fs::write(
+            &session_file,
+            format!(
+                r#"{{"id":"{session_id}","directory":"/tmp/my-project","time":{{"created":1,"updated":2}}}}"#
+            ),
+        )
+        .expect("write session");
+
+        // 首条 user 消息的 part 文本恰好等于目录 basename "my-project"（巧合）。
+        std::fs::write(
+            message_dir.join(format!("{msg_id}.json")),
+            format!(
+                r#"{{"id":"{msg_id}","sessionID":"{session_id}","role":"user","time":{{"created":10}}}}"#
+            ),
+        )
+        .expect("write message");
+        std::fs::write(
+            part_dir.join("prt_1.json"),
+            r#"{"id":"prt_1","messageID":"msg_1","type":"text","text":"my-project"}"#,
+        )
+        .expect("write part");
+
+        let meta = parse_session(storage, &session_file).expect("parse session");
+        assert_eq!(meta.title.as_deref(), Some("my-project"));
+        // 巧合命中：派生 summary 等于 title → 丢弃为 None。
+        assert_eq!(meta.summary, None);
+        assert!(
+            !is_cacheable(&meta),
+            "无显式 title 的会话不可缓存（即便 summary 恰好等于 title）"
+        );
     }
 }

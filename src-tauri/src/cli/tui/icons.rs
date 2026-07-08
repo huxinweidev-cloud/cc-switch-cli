@@ -96,7 +96,6 @@ pub fn is_emoji(c: char) -> bool {
     matches!(
         c as u32,
         0x2600..=0x27BF        // Misc symbols + Dingbats (⚙ ⚡ …)
-        | 0x2B00..=0x2BFF      // Misc symbols and arrows
         | 0xFE00..=0xFE0F      // Variation selectors
         | 0x1F000..=0x1FAFF    // Emoji / pictograph planes
     )
@@ -130,13 +129,8 @@ pub fn strip_leading_emoji(label: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::lock_test_home_and_settings;
     use std::ffi::OsString;
-    use std::sync::{Mutex, OnceLock};
-
-    fn env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-    }
 
     struct EnvGuard {
         key: &'static str,
@@ -186,7 +180,7 @@ mod tests {
 
     #[test]
     fn env_override_forces_mode_regardless_of_locale() {
-        let _lock = env_lock().lock().expect("env lock poisoned");
+        let _lock = lock_test_home_and_settings();
         let _lang = EnvGuard::set("LANG", "en_US.UTF-8");
         let _lc_all = EnvGuard::remove("LC_ALL");
         let _lc_ctype = EnvGuard::remove("LC_CTYPE");
@@ -200,7 +194,7 @@ mod tests {
 
     #[test]
     fn auto_downgrades_only_for_non_utf8_locales() {
-        let _lock = env_lock().lock().expect("env lock poisoned");
+        let _lock = lock_test_home_and_settings();
         let _icons = EnvGuard::set(ICON_MODE_ENV, "auto");
         let _lc_all = EnvGuard::remove("LC_ALL");
         let _lc_ctype = EnvGuard::remove("LC_CTYPE");
@@ -217,7 +211,7 @@ mod tests {
 
     #[test]
     fn auto_keeps_emoji_when_locale_is_unset() {
-        let _lock = env_lock().lock().expect("env lock poisoned");
+        let _lock = lock_test_home_and_settings();
         let _icons = EnvGuard::set(ICON_MODE_ENV, "auto");
         let _lang = EnvGuard::remove("LANG");
         let _lc_all = EnvGuard::remove("LC_ALL");

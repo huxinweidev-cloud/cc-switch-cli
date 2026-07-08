@@ -6,6 +6,8 @@ use std::path::Path;
 use serde_json::Value;
 
 use crate::openclaw_config::get_openclaw_dir;
+use crate::session_manager::cache::{self, FileScanTarget};
+use crate::session_manager::scan_cache_store::ScanCacheStore;
 use crate::{
     config::write_json_file,
     session_manager::{SearchSnippet, SessionMessage, SessionMeta, SessionSearchHit},
@@ -72,6 +74,56 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
     }
 
     sessions
+}
+
+/// Cache-aware scan over `agents/<agent>/sessions/*.jsonl`.
+pub(crate) fn scan_sessions_cached(store: &ScanCacheStore, force: bool) -> Vec<SessionMeta> {
+    cache::scan_provider_cached(
+        store,
+        PROVIDER_ID,
+        scan_targets(),
+        force,
+        parse_meta,
+        |_| true,
+    )
+}
+
+fn scan_targets() -> Vec<FileScanTarget> {
+    scan_targets_in(&get_openclaw_dir().join("agents"))
+}
+
+/// 收集 `agents/<agent>/sessions/*.jsonl` 的直属文件。与 `scan_sessions` 一致，
+/// 只扫 `sessions/` 单层目录（用平铺收集器而非递归），嵌套子目录里的文件不纳入
+/// ——否则缓存路径会展示旧路径看不到的文件，且其旁路 `sessions.json` 定位会取错
+/// 目录。
+fn scan_targets_in(agents_dir: &Path) -> Vec<FileScanTarget> {
+    let mut targets = Vec::new();
+    let agent_entries = match std::fs::read_dir(agents_dir) {
+        Ok(entries) => entries,
+        Err(_) => return targets,
+    };
+    for agent_entry in agent_entries.flatten() {
+        let sessions_dir = agent_entry.path().join("sessions");
+        if !sessions_dir.is_dir() {
+            continue;
+        }
+        let mut agent_targets = Vec::new();
+        cache::collect_targets_flat(&sessions_dir, "jsonl", &mut agent_targets);
+        // 标题派生自旁路的 sessions.json 显示名索引：它变化时缓存也必须失效
+        let display_names = sessions_dir.join("sessions.json");
+        for target in &mut agent_targets {
+            cache::mix_sibling_into_fingerprint(target, &display_names);
+        }
+        targets.extend(agent_targets);
+    }
+    targets
+}
+
+/// Parse one session file, resolving the sibling display-name map from the file's
+/// own `sessions/` directory so the cached title matches `scan_sessions`.
+fn parse_meta(path: &Path) -> Option<SessionMeta> {
+    let display_names = path.parent().map(load_display_names).unwrap_or_default();
+    parse_session(path, Some(&display_names))
 }
 
 pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
@@ -397,6 +449,27 @@ fn prune_sessions_index(
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn scan_targets_ignores_nested_session_subdirectories() {
+        let temp = tempdir().expect("tempdir");
+        let agents_dir = temp.path();
+        let sessions = agents_dir.join("main").join("sessions");
+        std::fs::create_dir_all(sessions.join("archive")).expect("mkdir");
+        // sessions/ 直属会话文件应被收集
+        std::fs::write(sessions.join("session-1.jsonl"), "{}\n").expect("write");
+        // 嵌套子目录里的会话文件不应被缓存扫描收集
+        std::fs::write(sessions.join("archive").join("session-2.jsonl"), "{}\n").expect("write");
+
+        let targets = scan_targets_in(agents_dir);
+        assert_eq!(targets.len(), 1, "只收集 sessions/ 直属文件");
+        assert!(targets
+            .iter()
+            .any(|t| t.path.file_name().and_then(|n| n.to_str()) == Some("session-1.jsonl")));
+        assert!(!targets
+            .iter()
+            .any(|t| t.path.file_name().and_then(|n| n.to_str()) == Some("session-2.jsonl")));
+    }
 
     #[test]
     fn parse_session_uses_first_user_message_as_title() {

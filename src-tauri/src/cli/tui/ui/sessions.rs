@@ -41,6 +41,20 @@ pub(super) fn render_sessions(
         };
         let query = app.sessions.deep_search_query.as_deref().unwrap_or("");
         format!("{spinner} {}", texts::tui_sessions_searching(query))
+    } else if app.sessions.loading {
+        // Stale-while-revalidate: a cached snapshot is on screen (loaded_once) and
+        // interactive, but the background revalidating scan is still running. Keep
+        // the count visible and prefix a spinner so the header reads as refreshing.
+        let spinner = match app.tick % 4 {
+            0 => "⠋",
+            1 => "⠙",
+            2 => "⠹",
+            _ => "⠸",
+        };
+        format!(
+            "{spinner} {}",
+            texts::tui_sessions_summary(app.sessions.rows.len(), visible.len())
+        )
     } else {
         texts::tui_sessions_summary(app.sessions.rows.len(), visible.len())
     };

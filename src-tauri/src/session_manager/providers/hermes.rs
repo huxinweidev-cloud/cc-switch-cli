@@ -6,6 +6,8 @@ use rusqlite::Connection;
 use serde_json::Value;
 
 use crate::hermes_config::get_hermes_dir;
+use crate::session_manager::cache::{self, FileScanTarget};
+use crate::session_manager::scan_cache_store::ScanCacheStore;
 use crate::session_manager::{SearchSnippet, SessionMessage, SessionMeta, SessionSearchHit};
 
 use super::utils::{
@@ -26,9 +28,30 @@ fn get_hermes_sessions_dir() -> PathBuf {
 /// Scan sessions from both SQLite database and JSONL transcript files,
 /// with SQLite taking precedence on ID conflicts.
 pub fn scan_sessions() -> Vec<SessionMeta> {
-    let sqlite_sessions = scan_sessions_sqlite();
-    let jsonl_sessions = scan_sessions_jsonl();
+    merge_sqlite_jsonl(scan_sessions_sqlite(), scan_sessions_jsonl())
+}
 
+/// Cache-aware scan: the JSONL transcripts go through the persistent file cache,
+/// while the SQLite database is always queried fresh. Merged with SQLite taking
+/// precedence — identical semantics to `scan_sessions`.
+pub(crate) fn scan_sessions_cached(store: &ScanCacheStore, force: bool) -> Vec<SessionMeta> {
+    let jsonl_sessions = cache::scan_provider_cached(
+        store,
+        PROVIDER_ID,
+        scan_targets(),
+        force,
+        parse_jsonl_session,
+        |_| true,
+    );
+    merge_sqlite_jsonl(scan_sessions_sqlite(), jsonl_sessions)
+}
+
+/// Merge SQLite and JSONL sessions, keeping the SQLite row when the same
+/// `session_id` exists in both.
+fn merge_sqlite_jsonl(
+    sqlite_sessions: Vec<SessionMeta>,
+    jsonl_sessions: Vec<SessionMeta>,
+) -> Vec<SessionMeta> {
     if sqlite_sessions.is_empty() {
         return jsonl_sessions;
     }
@@ -48,6 +71,28 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
         }
     }
     merged
+}
+
+/// Collect the flat `sessions/` directory (both `.jsonl` and `.json`), statting
+/// each file once. Matches `scan_sessions_jsonl`'s non-recursive traversal.
+fn scan_targets() -> Vec<FileScanTarget> {
+    let sessions_dir = get_hermes_sessions_dir();
+    let mut targets = Vec::new();
+    let entries = match std::fs::read_dir(&sessions_dir) {
+        Ok(entries) => entries,
+        Err(_) => return targets,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let ext = path.extension().and_then(|e| e.to_str());
+        if ext != Some("jsonl") && ext != Some("json") {
+            continue;
+        }
+        if let Some(target) = cache::stat_target(&path) {
+            targets.push(target);
+        }
+    }
+    targets
 }
 
 // ── SQLite scanning ─────────────────────────────────────────────────

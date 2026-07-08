@@ -16,12 +16,13 @@
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use crate::gemini_config::get_gemini_dir;
-use crate::proxy::usage::calculator::{CostCalculator, ModelPricing};
+use crate::proxy::usage::calculator::CostCalculator;
 use crate::proxy::usage::parser::TokenUsage;
 use crate::services::session_usage::{
-    get_sync_state, metadata_modified_nanos, update_sync_state, SessionSyncResult,
+    cached_model_pricing, get_sync_state, metadata_modified_nanos, update_sync_state_conn,
+    PricingCache, SessionSyncResult, SESSION_LOG_COMMIT_BATCH,
 };
-use crate::services::usage_stats::{find_model_pricing, has_matching_proxy_usage_log, DedupKey};
+use crate::services::usage_stats::{has_matching_proxy_usage_log, DedupKey};
 use rusqlite::OptionalExtension;
 use rust_decimal::Decimal;
 use std::fs;
@@ -54,8 +55,13 @@ pub fn sync_gemini_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
         return Ok(result);
     }
 
-    for file_path in &files {
-        match sync_single_gemini_file(db, file_path) {
+    // 本次同步周期共享的定价缓存，避免每条消息重复查 model_pricing 表。
+    let mut pricing_cache = PricingCache::new();
+
+    crate::services::session_usage::sync_progress::add_total(files.len() as u32);
+
+    for (file_path, file_mtime) in &files {
+        match sync_single_gemini_file(db, file_path, *file_mtime, &mut pricing_cache) {
             Ok((imported, skipped)) => {
                 result.imported += imported;
                 result.skipped += skipped;
@@ -66,6 +72,7 @@ pub fn sync_gemini_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
                 result.errors.push(msg);
             }
         }
+        crate::services::session_usage::sync_progress::add_done(1);
     }
 
     if result.imported > 0 {
@@ -80,9 +87,12 @@ pub fn sync_gemini_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
     Ok(result)
 }
 
-/// 收集所有 Gemini 会话 JSON 文件
-fn collect_gemini_session_files(gemini_dir: &Path) -> Vec<PathBuf> {
-    let mut files = Vec::new();
+/// 收集所有 Gemini 会话 JSON 文件，返回 `(路径, mtime 纳秒)` 并按 mtime 降序
+/// 排序（最近修改的会话最先入库）。walk 阶段顺带取 mtime，既用于排序也传给
+/// 后续 `sync_single_gemini_file`，避免二次 stat（读取失败记 0，交由后者回退
+/// 处理）。照抄 claude/codex 的 `push_xxx_file` 模式。
+fn collect_gemini_session_files(gemini_dir: &Path) -> Vec<(PathBuf, i64)> {
+    let mut files: Vec<(PathBuf, i64)> = Vec::new();
 
     let tmp_dir = gemini_dir.join("tmp");
     if !tmp_dir.is_dir() {
@@ -114,25 +124,57 @@ fn collect_gemini_session_files(gemini_dir: &Path) -> Vec<PathBuf> {
                 .map(|n| n.starts_with("session-") && n.ends_with(".json"))
                 .unwrap_or(false);
             if is_session {
-                files.push(path);
+                push_gemini_file(&mut files, path);
             }
         }
     }
 
+    // mtime 降序：首次导入时最近的会话最先入库，Usage 默认 Today/7d 尽快出数。
+    files.sort_unstable_by(|a, b| b.1.cmp(&a.1));
     files
 }
 
+/// 记录一个 Gemini 会话文件及其 mtime（读取失败记 0）。
+fn push_gemini_file(files: &mut Vec<(PathBuf, i64)>, path: PathBuf) {
+    let mtime = fs::metadata(&path)
+        .map(|m| metadata_modified_nanos(&m))
+        .unwrap_or(0);
+    files.push((path, mtime));
+}
+
 /// 同步单个 Gemini 会话 JSON 文件，返回 (imported, skipped)
-fn sync_single_gemini_file(db: &Database, file_path: &Path) -> Result<(u32, u32), AppError> {
+///
+/// `file_mtime` 为 walk 阶段取得的 mtime 纳秒值；>0 时直接复用避免二次 stat，
+/// 为 0 时回退一次 metadata 读取，保留“元数据不可读即报错”语义。Gemini 是整
+/// 文件解析、无字节续传，仅遵循 mtime 跳过契约；但对齐 JSONL 驱动，"将要跳过
+/// 前"重取一次新鲜 mtime 复查，关闭 walk→处理之间文件被追加/重写的窗口。
+fn sync_single_gemini_file(
+    db: &Database,
+    file_path: &Path,
+    file_mtime: i64,
+    pricing_cache: &mut PricingCache,
+) -> Result<(u32, u32), AppError> {
     let file_path_str = file_path.to_string_lossy().to_string();
 
-    // 获取文件元数据
-    let metadata = fs::metadata(file_path)
-        .map_err(|e| AppError::Config(format!("无法读取文件元数据: {e}")))?;
-    let file_modified = metadata_modified_nanos(&metadata);
+    // mtime：优先复用 walk 阶段的值，为 0 时回退一次 metadata 读取。
+    let mut file_modified = if file_mtime > 0 {
+        file_mtime
+    } else {
+        let metadata = fs::metadata(file_path)
+            .map_err(|e| AppError::Config(format!("无法读取文件元数据: {e}")))?;
+        metadata_modified_nanos(&metadata)
+    };
 
     // 检查同步状态
     let (last_modified, _last_offset) = get_sync_state(db, &file_path_str)?;
+
+    // walk 阶段的 mtime 可能在长同步期间过期：将要跳过前重取一次新鲜 mtime 复查，
+    // 关闭 walk→处理之间文件被追加的窗口。重取失败（文件可能刚被删除）按原值跳过。
+    if file_mtime > 0 && file_modified <= last_modified {
+        if let Ok(metadata) = fs::metadata(file_path) {
+            file_modified = metadata_modified_nanos(&metadata);
+        }
+    }
 
     // 文件未变化则跳过
     if file_modified <= last_modified {
@@ -160,6 +202,13 @@ fn sync_single_gemini_file(db: &Database, file_path: &Path) -> Result<(u32, u32)
     let mut imported: u32 = 0;
     let mut skipped: u32 = 0;
     let mut gemini_msg_count: i64 = 0;
+
+    // 整文件在一个事务内批量写入，超大文件每 SESSION_LOG_COMMIT_BATCH 行分段提交。
+    let mut guard = lock_conn!(db.conn);
+    let mut tx = guard
+        .transaction()
+        .map_err(|e| AppError::Database(format!("开启事务失败: {e}")))?;
+    let mut since_commit: u32 = 0;
 
     for msg in messages {
         // 只处理 type == "gemini" 的消息
@@ -193,7 +242,8 @@ fn sync_single_gemini_file(db: &Database, file_path: &Path) -> Result<(u32, u32)
         let request_id = format!("gemini_session:{session_id_str}:{message_id}");
 
         match insert_gemini_session_entry(
-            db,
+            &tx,
+            pricing_cache,
             &request_id,
             &tokens,
             model,
@@ -207,10 +257,28 @@ fn sync_single_gemini_file(db: &Database, file_path: &Path) -> Result<(u32, u32)
                 skipped += 1;
             }
         }
+
+        since_commit += 1;
+        if since_commit >= SESSION_LOG_COMMIT_BATCH {
+            tx.commit()
+                .map_err(|e| AppError::Database(format!("提交事务失败: {e}")))?;
+            tx = guard
+                .transaction()
+                .map_err(|e| AppError::Database(format!("开启事务失败: {e}")))?;
+            since_commit = 0;
+        }
     }
 
-    // 更新同步状态
-    update_sync_state(db, &file_path_str, file_modified, gemini_msg_count)?;
+    // 在同一事务内更新同步状态后统一提交
+    update_sync_state_conn(&tx, &file_path_str, file_modified, gemini_msg_count)?;
+    tx.commit()
+        .map_err(|e| AppError::Database(format!("提交事务失败: {e}")))?;
+    drop(guard);
+
+    // 每个文件若有新插入/更新行，只通知一次（旧实现为每行一次）
+    if imported > 0 {
+        crate::usage_events::notify_log_recorded();
+    }
 
     Ok((imported, skipped))
 }
@@ -226,16 +294,18 @@ fn parse_gemini_tokens(tokens: &serde_json::Value) -> GeminiTokens {
 }
 
 /// 插入单条 Gemini 会话记录到 proxy_request_logs
+///
+/// 调用方在同一事务连接上批量调用本函数；查询与 UPSERT 走 prepare_cached，
+/// 费用查询走 per-cycle 定价缓存。
 fn insert_gemini_session_entry(
-    db: &Database,
+    conn: &rusqlite::Connection,
+    pricing_cache: &mut PricingCache,
     request_id: &str,
     tokens: &GeminiTokens,
     model: &str,
     session_id: Option<&str>,
     timestamp: Option<&str>,
 ) -> Result<bool, AppError> {
-    let conn = lock_conn!(db.conn);
-
     let created_at = timestamp
         .and_then(|ts| {
             chrono::DateTime::parse_from_rfc3339(ts)
@@ -261,19 +331,21 @@ fn insert_gemini_session_entry(
         cache_creation_tokens: 0,
         created_at,
     };
-    let existing_data_source: Option<String> = conn
-        .query_row(
-            "SELECT COALESCE(data_source, 'proxy') FROM proxy_request_logs WHERE request_id = ?1",
-            [request_id],
-            |row| row.get(0),
-        )
-        .optional()
-        .map_err(|e| AppError::Database(format!("查询 Gemini request_id 失败: {e}")))?;
+    let existing_data_source: Option<String> = {
+        let mut stmt = conn
+            .prepare_cached(
+                "SELECT COALESCE(data_source, 'proxy') FROM proxy_request_logs WHERE request_id = ?1",
+            )
+            .map_err(|e| AppError::Database(format!("查询 Gemini request_id 失败: {e}")))?;
+        stmt.query_row([request_id], |row| row.get(0))
+            .optional()
+            .map_err(|e| AppError::Database(format!("查询 Gemini request_id 失败: {e}")))?
+    };
     let existing_is_gemini_session = existing_data_source.as_deref() == Some("gemini_session");
     if existing_data_source.is_some() && !existing_is_gemini_session {
         return Ok(false);
     }
-    if !existing_is_gemini_session && has_matching_proxy_usage_log(&conn, &dedup_key)? {
+    if !existing_is_gemini_session && has_matching_proxy_usage_log(conn, &dedup_key)? {
         return Ok(false);
     }
 
@@ -287,7 +359,7 @@ fn insert_gemini_session_entry(
         message_id: None,
     };
 
-    let pricing = find_gemini_pricing(&conn, model);
+    let pricing = cached_model_pricing(conn, pricing_cache, model);
     let multiplier = Decimal::from(1);
     let (input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost) = match pricing
     {
@@ -311,8 +383,9 @@ fn insert_gemini_session_entry(
     };
 
     // 使用 UPSERT：新记录插入，已存在记录更新 token 和费用（Gemini 全量重读可能携带更新值）
-    conn.execute(
-        "INSERT INTO proxy_request_logs (
+    let mut stmt = conn
+        .prepare_cached(
+            "INSERT INTO proxy_request_logs (
             request_id, provider_id, app_type, model, request_model,
             input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
             input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
@@ -338,46 +411,41 @@ fn insert_gemini_session_entry(
            OR cache_read_tokens != excluded.cache_read_tokens
            OR cache_creation_tokens != excluded.cache_creation_tokens
            OR model != excluded.model",
-        rusqlite::params![
+        )
+        .map_err(|e| AppError::Database(format!("插入 Gemini 会话日志失败: {e}")))?;
+    // execute 返回值即本条语句改动的行数：INSERT 或命中 WHERE 的 UPDATE 返回 >0，
+    // 值完全相同的 UPSERT（WHERE 不成立）返回 0，语义与旧 conn.changes() 一致。
+    let changed = stmt
+        .execute(rusqlite::params![
             request_id,
-            "_gemini_session",   // provider_id
-            "gemini",            // app_type
+            "_gemini_session", // provider_id
+            "gemini",          // app_type
             model,
-            model,               // request_model = model
+            model, // request_model = model
             tokens.input,
             output_tokens,
             tokens.cached,
-            0i64,                // cache_creation_tokens
+            0i64, // cache_creation_tokens
             input_cost,
             output_cost,
             cache_read_cost,
             cache_creation_cost,
             total_cost,
-            0i64,                // latency_ms
-            Option::<i64>::None, // first_token_ms
-            200i64,              // status_code
+            0i64,                   // latency_ms
+            Option::<i64>::None,    // first_token_ms
+            200i64,                 // status_code
             Option::<String>::None, // error_message
             session_id.map(|s| s.to_string()),
             Some("gemini_session"), // provider_type
-            1i64,                // is_streaming
-            "1.0",               // cost_multiplier
+            1i64,                   // is_streaming
+            "1.0",                  // cost_multiplier
             created_at,
-            "gemini_session",    // data_source
-        ],
-    )
-    .map_err(|e| AppError::Database(format!("插入 Gemini 会话日志失败: {e}")))?;
+            "gemini_session", // data_source
+        ])
+        .map_err(|e| AppError::Database(format!("插入 Gemini 会话日志失败: {e}")))?
+        > 0;
 
-    // changes() > 0 表示新插入或已更新，== 0 表示值完全相同（无实际变更）
-    let changed = conn.changes() > 0;
-    if changed {
-        crate::usage_events::notify_log_recorded();
-    }
     Ok(changed)
-}
-
-/// 查找 Gemini 模型定价
-fn find_gemini_pricing(conn: &rusqlite::Connection, model_id: &str) -> Option<ModelPricing> {
-    find_model_pricing(conn, model_id)
 }
 
 #[cfg(test)]
@@ -388,6 +456,51 @@ mod tests {
     fn test_collect_gemini_session_files_nonexistent() {
         let files = collect_gemini_session_files(Path::new("/nonexistent/path"));
         assert!(files.is_empty());
+    }
+
+    /// 收集函数返回按 mtime 降序：用显式 set_modified 控制两个文件的先后，断言
+    /// 较新的会话文件排在前（最新优先，Usage 默认 Today/7d 尽快出数）。
+    #[test]
+    fn test_collect_gemini_session_files_orders_newest_first() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let chats = tmp.path().join("tmp").join("proj").join("chats");
+        fs::create_dir_all(&chats).expect("create chats dir");
+
+        let older = chats.join("session-old.json");
+        let newer = chats.join("session-new.json");
+        fs::write(&older, "{}").expect("write older");
+        fs::write(&newer, "{}").expect("write newer");
+
+        // 显式设置 mtime：newer 比 older 晚 10 秒（不依赖文件系统时间粒度）。
+        let base = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000);
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&older)
+            .expect("open older")
+            .set_modified(base)
+            .expect("set older mtime");
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&newer)
+            .expect("open newer")
+            .set_modified(base + std::time::Duration::from_secs(10))
+            .expect("set newer mtime");
+
+        let files = collect_gemini_session_files(tmp.path());
+        assert_eq!(files.len(), 2);
+        // 降序：newer 在前，older 在后。
+        assert!(
+            files[0].0.ends_with("session-new.json"),
+            "最新文件应排在最前: {:?}",
+            files[0].0
+        );
+        assert!(
+            files[1].0.ends_with("session-old.json"),
+            "较旧文件应排在最后: {:?}",
+            files[1].0
+        );
+        // 携带的 mtime 也应是降序（newer 的 mtime 更大）。
+        assert!(files[0].1 > files[1].1, "mtime 应降序");
     }
 
     #[test]
@@ -426,14 +539,19 @@ mod tests {
             cached: 1,
             thoughts: 5,
         };
-        let inserted = insert_gemini_session_entry(
-            &db,
-            "gemini-session-dup",
-            &tokens,
-            "gemini-2.5-pro",
-            Some("session-1"),
-            Some("1970-01-01T00:16:45Z"),
-        )?;
+        let mut pricing_cache = PricingCache::new();
+        let inserted = {
+            let conn = lock_conn!(db.conn);
+            insert_gemini_session_entry(
+                &conn,
+                &mut pricing_cache,
+                "gemini-session-dup",
+                &tokens,
+                "gemini-2.5-pro",
+                Some("session-1"),
+                Some("1970-01-01T00:16:45Z"),
+            )?
+        };
         assert!(!inserted);
 
         let conn = lock_conn!(db.conn);
@@ -448,20 +566,25 @@ mod tests {
     #[test]
     fn test_insert_gemini_session_updates_existing_session_entry() -> Result<(), AppError> {
         let db = Database::memory()?;
+        let mut pricing_cache = PricingCache::new();
         let first = GeminiTokens {
             input: 10,
             output: 2,
             cached: 1,
             thoughts: 5,
         };
-        assert!(insert_gemini_session_entry(
-            &db,
-            "gemini-session-updated",
-            &first,
-            "gemini-2.5-pro",
-            Some("session-1"),
-            Some("1970-01-01T00:16:45Z"),
-        )?);
+        assert!({
+            let conn = lock_conn!(db.conn);
+            insert_gemini_session_entry(
+                &conn,
+                &mut pricing_cache,
+                "gemini-session-updated",
+                &first,
+                "gemini-2.5-pro",
+                Some("session-1"),
+                Some("1970-01-01T00:16:45Z"),
+            )?
+        });
 
         let updated = GeminiTokens {
             input: 20,
@@ -469,14 +592,18 @@ mod tests {
             cached: 2,
             thoughts: 7,
         };
-        assert!(insert_gemini_session_entry(
-            &db,
-            "gemini-session-updated",
-            &updated,
-            "gemini-2.5-flash",
-            Some("session-1"),
-            Some("1970-01-01T00:16:45Z"),
-        )?);
+        assert!({
+            let conn = lock_conn!(db.conn);
+            insert_gemini_session_entry(
+                &conn,
+                &mut pricing_cache,
+                "gemini-session-updated",
+                &updated,
+                "gemini-2.5-flash",
+                Some("session-1"),
+                Some("1970-01-01T00:16:45Z"),
+            )?
+        });
 
         let conn = lock_conn!(db.conn);
         let (model, input, output, cached, data_source): (String, i64, i64, i64, String) = conn

@@ -108,6 +108,62 @@ pub(crate) fn handle_local_env_msg(app: &mut App, msg: LocalEnvMsg) {
 
 pub(crate) fn handle_session_msg(app: &mut App, msg: SessionMsg) {
     match msg {
+        SessionMsg::ScanCachedSnapshot { request_id, rows } => {
+            // Stale first paint: show the cached list immediately while the
+            // revalidating scan continues. Keep the refresh indicator on.
+            if app.sessions.apply_cached_snapshot(request_id, rows) {
+                let visible_len = crate::cli::tui::app::visible_sessions_for_state(
+                    &app.filter,
+                    &app.app_type,
+                    app.sessions.show_all_providers,
+                    &app.sessions.rows,
+                    app.sessions.detail_key.as_deref(),
+                    app.sessions.messages_loaded,
+                    &app.sessions.messages,
+                    app.sessions.deep_search_query.as_deref(),
+                    &app.sessions.deep_search_results,
+                )
+                .len();
+                if visible_len == 0 {
+                    app.sessions.selected_idx = 0;
+                } else {
+                    app.sessions.selected_idx = app.sessions.selected_idx.min(visible_len - 1);
+                }
+                if app.sessions.deep_search_query.is_some() {
+                    app.pending_deep_search = app.sessions.deep_search_query.clone();
+                }
+            }
+        }
+        SessionMsg::ScanPartial {
+            request_id,
+            provider_id,
+            rows,
+        } => {
+            // Progressive fill: one provider's fresh list replaces its rows
+            // while the scan continues; the refresh indicator stays on.
+            if app
+                .sessions
+                .apply_partial_scan(request_id, &provider_id, rows)
+            {
+                let visible_len = crate::cli::tui::app::visible_sessions_for_state(
+                    &app.filter,
+                    &app.app_type,
+                    app.sessions.show_all_providers,
+                    &app.sessions.rows,
+                    app.sessions.detail_key.as_deref(),
+                    app.sessions.messages_loaded,
+                    &app.sessions.messages,
+                    app.sessions.deep_search_query.as_deref(),
+                    &app.sessions.deep_search_results,
+                )
+                .len();
+                if visible_len == 0 {
+                    app.sessions.selected_idx = 0;
+                } else {
+                    app.sessions.selected_idx = app.sessions.selected_idx.min(visible_len - 1);
+                }
+            }
+        }
         SessionMsg::ScanFinished { request_id, result } => match result {
             Ok(rows) => {
                 if app.sessions.finish_scan(request_id, rows) {
@@ -171,6 +227,16 @@ pub(crate) fn handle_session_msg(app: &mut App, msg: SessionMsg) {
             result,
         } => match result {
             Ok(()) => {
+                // 删除与在途扫描竞态：删除成功（文件已落盘删除）时若仍有扫描在跑，
+                // 登记 UI tombstone。扫描线程可能在删除前就读到了该会话，其后到达
+                // 的 partial/finished 会带着旧列表把它放回；tombstone 让 apply_*/
+                // finish_scan 过滤掉该行（finish_scan 终态清空 tombstone）。
+                // 注：在途 revalidate 仍可能把我们刚 purge 的 sidecar 行重新 upsert
+                // 回去，不跨线程强行阻止——(a) 此 tombstone 保证该行不渲染；(b) 下一轮
+                // revalidate 发现文件缺失会走 deletes 自愈 sidecar。
+                if app.sessions.scan_active.is_some() {
+                    app.sessions.scan_tombstones.insert(key.clone());
+                }
                 if app.sessions.finish_delete(request_id, &key) {
                     let visible_len = crate::cli::tui::app::visible_sessions_for_state(
                         &app.filter,

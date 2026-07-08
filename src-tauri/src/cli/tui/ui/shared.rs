@@ -152,7 +152,9 @@ pub(super) fn render_page_frame(
 /// Sub-page titles show their place in the hierarchy (" Usage › Details ")
 /// so nesting depth stays visible and Esc's destination is predictable.
 pub(super) fn breadcrumb_title(segments: &[&str]) -> String {
-    format!(" {} ", breadcrumb_path(segments))
+    // Hand-rolled callers don't pass through `render_page_frame`, so strip the
+    // leading emoji here too (no-op in emoji mode / for non-emoji segments).
+    format!(" {} ", icons::strip_icon(&breadcrumb_path(segments)))
 }
 
 /// Breadcrumb path without the surrounding padding that `breadcrumb_title`

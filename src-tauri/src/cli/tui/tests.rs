@@ -959,6 +959,7 @@ fn switch_to_sessions_queues_scan_without_waiting_for_next_tick() {
         SessionReq::Refresh {
             request_id: queued_request_id,
             provider_id,
+            ..
         } => {
             assert_eq!(queued_request_id, request_id);
             assert_eq!(provider_id, "codex");
@@ -1044,6 +1045,7 @@ fn switching_app_on_sessions_route_queues_scan_for_next_app() {
         SessionReq::Refresh {
             request_id: queued_request_id,
             provider_id,
+            ..
         } => {
             assert_eq!(queued_request_id, request_id);
             assert_eq!(provider_id, "codex");

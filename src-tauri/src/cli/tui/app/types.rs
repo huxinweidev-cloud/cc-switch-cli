@@ -190,6 +190,10 @@ pub struct SessionsState {
     pub message_active: Option<u64>,
     pub delete_seq: u64,
     pub delete_active: HashSet<u64>,
+    /// UI 侧 tombstone：在途扫描期间删除成功的会话键（`session_key`），用于挡住
+    /// 删除前读到旧列表的 partial/finished 把已删会话放回 UI。在 `finish_scan`
+    /// 终态清空（见其时序注释）。键与删除流程一致（provider:session:source_path）。
+    pub scan_tombstones: HashSet<String>,
     pub scan_cache: std::collections::HashMap<String, CachedScan>,
     /// When true, the session list shows all providers (the "全部" tab).
     /// When false (default), only the currently selected provider is shown.
@@ -228,6 +232,7 @@ impl Default for SessionsState {
             message_active: None,
             delete_seq: 0,
             delete_active: HashSet::new(),
+            scan_tombstones: HashSet::new(),
             scan_cache: std::collections::HashMap::new(),
             show_all_providers: false,
             deep_search_query: None,
@@ -270,17 +275,45 @@ impl SessionsState {
             self.loading = false;
             self.loaded_once = true;
             self.last_error = Some(error);
+            // 失败即本次扫描的终态：此后不再接收该 scan 的任何 partial/finished，
+            // 继续保留 tombstone 无收益，反而会让残留的 tombstone 把下一轮同 key
+            // 的新建/恢复会话误过滤一次。故与 finish_scan 一致地在终态清空。
+            // 只在接受当前 request_id 时清空——避免旧扫描的迟到失败误清掉本轮
+            // active 扫描登记的 tombstone。
+            self.scan_tombstones.clear();
         }
+    }
+
+    /// Drop rows tombstoned by an in-flight delete (see `scan_tombstones`). A scan
+    /// thread may have read a session file *before* the user deleted it, so the
+    /// partial/finished it later delivers still carries that session; filtering
+    /// here keeps the deleted row from resurrecting in the UI. No-op (early
+    /// return) when there are no tombstones, which is the common case.
+    fn drop_tombstoned_rows(&self, rows: &mut Vec<crate::session_manager::SessionMeta>) {
+        if self.scan_tombstones.is_empty() {
+            return;
+        }
+        rows.retain(|row| {
+            !self
+                .scan_tombstones
+                .contains(&crate::cli::tui::app::session_key(row))
+        });
     }
 
     pub(crate) fn finish_scan(
         &mut self,
         request_id: u64,
-        rows: Vec<crate::session_manager::SessionMeta>,
+        mut rows: Vec<crate::session_manager::SessionMeta>,
     ) -> bool {
         if self.scan_active != Some(request_id) {
             return false;
         }
+        self.drop_tombstoned_rows(&mut rows);
+        // 时序论证：本次 finish_scan 对应的扫描线程可能在删除【之前】就读完了
+        // 该会话文件，携带的仍是删除前的旧列表，所以终态也必须按 tombstone 过滤，
+        // 不能只依赖"下一轮扫描文件已不存在"。过滤完成后再清空 tombstones：删除
+        // 已落盘，下一轮扫描该文件已不存在，自然不会再出现，无需继续拦截。
+        self.scan_tombstones.clear();
         self.scan_active = None;
         self.loading = false;
         self.loaded_once = true;
@@ -302,6 +335,48 @@ impl SessionsState {
                 },
             );
         }
+        true
+    }
+
+    /// Apply the stale-while-revalidate first paint: the list built from the
+    /// persistent DB cache, delivered before the revalidating scan finishes. The
+    /// rows become interactive immediately, but `loading`/`scan_active` stay set
+    /// so the header keeps showing the refresh indicator and the eventual
+    /// `finish_scan` (same request id) still applies. The in-memory scan cache is
+    /// deliberately not written here — only the final, complete list is cached.
+    /// Returns true when the snapshot was applied (still the active scan).
+    pub(crate) fn apply_cached_snapshot(
+        &mut self,
+        request_id: u64,
+        mut rows: Vec<crate::session_manager::SessionMeta>,
+    ) -> bool {
+        if self.scan_active != Some(request_id) {
+            return false;
+        }
+        self.drop_tombstoned_rows(&mut rows);
+        self.loaded_once = true;
+        self.rows = rows;
+        true
+    }
+
+    /// Progressive fill during a revalidating "all providers" scan: replace one
+    /// provider's rows with its freshly-scanned list while the other providers
+    /// keep their current rows (cached snapshot or earlier partials). Keeps the
+    /// refresh indicator on until `finish_scan` (same request id) lands.
+    pub(crate) fn apply_partial_scan(
+        &mut self,
+        request_id: u64,
+        provider_id: &str,
+        mut rows: Vec<crate::session_manager::SessionMeta>,
+    ) -> bool {
+        if self.scan_active != Some(request_id) {
+            return false;
+        }
+        self.drop_tombstoned_rows(&mut rows);
+        self.loaded_once = true;
+        self.rows.retain(|row| row.provider_id != provider_id);
+        self.rows.extend(rows);
+        crate::session_manager::sort_by_recent(&mut self.rows);
         true
     }
 
@@ -882,5 +957,128 @@ impl Overlay {
             | Overlay::UpdateDownloading { .. }
             | Overlay::UpdateResult { .. } => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod sessions_state_tests {
+    use super::SessionsState;
+    use crate::session_manager::SessionMeta;
+
+    fn meta(provider: &str, session: &str, last_active: i64) -> SessionMeta {
+        SessionMeta {
+            provider_id: provider.to_string(),
+            session_id: session.to_string(),
+            last_active_at: Some(last_active),
+            ..SessionMeta::default()
+        }
+    }
+
+    /// 渐进回传：partial 只替换对应 provider 的行、保留其他 provider 的行，
+    /// 结果按最近活跃排序；stale request id 被忽略。
+    #[test]
+    fn apply_partial_scan_replaces_only_that_provider() {
+        let mut state = SessionsState::default();
+        let request_id = state.start_scan("all".to_string());
+        state.rows = vec![meta("claude", "c-old", 10), meta("codex", "x-1", 30)];
+
+        assert!(state.apply_partial_scan(request_id, "claude", vec![meta("claude", "c-new", 20)],));
+        let ids: Vec<&str> = state.rows.iter().map(|r| r.session_id.as_str()).collect();
+        assert_eq!(ids, vec!["x-1", "c-new"]);
+        assert!(state.loading, "refresh indicator must stay on");
+
+        // stale request id：不应用
+        assert!(!state.apply_partial_scan(request_id + 1, "codex", vec![]));
+        assert_eq!(state.rows.len(), 2);
+    }
+
+    /// 删除与在途扫描竞态：删除成功时登记 tombstone，之后到达的（删除前读到旧
+    /// 列表的）partial/finished 不得把已删会话放回；finish_scan 终态清空 tombstone，
+    /// 下一轮扫描的同名行不再被过滤。
+    #[test]
+    fn scan_tombstone_blocks_deleted_session_from_inflight_scan() {
+        let mut state = SessionsState::default();
+        let request_id = state.start_scan("all".to_string());
+        let a = meta("claude", "a", 10);
+        let b = meta("codex", "b", 20);
+        state.rows = vec![a.clone(), b.clone()];
+
+        // 模拟"在途扫描期间删除 A"：从 rows 移除并登记 tombstone。键与删除流程
+        // 一致（session_key = provider:session:source_path）。
+        let key_a = crate::cli::tui::app::session_key(&a);
+        state.rows.retain(|row| row.session_id != "a");
+        state.scan_tombstones.insert(key_a);
+
+        // 删除前读到旧列表的 partial 把 A 带回 —— 必须被过滤掉。
+        assert!(state.apply_partial_scan(request_id, "claude", vec![a.clone()]));
+        assert!(
+            state.rows.iter().all(|row| row.session_id != "a"),
+            "partial 不得复活已删会话"
+        );
+
+        // 终态同样带回 A（扫描线程在删除前就读完文件）—— 仍过滤，并清空 tombstone。
+        assert!(state.finish_scan(request_id, vec![a.clone(), b.clone()]));
+        assert!(
+            state.rows.iter().all(|row| row.session_id != "a"),
+            "finish_scan 不得复活已删会话"
+        );
+        assert!(
+            state.scan_tombstones.is_empty(),
+            "finish_scan 终态应清空 tombstones"
+        );
+
+        // 下一轮扫描：tombstone 已清，同 key 的行（例如同名会话被重建）应保留。
+        let request_id2 = state.start_scan("all".to_string());
+        assert!(state.finish_scan(request_id2, vec![a.clone(), b.clone()]));
+        assert!(
+            state.rows.iter().any(|row| row.session_id == "a"),
+            "tombstone 已清，重新出现的行不应再被过滤"
+        );
+    }
+
+    /// 修复 2：fail_scan 终态清空 tombstones。扫描进行中删除会话会登记 tombstone，
+    /// 若该扫描以失败告终（panic/Err），旧代码只在 finish_scan 清 tombstone、
+    /// fail_scan 不清，残留的 tombstone 会把下一轮同 key 的新建/恢复会话误过滤
+    /// 一次。fail_scan 现与 finish_scan 一致地在终态清空。
+    #[test]
+    fn fail_scan_clears_tombstones() {
+        let mut state = SessionsState::default();
+        let request_id = state.start_scan("all".to_string());
+        let a = meta("claude", "a", 10);
+        state
+            .scan_tombstones
+            .insert(crate::cli::tui::app::session_key(&a));
+
+        // 匹配 request_id 的失败终态应清空 tombstones
+        state.fail_scan(request_id, "boom".to_string());
+        assert!(
+            state.scan_tombstones.is_empty(),
+            "fail_scan 终态应清空 tombstones"
+        );
+
+        // 下一轮扫描带回同 key 的行（同名会话被重建）—— tombstone 已清，不应再过滤
+        let request_id2 = state.start_scan("all".to_string());
+        assert!(state.finish_scan(request_id2, vec![a.clone()]));
+        assert!(
+            state.rows.iter().any(|row| row.session_id == "a"),
+            "tombstone 已清，重新出现的行不应再被过滤"
+        );
+    }
+
+    /// 秒开快照同样按 tombstone 过滤：删除成功后即使 stale 快照带回已删会话，也
+    /// 不渲染。
+    #[test]
+    fn scan_tombstone_filters_cached_snapshot() {
+        let mut state = SessionsState::default();
+        let request_id = state.start_scan("all".to_string());
+        let a = meta("claude", "a", 10);
+        let b = meta("codex", "b", 20);
+        state
+            .scan_tombstones
+            .insert(crate::cli::tui::app::session_key(&a));
+
+        assert!(state.apply_cached_snapshot(request_id, vec![a, b]));
+        let ids: Vec<&str> = state.rows.iter().map(|r| r.session_id.as_str()).collect();
+        assert_eq!(ids, vec!["b"], "快照应过滤掉 tombstoned 会话");
     }
 }
