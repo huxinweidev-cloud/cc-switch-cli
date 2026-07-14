@@ -182,6 +182,7 @@ impl Database {
             pricing_model TEXT,
             input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
             cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+            input_token_semantics INTEGER NOT NULL DEFAULT 0,
             input_cost_usd TEXT NOT NULL DEFAULT '0', output_cost_usd TEXT NOT NULL DEFAULT '0',
             cache_read_cost_usd TEXT NOT NULL DEFAULT '0', cache_creation_cost_usd TEXT NOT NULL DEFAULT '0',
             total_cost_usd TEXT NOT NULL DEFAULT '0', latency_ms INTEGER NOT NULL, first_token_ms INTEGER,
@@ -259,6 +260,7 @@ impl Database {
                 output_tokens INTEGER NOT NULL DEFAULT 0,
                 cache_read_tokens INTEGER NOT NULL DEFAULT 0,
                 cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+                input_token_semantics INTEGER NOT NULL DEFAULT 0,
                 total_cost_usd TEXT NOT NULL DEFAULT '0',
                 avg_latency_ms INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (date, app_type, provider_id, model, request_model, pricing_model)
@@ -266,6 +268,35 @@ impl Database {
             [],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // Profiles 表（上游 Projects 功能的共享项目实体）。CLI 暂不解释 payload，
+        // 但必须原样保留该表，确保整库 WebDAV 同步与上游 schema v12+ 兼容。
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS profiles (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                sort_order INTEGER,
+                created_at INTEGER,
+                updated_at INTEGER
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 修复跑过上游未发布开发版的数据库：旧的全局 current marker 在 v12
+        // 定稿后改为按 scope 存储。与上游保持相同的一次性映射语义。
+        if conn
+            .execute(
+                "INSERT OR REPLACE INTO settings (key, value)
+                 SELECT 'current_profile_id_claude', value FROM settings
+                 WHERE key = 'current_profile_id'",
+                [],
+            )
+            .is_ok()
+        {
+            let _ = conn.execute("DELETE FROM settings WHERE key = 'current_profile_id'", []);
+        }
 
         conn.execute(
             "CREATE TABLE IF NOT EXISTS session_log_sync (
@@ -427,6 +458,16 @@ impl Database {
                         Self::migrate_v10_to_v11(conn)?;
                         Self::set_user_version(conn, 11)?;
                     }
+                    11 => {
+                        log::info!("迁移数据库从 v11 到 v12（添加项目 Profiles 表）");
+                        Self::migrate_v11_to_v12(conn)?;
+                        Self::set_user_version(conn, 12)?;
+                    }
+                    12 => {
+                        log::info!("迁移数据库从 v12 到 v13（记录输入 token 缓存语义）");
+                        Self::migrate_v12_to_v13(conn)?;
+                        Self::set_user_version(conn, 13)?;
+                    }
                     _ => {
                         return Err(AppError::Database(format!(
                             "未知的数据库版本 {version}，无法迁移到 {SCHEMA_VERSION}"
@@ -436,6 +477,7 @@ impl Database {
                 version = Self::get_user_version(conn)?;
             }
             Self::repair_proxy_request_logs_columns(conn)?;
+            Self::repair_usage_rollup_semantics_column(conn)?;
             Self::create_request_logs_indexes_if_supported(conn)?;
             Self::normalize_auto_failover_requires_takeover(conn)?;
             Ok(())
@@ -603,6 +645,7 @@ impl Database {
             pricing_model TEXT,
             input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
             cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+            input_token_semantics INTEGER NOT NULL DEFAULT 0,
             input_cost_usd TEXT NOT NULL DEFAULT '0', output_cost_usd TEXT NOT NULL DEFAULT '0',
             cache_read_cost_usd TEXT NOT NULL DEFAULT '0', cache_creation_cost_usd TEXT NOT NULL DEFAULT '0',
             total_cost_usd TEXT NOT NULL DEFAULT '0', latency_ms INTEGER NOT NULL, first_token_ms INTEGER,
@@ -1344,6 +1387,50 @@ impl Database {
         .map_err(|e| AppError::Database(format!("创建故障转移 Live 配置快照表失败: {e}")))?;
 
         log::info!("v10 -> v11 迁移完成：已添加故障转移 Live 配置快照表");
+        Ok(())
+    }
+
+    /// v11 -> v12 迁移：添加上游 Projects 功能使用的 Profiles 表。
+    ///
+    /// DDL 必须与 `create_tables_on_conn` 及上游 schema v12 完全一致；
+    /// `IF NOT EXISTS` 使已接收过上游快照的数据库可以安全重放迁移。
+    fn migrate_v11_to_v12(conn: &Connection) -> Result<(), AppError> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS profiles (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                sort_order INTEGER,
+                created_at INTEGER,
+                updated_at INTEGER
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("v11 -> v12 创建 profiles 表失败: {e}")))?;
+        Ok(())
+    }
+
+    /// v12 -> v13 迁移：记录 `input_tokens` 是否包含缓存写入。
+    ///
+    /// 默认值 0 表示旧版/未知语义。新代理日志会显式写入 1（total）
+    /// 或 2（fresh），从而既不篡改历史数据，也能正确归一化新数据。
+    fn migrate_v12_to_v13(conn: &Connection) -> Result<(), AppError> {
+        if Self::table_exists(conn, "proxy_request_logs")? {
+            Self::add_column_if_missing(
+                conn,
+                "proxy_request_logs",
+                "input_token_semantics",
+                "INTEGER NOT NULL DEFAULT 0",
+            )?;
+        }
+        if Self::table_exists(conn, "usage_daily_rollups")? {
+            Self::add_column_if_missing(
+                conn,
+                "usage_daily_rollups",
+                "input_token_semantics",
+                "INTEGER NOT NULL DEFAULT 0",
+            )?;
+        }
         Ok(())
     }
 
@@ -2255,6 +2342,7 @@ impl Database {
             ("output_tokens", "INTEGER NOT NULL DEFAULT 0"),
             ("cache_read_tokens", "INTEGER NOT NULL DEFAULT 0"),
             ("cache_creation_tokens", "INTEGER NOT NULL DEFAULT 0"),
+            ("input_token_semantics", "INTEGER NOT NULL DEFAULT 0"),
             ("input_cost_usd", "TEXT NOT NULL DEFAULT '0'"),
             ("output_cost_usd", "TEXT NOT NULL DEFAULT '0'"),
             ("cache_read_cost_usd", "TEXT NOT NULL DEFAULT '0'"),
@@ -2275,6 +2363,19 @@ impl Database {
             Self::add_column_if_missing(conn, "proxy_request_logs", column, definition)?;
         }
 
+        Ok(())
+    }
+
+    fn repair_usage_rollup_semantics_column(conn: &Connection) -> Result<(), AppError> {
+        if !Self::table_exists(conn, "usage_daily_rollups")? {
+            return Ok(());
+        }
+        Self::add_column_if_missing(
+            conn,
+            "usage_daily_rollups",
+            "input_token_semantics",
+            "INTEGER NOT NULL DEFAULT 0",
+        )?;
         Ok(())
     }
 

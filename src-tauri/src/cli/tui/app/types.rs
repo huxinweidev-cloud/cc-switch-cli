@@ -130,6 +130,7 @@ fn usage_log_rows_fingerprint(rows: &[crate::cli::tui::data::UsageLogRow]) -> u6
         row.output_tokens.hash(&mut hasher);
         row.cache_read_tokens.hash(&mut hasher);
         row.cache_creation_tokens.hash(&mut hasher);
+        row.input_token_semantics.hash(&mut hasher);
         row.total_cost_usd.to_bits().hash(&mut hasher);
         row.latency_ms.hash(&mut hasher);
         row.first_token_ms.hash(&mut hasher);

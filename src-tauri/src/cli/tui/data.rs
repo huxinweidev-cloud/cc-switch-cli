@@ -550,6 +550,7 @@ pub struct UsageLogRow {
     pub output_tokens: u64,
     pub cache_read_tokens: u64,
     pub cache_creation_tokens: u64,
+    pub(crate) input_token_semantics: i64,
     pub total_cost_usd: f64,
     pub latency_ms: u64,
     pub first_token_ms: Option<u64>,
@@ -636,6 +637,7 @@ impl UsageLogRow {
             self.output_tokens,
             self.cache_read_tokens,
             self.cache_creation_tokens,
+            self.input_token_semantics,
         )
     }
 
@@ -1996,6 +1998,7 @@ fn load_model_pricing_snapshot_from_conn(
         .collect::<HashMap<_, _>>();
 
     let total_tokens_expr = usage_real_total_tokens_sql(Some("l"));
+    let fresh_input_expr = crate::services::sql_helpers::fresh_input_sql("l");
     let effective_filter = crate::services::usage_stats::effective_usage_log_filter("l");
     let mut recent_stmt = conn.prepare(&format!(
         "SELECT
@@ -2004,7 +2007,7 @@ fn load_model_pricing_snapshot_from_conn(
             substr(CAST(COALESCE(NULLIF(TRIM(l.cost_multiplier), ''), '1') AS TEXT), 1, {text_limit}) AS cost_multiplier,
             COUNT(*) AS request_count,
             COALESCE(SUM({total_tokens_expr}), 0) AS total_tokens,
-            COALESCE(SUM(l.input_tokens), 0) AS input_tokens,
+            COALESCE(SUM({fresh_input_expr}), 0) AS fresh_input_tokens,
             COALESCE(SUM(l.output_tokens), 0) AS output_tokens,
             COALESCE(SUM(l.cache_read_tokens), 0) AS cache_read_tokens,
             COALESCE(SUM(l.cache_creation_tokens), 0) AS cache_creation_tokens,
@@ -2026,7 +2029,7 @@ fn load_model_pricing_snapshot_from_conn(
             cost_multiplier: row.get(2)?,
             request_count: non_negative_u64(row.get::<_, i64>(3)?),
             total_tokens: non_negative_u64(row.get::<_, i64>(4)?),
-            input_tokens: non_negative_u64(row.get::<_, i64>(5)?),
+            fresh_input_tokens: non_negative_u64(row.get::<_, i64>(5)?),
             output_tokens: non_negative_u64(row.get::<_, i64>(6)?),
             cache_read_tokens: non_negative_u64(row.get::<_, i64>(7)?),
             cache_creation_tokens: non_negative_u64(row.get::<_, i64>(8)?),
@@ -2040,7 +2043,7 @@ fn load_model_pricing_snapshot_from_conn(
     let mut recent_unmatched_total_cost_usd = 0.0f64;
     for recent in recent_rows {
         let recent = recent?;
-        let Some(matched) = find_pricing_match_for_log(conn, app_key, &recent)? else {
+        let Some(matched) = find_pricing_match_for_log(conn, &recent)? else {
             recent_unknown_models.insert(unmatched_pricing_model_key(
                 &recent.response_model,
                 recent.request_model.as_deref(),
@@ -2106,7 +2109,7 @@ struct RecentPricingUsageRow {
     cost_multiplier: String,
     request_count: u64,
     total_tokens: u64,
-    input_tokens: u64,
+    fresh_input_tokens: u64,
     output_tokens: u64,
     cache_read_tokens: u64,
     cache_creation_tokens: u64,
@@ -2116,7 +2119,6 @@ struct RecentPricingUsageRow {
 
 fn find_pricing_match_for_log(
     conn: &rusqlite::Connection,
-    app_key: &str,
     recent: &RecentPricingUsageRow,
 ) -> Result<Option<crate::services::usage_stats::ModelPricingMatch>, AppError> {
     let response_match =
@@ -2135,8 +2137,8 @@ fn find_pricing_match_for_log(
 
     match (response_match, request_match) {
         (Some(response), Some(request)) => {
-            let response_score = pricing_match_cost_delta(&response.pricing, app_key, recent);
-            let request_score = pricing_match_cost_delta(&request.pricing, app_key, recent);
+            let response_score = pricing_match_cost_delta(&response.pricing, recent);
+            let request_score = pricing_match_cost_delta(&request.pricing, recent);
             if request_score < response_score {
                 Ok(Some(request))
             } else {
@@ -2151,31 +2153,23 @@ fn find_pricing_match_for_log(
 
 fn pricing_match_cost_delta(
     pricing: &crate::proxy::usage::calculator::ModelPricing,
-    app_key: &str,
     recent: &RecentPricingUsageRow,
 ) -> f64 {
-    let expected = expected_pricing_cost_usd(pricing, app_key, recent);
+    let expected = expected_pricing_cost_usd(pricing, recent);
     (expected - recent.total_cost_usd).abs()
 }
 
 fn expected_pricing_cost_usd(
     pricing: &crate::proxy::usage::calculator::ModelPricing,
-    app_key: &str,
     recent: &RecentPricingUsageRow,
 ) -> f64 {
     let million = Decimal::from(1_000_000u32);
-    let input_includes_cache_read = matches!(app_key, "codex" | "gemini");
-    let billable_input_tokens = if input_includes_cache_read {
-        recent.input_tokens.saturating_sub(recent.cache_read_tokens)
-    } else {
-        recent.input_tokens
-    };
     let multiplier = recent
         .cost_multiplier
         .trim()
         .parse::<Decimal>()
         .unwrap_or(Decimal::ONE);
-    let total = ((Decimal::from(billable_input_tokens) * pricing.input_cost_per_million)
+    let total = ((Decimal::from(recent.fresh_input_tokens) * pricing.input_cost_per_million)
         + (Decimal::from(recent.output_tokens) * pricing.output_cost_per_million)
         + (Decimal::from(recent.cache_read_tokens) * pricing.cache_read_cost_per_million)
         + (Decimal::from(recent.cache_creation_tokens) * pricing.cache_creation_cost_per_million))
@@ -2673,6 +2667,7 @@ fn build_usage_log_page_query(
             l.output_tokens,
             l.cache_read_tokens,
             l.cache_creation_tokens,
+            l.input_token_semantics,
             CAST(l.total_cost_usd AS REAL),
             l.latency_ms,
             l.first_token_ms,
@@ -2737,6 +2732,7 @@ fn load_usage_log_detail(
             l.output_tokens,
             l.cache_read_tokens,
             l.cache_creation_tokens,
+            l.input_token_semantics,
             CAST(l.total_cost_usd AS REAL),
             l.latency_ms,
             l.first_token_ms,
@@ -2786,18 +2782,19 @@ fn usage_log_row_from_sql(row: &rusqlite::Row<'_>) -> rusqlite::Result<UsageLogR
         output_tokens: non_negative_u64(row.get::<_, i64>(9)?),
         cache_read_tokens: non_negative_u64(row.get::<_, i64>(10)?),
         cache_creation_tokens: non_negative_u64(row.get::<_, i64>(11)?),
-        total_cost_usd: row.get::<_, f64>(12)?.max(0.0),
-        latency_ms: non_negative_u64(row.get::<_, i64>(13)?),
-        first_token_ms: row.get::<_, Option<i64>>(14)?.map(non_negative_u64),
-        duration_ms: row.get::<_, Option<i64>>(15)?.map(non_negative_u64),
-        session_id: normalize_optional_string(row.get::<_, Option<String>>(16)?),
-        provider_type: normalize_optional_string(row.get::<_, Option<String>>(17)?),
-        is_streaming: row.get::<_, i64>(18)? != 0,
-        error_message: normalize_optional_string(row.get::<_, Option<String>>(19)?),
-        data_source: normalize_optional_string(row.get::<_, Option<String>>(20)?),
-        error_message_truncated: row.get::<_, i64>(21)? != 0,
-        cursor_rowid: row.get(22)?,
-        text_truncation: row.get::<_, i64>(23)?.clamp(0, i64::from(u16::MAX)) as u16,
+        input_token_semantics: row.get(12)?,
+        total_cost_usd: row.get::<_, f64>(13)?.max(0.0),
+        latency_ms: non_negative_u64(row.get::<_, i64>(14)?),
+        first_token_ms: row.get::<_, Option<i64>>(15)?.map(non_negative_u64),
+        duration_ms: row.get::<_, Option<i64>>(16)?.map(non_negative_u64),
+        session_id: normalize_optional_string(row.get::<_, Option<String>>(17)?),
+        provider_type: normalize_optional_string(row.get::<_, Option<String>>(18)?),
+        is_streaming: row.get::<_, i64>(19)? != 0,
+        error_message: normalize_optional_string(row.get::<_, Option<String>>(20)?),
+        data_source: normalize_optional_string(row.get::<_, Option<String>>(21)?),
+        error_message_truncated: row.get::<_, i64>(22)? != 0,
+        cursor_rowid: row.get(23)?,
+        text_truncation: row.get::<_, i64>(24)?.clamp(0, i64::from(u16::MAX)) as u16,
     })
 }
 
@@ -2866,13 +2863,15 @@ fn effective_total_tokens(
     output_tokens: u64,
     cache_read_tokens: u64,
     cache_creation_tokens: u64,
+    input_token_semantics: i64,
 ) -> u64 {
-    let input_includes_cache_read = matches!(app_type, "codex" | "gemini");
-    let billable_input = if input_includes_cache_read {
-        input_tokens.saturating_sub(cache_read_tokens)
-    } else {
-        input_tokens
-    };
+    let billable_input = crate::services::sql_helpers::fresh_input_tokens(
+        app_type,
+        input_tokens,
+        cache_read_tokens,
+        cache_creation_tokens,
+        input_token_semantics,
+    );
 
     billable_input
         .saturating_add(output_tokens)
@@ -3444,6 +3443,76 @@ mod tests {
         );
         assert_eq!(recent_logs[0].total_tokens(), 1_250);
 
+        Ok(())
+    }
+
+    #[test]
+    fn usage_log_total_tokens_respects_each_input_semantics() {
+        let row = |input_tokens, input_token_semantics| UsageLogRow {
+            app_type: "codex".to_string(),
+            input_tokens,
+            output_tokens: 10,
+            cache_read_tokens: 30,
+            cache_creation_tokens: 20,
+            input_token_semantics,
+            ..UsageLogRow::default()
+        };
+
+        assert_eq!(row(100, 0).total_tokens(), 130);
+        assert_eq!(row(100, 1).total_tokens(), 110);
+        assert_eq!(row(50, 2).total_tokens(), 110);
+    }
+
+    #[test]
+    fn pricing_snapshot_normalizes_mixed_input_semantics_before_grouping() -> Result<(), AppError> {
+        let db = crate::Database::memory()?;
+        let now = 1_800_000_000;
+        let start = now - 30 * 24 * 60 * 60;
+        let conn = db.conn.lock().expect("lock memory db");
+
+        conn.execute_batch(
+            "INSERT OR REPLACE INTO model_pricing (
+                model_id, display_name, input_cost_per_million,
+                output_cost_per_million, cache_read_cost_per_million,
+                cache_creation_cost_per_million
+             ) VALUES
+                ('semantic-response', 'Semantic Response', '1', '0', '0', '0'),
+                ('semantic-request', 'Semantic Request', '1.0625', '0', '0', '0');",
+        )?;
+
+        for (request_id, input_tokens, semantics, total_cost) in [
+            ("legacy", 100, 0, "0.00017"),
+            ("total", 100, 1, "0"),
+            ("fresh", 50, 2, "0"),
+        ] {
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, request_model,
+                    input_tokens, output_tokens, cache_read_tokens,
+                    cache_creation_tokens, input_token_semantics,
+                    total_cost_usd, latency_ms, status_code, created_at
+                 ) VALUES (
+                    ?1, 'provider', 'codex', 'semantic-response', 'semantic-request',
+                    ?2, 10, 30, 20, ?3, ?4, 1, 200, ?5
+                 )",
+                params![request_id, input_tokens, semantics, total_cost, now - 1],
+            )?;
+        }
+
+        let snapshot = load_model_pricing_snapshot_from_conn(&conn, "codex", start, now)?;
+
+        assert_eq!(
+            pricing_row(&snapshot, "semantic-response").recent_request_count,
+            3
+        );
+        assert_eq!(
+            pricing_row(&snapshot, "semantic-response").recent_total_tokens,
+            350
+        );
+        assert_eq!(
+            pricing_row(&snapshot, "semantic-request").recent_request_count,
+            0
+        );
         Ok(())
     }
 
