@@ -1204,13 +1204,15 @@ mod tests {
     }
 
     #[test]
-    fn apply_snapshot_accepts_current_schema_v11_sync_export() -> Result<(), AppError> {
+    fn apply_snapshot_accepts_current_schema_v13_sync_export() -> Result<(), AppError> {
         let temp = tempfile::tempdir().expect("create temp dir");
         let _env = crate::test_support::TestEnvGuard::isolated(temp.path());
 
         let remote_db = Database::memory().expect("create remote db");
         {
             let conn = crate::database::lock_conn!(remote_db.conn);
+            Database::set_user_version(&conn, SCHEMA_VERSION)
+                .expect("mark remote snapshot as current schema");
             conn.execute(
                 "INSERT INTO providers (id, app_type, name, settings_config, meta)
                  VALUES ('remote-provider', 'claude', 'Remote Provider', '{}', '{}')",
@@ -1220,7 +1222,7 @@ mod tests {
         }
         let db_sql = remote_db
             .export_sql_string_for_sync()
-            .expect("export v11 sync sql");
+            .expect("export v13 sync sql");
 
         let zip_path = temp.path().join("remote-skills.zip");
         {

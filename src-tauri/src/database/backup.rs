@@ -960,6 +960,16 @@ mod tests {
                  VALUES ('remote-provider', 'claude', 'Remote Provider', '{}', '{}')",
                 [],
             )?;
+            conn.execute(
+                "INSERT INTO profiles (id, name, payload, sort_order, created_at, updated_at)
+                 VALUES ('remote-profile', 'Remote Project', ?1, 1, 100, 200)",
+                [r#"{"providers":{"claude-desktop":"desktop-provider"}}"#],
+            )?;
+            conn.execute(
+                "INSERT INTO settings (key, value)
+                 VALUES ('current_profile_id_claude-desktop', 'remote-profile')",
+                [],
+            )?;
         }
         let remote_sql = remote_db.export_sql_string_for_sync()?;
 
@@ -974,17 +984,17 @@ mod tests {
             conn.execute(
                 "INSERT INTO proxy_request_logs (
                     request_id, provider_id, app_type, model,
-                    input_tokens, output_tokens, total_cost_usd,
+                    input_tokens, output_tokens, input_token_semantics, total_cost_usd,
                     latency_ms, status_code, created_at
-                ) VALUES ('req-1', 'local-provider', 'claude', 'claude-3', 100, 50, '0.01', 120, 200, 1000)",
+                ) VALUES ('req-1', 'local-provider', 'claude', 'claude-3', 100, 50, 2, '0.01', 120, 200, 1000)",
                 [],
             )?;
             conn.execute(
                 "INSERT INTO usage_daily_rollups (
                     date, app_type, provider_id, model, request_count, success_count,
                     input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-                    total_cost_usd, avg_latency_ms
-                ) VALUES ('2026-03-01', 'claude', 'local-provider', 'claude-3', 7, 7, 700, 350, 0, 0, '0.07', 120)",
+                    input_token_semantics, total_cost_usd, avg_latency_ms
+                ) VALUES ('2026-03-01', 'claude', 'local-provider', 'claude-3', 7, 7, 700, 350, 0, 0, 2, '0.07', 120)",
                 [],
             )?;
             conn.execute(
@@ -1011,6 +1021,26 @@ mod tests {
             "remote config should be imported"
         );
 
+        let (profile_payload, current_profile): (String, String) = {
+            let conn = crate::database::lock_conn!(local_db.conn);
+            let payload = conn.query_row(
+                "SELECT payload FROM profiles WHERE id = 'remote-profile'",
+                [],
+                |row| row.get(0),
+            )?;
+            let current = conn.query_row(
+                "SELECT value FROM settings WHERE key = 'current_profile_id_claude-desktop'",
+                [],
+                |row| row.get(0),
+            )?;
+            (payload, current)
+        };
+        assert_eq!(
+            profile_payload,
+            r#"{"providers":{"claude-desktop":"desktop-provider"}}"#
+        );
+        assert_eq!(current_profile, "remote-profile");
+
         let (request_logs, rollups, stream_logs): (i64, i64, i64) = {
             let conn = crate::database::lock_conn!(local_db.conn);
             let request_logs =
@@ -1033,6 +1063,18 @@ mod tests {
             stream_logs, 1,
             "local stream check logs should be preserved"
         );
+
+        let semantics: (i64, i64) = {
+            let conn = crate::database::lock_conn!(local_db.conn);
+            conn.query_row(
+                "SELECT
+                    (SELECT input_token_semantics FROM proxy_request_logs WHERE request_id = 'req-1'),
+                    (SELECT input_token_semantics FROM usage_daily_rollups WHERE date = '2026-03-01')",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?
+        };
+        assert_eq!(semantics, (2, 2));
 
         Ok(())
     }
