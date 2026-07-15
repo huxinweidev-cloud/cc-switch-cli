@@ -5,17 +5,50 @@
 use super::{create_secure_dir_all, lock_conn, Database, DB_BACKUP_RETAIN};
 use crate::error::AppError;
 use chrono::Utc;
-use rusqlite::backup::Backup;
+use rusqlite::backup::{Backup, StepResult};
 use rusqlite::types::Value;
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
 use tempfile::NamedTempFile;
 
 const CC_SWITCH_SQL_EXPORT_HEADER: &str = "-- CC Switch SQLite 导出";
+
+// A full-copy step keeps one source snapshot stable for the entire copy. The
+// connection's busy handler already performs bounded lock retries, so adding
+// another retry loop here would multiply `busy_timeout` and reintroduce long
+// startup stalls.
+pub(crate) fn run_sqlite_backup_to_completion(backup: &Backup<'_, '_>) -> Result<(), AppError> {
+    run_full_backup_step(|pages| {
+        backup
+            .step(pages)
+            .map_err(|e| AppError::Database(e.to_string()))
+    })
+}
+
+fn run_full_backup_step<Step>(mut step: Step) -> Result<(), AppError>
+where
+    Step: FnMut(i32) -> Result<StepResult, AppError>,
+{
+    match step(-1)? {
+        StepResult::Done => Ok(()),
+        StepResult::Busy => Err(AppError::Database(
+            "SQLite backup could not acquire a required lock before busy_timeout elapsed"
+                .to_string(),
+        )),
+        StepResult::Locked => Err(AppError::Database(
+            "SQLite backup source connection is locked by an active write".to_string(),
+        )),
+        StepResult::More => Err(AppError::Database(
+            "SQLite backup did not complete a full-copy step".to_string(),
+        )),
+        _ => Err(AppError::Database(
+            "SQLite backup returned an unsupported step result".to_string(),
+        )),
+    }
+}
 
 const SYNC_IMPORT_RESTORE_TABLES: &[&str] = &[
     "proxy_request_logs",
@@ -189,9 +222,7 @@ impl Database {
             let mut main_conn = lock_conn!(self.conn);
             let backup = Backup::new(&temp_conn, &mut main_conn)
                 .map_err(|e| AppError::Database(e.to_string()))?;
-            backup
-                .run_to_completion(5, Duration::from_millis(25), None)
-                .map_err(|e| AppError::Database(e.to_string()))?;
+            run_sqlite_backup_to_completion(&backup)?;
         }
 
         let backup_id = backup_path
@@ -223,9 +254,7 @@ impl Database {
         {
             let backup =
                 Backup::new(&conn, &mut snapshot).map_err(|e| AppError::Database(e.to_string()))?;
-            backup
-                .run_to_completion(5, Duration::from_millis(25), None)
-                .map_err(|e| AppError::Database(e.to_string()))?;
+            run_sqlite_backup_to_completion(&backup)?;
         }
 
         Ok(snapshot)
@@ -499,18 +528,42 @@ impl Database {
             let conn = lock_conn!(self.conn);
             let (backup_path, mut dest_conn) =
                 Self::create_unique_backup_db_connection(&backup_dir)?;
-            {
-                let backup = Backup::new(&conn, &mut dest_conn)
-                    .map_err(|e| AppError::Database(e.to_string()))?;
-                backup
-                    .run_to_completion(5, Duration::from_millis(25), None)
-                    .map_err(|e| AppError::Database(e.to_string()))?;
+            let backup_result = match Backup::new(&conn, &mut dest_conn) {
+                Ok(backup) => run_sqlite_backup_to_completion(&backup),
+                Err(err) => Err(AppError::Database(err.to_string())),
+            };
+            drop(dest_conn);
+            drop(conn);
+
+            if let Err(err) = backup_result {
+                Self::remove_incomplete_backup(&backup_path);
+                return Err(err);
             }
             backup_path
         };
 
         Self::cleanup_db_backups(&backup_dir)?;
         Ok(Some(backup_path))
+    }
+
+    fn remove_incomplete_backup(backup_path: &Path) {
+        let mut artifacts = vec![backup_path.to_path_buf()];
+        for suffix in ["-journal", "-wal", "-shm"] {
+            let mut artifact = backup_path.as_os_str().to_os_string();
+            artifact.push(suffix);
+            artifacts.push(PathBuf::from(artifact));
+        }
+
+        for artifact in artifacts {
+            match fs::remove_file(&artifact) {
+                Ok(()) => {}
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => log::warn!(
+                    "Failed to remove incomplete database backup {}: {err}",
+                    artifact.display()
+                ),
+            }
+        }
     }
 
     fn create_unique_backup_db_connection(
@@ -588,14 +641,22 @@ impl Database {
                 Err(err) => return Err(AppError::io(backup_path, err)),
             }
 
-            let open_path = Self::canonicalize_existing_parent(backup_path)?;
-            let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
-                | OpenFlags::SQLITE_OPEN_CREATE
-                | OpenFlags::SQLITE_OPEN_NO_MUTEX
-                | OpenFlags::SQLITE_OPEN_NOFOLLOW;
-            Connection::open_with_flags(&open_path, flags)
-                .map(Some)
-                .map_err(|e| AppError::Database(e.to_string()))
+            let open_result = (|| {
+                let open_path = Self::canonicalize_existing_parent(backup_path)?;
+                let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
+                    | OpenFlags::SQLITE_OPEN_NO_MUTEX
+                    | OpenFlags::SQLITE_OPEN_NOFOLLOW;
+                Connection::open_with_flags(&open_path, flags)
+                    .map_err(|e| AppError::Database(e.to_string()))
+            })();
+
+            match open_result {
+                Ok(conn) => Ok(Some(conn)),
+                Err(err) => {
+                    Self::remove_incomplete_backup(backup_path);
+                    Err(err)
+                }
+            }
         }
 
         #[cfg(not(unix))]
@@ -609,9 +670,18 @@ impl Database {
                 Err(err) if err.kind() == ErrorKind::AlreadyExists => return Ok(None),
                 Err(err) => return Err(AppError::io(backup_path, err)),
             }
-            Connection::open(backup_path)
-                .map(Some)
+            let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
+                | OpenFlags::SQLITE_OPEN_NO_MUTEX
+                | OpenFlags::SQLITE_OPEN_NOFOLLOW;
+            match Connection::open_with_flags(backup_path, flags)
                 .map_err(|e| AppError::Database(e.to_string()))
+            {
+                Ok(conn) => Ok(Some(conn)),
+                Err(err) => {
+                    Self::remove_incomplete_backup(backup_path);
+                    Err(err)
+                }
+            }
         }
     }
 
@@ -880,9 +950,11 @@ impl Database {
 
 #[cfg(test)]
 mod tests {
-    use super::Database;
+    use super::{run_full_backup_step, Database};
     use crate::error::AppError;
-    use rusqlite::Connection;
+    use rusqlite::{backup::StepResult, Connection};
+    use std::fs;
+    use std::time::{Duration, Instant};
 
     fn seed_provider(conn: &Connection, id: &str) -> Result<(), AppError> {
         conn.execute(
@@ -948,6 +1020,95 @@ mod tests {
             },
         )
         .map_err(|e| AppError::Database(e.to_string()))
+    }
+
+    #[test]
+    fn full_backup_requests_all_remaining_pages_in_one_step() {
+        let mut requested_pages = Vec::new();
+
+        run_full_backup_step(|pages| {
+            requested_pages.push(pages);
+            Ok(StepResult::Done)
+        })
+        .expect("a completed full-copy step should succeed");
+
+        assert_eq!(requested_pages, vec![-1]);
+    }
+
+    #[test]
+    fn full_backup_does_not_multiply_the_connection_busy_timeout() {
+        let mut calls = 0usize;
+        let error = run_full_backup_step(|pages| {
+            assert_eq!(pages, -1);
+            calls += 1;
+            Ok(StepResult::Busy)
+        })
+        .expect_err("a busy result must be returned after the connection timeout");
+
+        assert!(error.to_string().contains("busy_timeout"));
+        assert_eq!(calls, 1, "the outer layer must not retry a timed-out step");
+    }
+
+    #[test]
+    fn full_backup_rejects_locked_or_incomplete_steps() {
+        let locked = run_full_backup_step(|_| Ok(StepResult::Locked))
+            .expect_err("an actively written source connection must fail");
+        assert!(locked.to_string().contains("active write"));
+
+        let incomplete = run_full_backup_step(|pages| {
+            assert_eq!(pages, -1);
+            Ok(StepResult::More)
+        })
+        .expect_err("an unbounded SQLite backup step should complete atomically");
+        assert!(incomplete.to_string().contains("full-copy step"));
+    }
+
+    #[test]
+    fn file_backup_does_not_retry_after_a_real_busy_timeout() -> Result<(), AppError> {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let _env = crate::test_support::TestEnvGuard::isolated(temp.path());
+
+        let db = Database::init()?;
+        let db_path = crate::database::database_path()?;
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.pragma_update(None, "journal_mode", "DELETE")
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            conn.busy_timeout(Duration::from_millis(50))
+                .map_err(|e| AppError::Database(e.to_string()))?;
+        }
+
+        let locker = Connection::open(&db_path).map_err(|e| AppError::Database(e.to_string()))?;
+        locker
+            .execute_batch("BEGIN EXCLUSIVE;")
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        let started = Instant::now();
+        let error = db
+            .backup_database_file()
+            .expect_err("an exclusive source lock should make the backup fail");
+        let elapsed = started.elapsed();
+        locker
+            .execute_batch("ROLLBACK;")
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "the outer backup layer must not multiply the 50ms busy timeout: {elapsed:?}"
+        );
+        assert!(error.to_string().contains("busy_timeout"));
+
+        let backup_dir = db_path.parent().expect("database parent").join("backups");
+        let artifacts = fs::read_dir(&backup_dir)
+            .map_err(|e| AppError::io(&backup_dir, e))?
+            .filter_map(Result::ok)
+            .collect::<Vec<_>>();
+        assert!(
+            artifacts.is_empty(),
+            "failed backups must not leave database or journal artifacts: {artifacts:?}"
+        );
+
+        Ok(())
     }
 
     #[test]

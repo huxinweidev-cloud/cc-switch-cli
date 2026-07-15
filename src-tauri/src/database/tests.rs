@@ -248,6 +248,44 @@ fn init_rejects_future_schema_before_creating_tables() {
 
 #[test]
 #[serial_test::serial]
+fn init_aborts_migration_when_pre_migration_backup_fails() {
+    let _lock = crate::test_support::lock_test_home_and_settings();
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let _guard = ConfigDirEnvGuard::set(temp.path());
+    let db_path = temp.path().join("cc-switch.db");
+
+    let db = Database::init().expect("initialize current database");
+    Database::set_user_version(
+        &db.conn.lock().expect("lock database connection"),
+        SCHEMA_VERSION - 1,
+    )
+    .expect("downgrade schema marker");
+    drop(db);
+
+    // A regular file at the backup-directory path deterministically makes the
+    // safety backup fail before any schema migration can begin.
+    std::fs::write(temp.path().join("backups"), b"not-a-directory")
+        .expect("block backup directory creation");
+
+    let err = match Database::init() {
+        Ok(_) => panic!("migration must not proceed without its safety backup"),
+        Err(err) => err,
+    };
+    assert!(
+        err.to_string().contains("Pre-migration backup failed"),
+        "unexpected error: {err}"
+    );
+
+    let conn = Connection::open(&db_path).expect("reopen database");
+    assert_eq!(
+        Database::get_user_version(&conn).expect("read schema version"),
+        SCHEMA_VERSION - 1,
+        "failed backup must leave the schema version unchanged"
+    );
+}
+
+#[test]
+#[serial_test::serial]
 fn init_rejects_unsafe_config_dir() {
     let _lock = crate::test_support::lock_test_home_and_settings();
     let _guard = ConfigDirEnvGuard::set(Path::new("/tmp"));
