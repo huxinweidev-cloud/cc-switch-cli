@@ -1094,7 +1094,6 @@ impl App {
             prompt: prompt.to_string(),
             input: TextInput::new(value),
             submit: TextSubmit::CodexModelCatalogField { row, field },
-            secret: false,
         });
     }
 

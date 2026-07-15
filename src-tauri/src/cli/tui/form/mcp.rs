@@ -380,23 +380,45 @@ impl McpAddFormState {
         self.args_state = super::McpArgsState::Materialized(values);
     }
 
-    pub fn args_count(&self) -> usize {
-        match &self.args_state {
-            super::McpArgsState::Imported => self
-                .source
-                .server
-                .get("args")
-                .and_then(Value::as_array)
-                .map(Vec::len)
-                .unwrap_or(0),
-            super::McpArgsState::Materialized(values) => values.len(),
-        }
+    /// Returns a bounded, borrow-only view of the current argv for passive UI
+    /// previews. Imported arguments stay lazy so opening a large MCP config
+    /// does not clone or join the complete array.
+    pub(crate) fn args_preview(&self, max_items: usize) -> (Vec<&str>, usize) {
+        let (items, total) = match &self.args_state {
+            super::McpArgsState::Imported => {
+                let values = self
+                    .source
+                    .server
+                    .get("args")
+                    .and_then(Value::as_array)
+                    .map(Vec::as_slice)
+                    .unwrap_or_default();
+                (
+                    values
+                        .iter()
+                        .take(max_items)
+                        .filter_map(Value::as_str)
+                        .collect::<Vec<_>>(),
+                    values.len(),
+                )
+            }
+            super::McpArgsState::Materialized(values) => (
+                values
+                    .iter()
+                    .take(max_items)
+                    .map(String::as_str)
+                    .collect::<Vec<_>>(),
+                values.len(),
+            ),
+        };
+        let hidden = total.saturating_sub(items.len());
+        (items, hidden)
     }
 
     pub fn args_input_is_valid(&self) -> bool {
         matches!(self.args_state, super::McpArgsState::Imported)
             || !self.args_inline_edit_available()
-            || shlex::split(&self.args.value).is_some()
+            || self.parse_args_input_within_inline_budget().is_some()
     }
 
     pub fn commit_args_input(&mut self) -> bool {
@@ -405,11 +427,35 @@ impl McpAddFormState {
         {
             return true;
         }
-        let Some(values) = shlex::split(&self.args.value) else {
+        let Some(values) = self.parse_args_input_within_inline_budget() else {
             return false;
         };
         self.set_args_values(values);
         true
+    }
+
+    /// Parses inline argv only after the raw input has passed the hard byte
+    /// limit. This keeps malformed or otherwise expensive shell input bounded
+    /// before `shlex` scans or allocates, and rejects token explosions before
+    /// they can replace the last valid argv.
+    fn parse_args_input_within_inline_budget(&self) -> Option<Vec<String>> {
+        if self.args.value.len() > MCP_ARGS_INLINE_MAX_BYTES {
+            return None;
+        }
+
+        let mut parser = shlex::Shlex::new(&self.args.value);
+        let values = parser
+            .by_ref()
+            .take(MCP_ARGS_INLINE_MAX_ITEMS.saturating_add(1))
+            .collect::<Vec<_>>();
+        if values.len() > MCP_ARGS_INLINE_MAX_ITEMS
+            || parser.had_error
+            || !Self::args_values_fit_inline_budget(values.iter().map(String::as_str))
+        {
+            return None;
+        }
+
+        Some(values)
     }
 
     fn args_text_is_canonical(&self) -> bool {

@@ -76,7 +76,6 @@ impl App {
                     prompt: usage_custom_range_prompt().to_string(),
                     input: TextInput::new(input),
                     submit: TextSubmit::UsageCustomRange,
-                    secret: false,
                 });
                 Action::None
             }

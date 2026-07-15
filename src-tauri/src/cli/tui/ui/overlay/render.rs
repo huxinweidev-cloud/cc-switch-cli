@@ -160,13 +160,17 @@ pub(crate) fn render_overlay(
             )
         }
         Overlay::OpenClawAgentsFallbackPicker {
-            selected, options, ..
+            selected,
+            active,
+            options,
+            ..
         } => super::pickers::render_openclaw_agents_fallback_picker_overlay(
             frame,
             app,
             content_area,
             theme,
             *selected,
+            *active,
             options,
         ),
         Overlay::McpAppsPicker {

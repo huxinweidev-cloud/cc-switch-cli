@@ -4,6 +4,10 @@ use super::frame::{overlay_frame, overlay_frame_at, OverlaySize};
 use crate::cli::tui::form::{HermesModelField, ProviderAddFormState};
 use crate::cli::tui::text_edit::TextInput;
 
+const OPENCLAW_AGENTS_MODEL_PICKER_MAX_VISIBLE_ROWS: usize = 32;
+const OPENCLAW_AGENTS_MODEL_PICKER_MAX_LABEL_BYTES: usize = 4 * 1024;
+const OPENCLAW_AGENTS_MODEL_PICKER_MAX_LABEL_WIDTH: usize = 512;
+
 pub(super) fn render_claude_model_picker_overlay(
     frame: &mut Frame<'_>,
     app: &App,
@@ -942,6 +946,7 @@ pub(super) fn render_openclaw_agents_fallback_picker_overlay(
     content_area: Rect,
     theme: &theme::Theme,
     selected: usize,
+    active: Option<usize>,
     options: &[app::OpenClawModelOption],
 ) {
     let has_selection = selected != app::OPENCLAW_AGENTS_MODEL_PICKER_NONE;
@@ -969,14 +974,32 @@ pub(super) fn render_openclaw_agents_fallback_picker_overlay(
         overlay_border_style(theme, false),
     );
 
-    let current_value = openclaw_agents_picker_current_value(app);
-    let items = options.iter().map(|option| {
-        let marker = if current_value == Some(option.value.as_str()) {
+    let selected_idx = (has_selection && !options.is_empty())
+        .then(|| selected.min(options.len().saturating_sub(1)));
+    let visible = openclaw_agents_picker_visible_window(
+        options.len(),
+        selected_idx.unwrap_or(0),
+        body_area.height as usize,
+    );
+    let visible_start = visible.start;
+    let visible_end = visible.end;
+    let items = visible.map(|option_idx| {
+        let option = &options[option_idx];
+        let marker = if active == Some(option_idx) {
             texts::tui_marker_active()
         } else {
             texts::tui_marker_inactive()
         };
-        ListItem::new(Line::raw(format!("{marker}  {}", option.label)))
+        let prefix_width = UnicodeWidthStr::width(highlight_symbol(theme))
+            .saturating_add(UnicodeWidthStr::width(marker))
+            .saturating_add(2);
+        let label_width = (body_area.width as usize).saturating_sub(prefix_width);
+        let label = bounded_openclaw_agents_model_label(&option.label, label_width);
+        ListItem::new(Line::from(vec![
+            Span::raw(marker),
+            Span::raw("  "),
+            Span::raw(label),
+        ]))
     });
 
     let list = List::new(items)
@@ -985,10 +1008,121 @@ pub(super) fn render_openclaw_agents_fallback_picker_overlay(
 
     let mut state = ListState::default();
     state.select(
-        (selected != app::OPENCLAW_AGENTS_MODEL_PICKER_NONE)
-            .then_some(selected.min(options.len().saturating_sub(1))),
+        selected_idx
+            .filter(|selected| (visible_start..visible_end).contains(selected))
+            .map(|selected| selected.saturating_sub(visible_start)),
     );
     frame.render_stateful_widget(list, body_area, &mut state);
+}
+
+fn openclaw_agents_picker_visible_window(
+    len: usize,
+    selected: usize,
+    body_height: usize,
+) -> std::ops::Range<usize> {
+    visible_selection_window(
+        len,
+        selected,
+        body_height.min(OPENCLAW_AGENTS_MODEL_PICKER_MAX_VISIBLE_ROWS),
+    )
+}
+
+/// Build a passive picker label without scanning or allocating the complete
+/// imported value. The original option remains untouched for selection/save.
+fn bounded_openclaw_agents_model_label(label: &str, available_width: usize) -> String {
+    let width = available_width.min(OPENCLAW_AGENTS_MODEL_PICKER_MAX_LABEL_WIDTH);
+    if width == 0 || label.is_empty() {
+        return String::new();
+    }
+
+    let mut output = String::with_capacity(
+        label
+            .len()
+            .min(OPENCLAW_AGENTS_MODEL_PICKER_MAX_LABEL_BYTES)
+            .min(width.saturating_mul(4)),
+    );
+    let mut used_width = 0usize;
+    let mut scanned_end = 0usize;
+    let mut started = false;
+    let mut truncated = false;
+
+    for (byte_idx, ch) in label.char_indices() {
+        let char_end = byte_idx.saturating_add(ch.len_utf8());
+        if char_end > OPENCLAW_AGENTS_MODEL_PICKER_MAX_LABEL_BYTES {
+            truncated = true;
+            break;
+        }
+        scanned_end = char_end;
+
+        if !started && ch.is_whitespace() {
+            continue;
+        }
+        started = true;
+        let display_char = if (ch.is_whitespace() && ch != ' ') || ch.is_control() {
+            ' '
+        } else {
+            ch
+        };
+        let char_width = UnicodeWidthChar::width(display_char).unwrap_or(0);
+        if used_width.saturating_add(char_width) > width {
+            truncated = true;
+            break;
+        }
+        output.push(display_char);
+        used_width = used_width.saturating_add(char_width);
+    }
+    truncated |= scanned_end < label.len();
+
+    while output.chars().next_back().is_some_and(char::is_whitespace) {
+        let Some(ch) = output.pop() else {
+            break;
+        };
+        used_width = used_width.saturating_sub(UnicodeWidthChar::width(ch).unwrap_or(0));
+    }
+
+    if truncated {
+        while used_width > width.saturating_sub(1) {
+            let Some(ch) = output.pop() else {
+                break;
+            };
+            used_width = used_width.saturating_sub(UnicodeWidthChar::width(ch).unwrap_or(0));
+        }
+        output.push('…');
+    }
+
+    output
+}
+
+#[cfg(test)]
+mod openclaw_agents_picker_tests {
+    use super::*;
+
+    #[test]
+    fn large_picker_window_is_fixed_and_contains_first_middle_and_last_selections() {
+        let cases = [(0, 0..32), (5_000, 4_984..5_016), (9_999, 9_968..10_000)];
+
+        for (selected, expected) in cases {
+            let actual = openclaw_agents_picker_visible_window(10_000, selected, usize::MAX);
+            assert_eq!(actual, expected);
+            assert_eq!(actual.len(), OPENCLAW_AGENTS_MODEL_PICKER_MAX_VISIBLE_ROWS);
+            assert!(actual.contains(&selected));
+        }
+    }
+
+    #[test]
+    fn model_label_scan_is_bounded_by_bytes_and_terminal_width() {
+        let source = format!("SELECTED-{}", "你".repeat(1_000_000));
+        let rendered = bounded_openclaw_agents_model_label(&source, 20);
+
+        assert!(rendered.starts_with("SELECTED-"));
+        assert!(rendered.ends_with('…'));
+        assert!(UnicodeWidthStr::width(rendered.as_str()) <= 20);
+        assert!(rendered.len() <= OPENCLAW_AGENTS_MODEL_PICKER_MAX_LABEL_BYTES + '…'.len_utf8());
+        assert_eq!(source.len(), "SELECTED-".len() + 3_000_000);
+
+        let leading_space = " ".repeat(OPENCLAW_AGENTS_MODEL_PICKER_MAX_LABEL_BYTES * 2);
+        assert_eq!(bounded_openclaw_agents_model_label(&leading_space, 20), "…");
+    }
 }
 
 fn openclaw_agents_picker_title(app: &App) -> &'static str {
@@ -1004,18 +1138,6 @@ fn openclaw_agents_picker_title(app: &App) -> &'static str {
         app::OpenClawAgentsSection::FallbackModels | app::OpenClawAgentsSection::Runtime => {
             texts::tui_openclaw_agents_add_fallback()
         }
-    }
-}
-
-fn openclaw_agents_picker_current_value(app: &App) -> Option<&str> {
-    let form = app.openclaw_agents_form.as_ref()?;
-
-    match form.section {
-        app::OpenClawAgentsSection::PrimaryModel => Some(form.primary_model.as_str()),
-        app::OpenClawAgentsSection::FallbackModels => {
-            form.fallbacks.get(form.row).map(String::as_str)
-        }
-        app::OpenClawAgentsSection::Runtime => None,
     }
 }
 

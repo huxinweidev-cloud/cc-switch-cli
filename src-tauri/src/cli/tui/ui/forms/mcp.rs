@@ -1,5 +1,7 @@
 use super::*;
 
+const MCP_PREVIEW_MAX_ARGS: usize = 128;
+
 pub(crate) fn render_mcp_add_form(
     frame: &mut Frame<'_>,
     app: &App,
@@ -132,19 +134,19 @@ fn mcp_preview_value(mcp: &super::form::McpAddFormState) -> Value {
     if let Some(description) = source.description.as_deref() {
         root.insert(
             "description".to_string(),
-            Value::String(safe_public_text_for_display(description)),
+            Value::String(bounded_trimmed_text_for_display(description)),
         );
     }
     if let Some(homepage) = source.homepage.as_deref() {
         root.insert(
             "homepage".to_string(),
-            Value::String(safe_url_origin_for_display(homepage)),
+            Value::String(bounded_trimmed_text_for_display(homepage)),
         );
     }
     if let Some(docs) = source.docs.as_deref() {
         root.insert(
             "docs".to_string(),
-            Value::String(safe_url_origin_for_display(docs)),
+            Value::String(bounded_trimmed_text_for_display(docs)),
         );
     }
     if !source.tags.is_empty() {
@@ -152,7 +154,7 @@ fn mcp_preview_value(mcp: &super::form::McpAddFormState) -> Value {
             .tags
             .iter()
             .take(MAX_TAGS)
-            .map(|tag| Value::String(safe_public_text_for_display(tag)))
+            .map(|tag| Value::String(bounded_trimmed_text_for_display(tag)))
             .collect::<Vec<_>>();
         let hidden = source.tags.len().saturating_sub(tags.len());
         if hidden > 0 {
@@ -164,18 +166,14 @@ fn mcp_preview_value(mcp: &super::form::McpAddFormState) -> Value {
     }
     root.insert(
         "id".to_string(),
-        Value::String(safe_public_text_for_display(
-            &bounded_trimmed_text_for_display(&mcp.id.value),
-        )),
+        Value::String(bounded_trimmed_text_for_display(&mcp.id.value)),
     );
     root.insert(
         "name".to_string(),
-        Value::String(safe_public_text_for_display(
-            &bounded_trimmed_text_for_display(&mcp.name.value),
-        )),
+        Value::String(bounded_trimmed_text_for_display(&mcp.name.value)),
     );
 
-    let mut server = match redact_sensitive_json(&source.server) {
+    let mut server = match bounded_json_preview(&source.server) {
         Value::Object(map) => map,
         _ => serde_json::Map::new(),
     };
@@ -195,24 +193,31 @@ fn mcp_preview_value(mcp: &super::form::McpAddFormState) -> Value {
     if mcp.server_type.is_remote() {
         server.insert(
             "url".to_string(),
-            Value::String(safe_url_origin_for_display(&mcp.url.value)),
+            Value::String(bounded_trimmed_text_for_display(&mcp.url.value)),
         );
     } else {
         server.insert(
             "command".to_string(),
-            Value::String(safe_executable_basename_for_display(&mcp.command.value)),
+            Value::String(bounded_trimmed_text_for_display(&mcp.command.value)),
         );
-        server.insert(
-            "args".to_string(),
-            Value::String(redacted_secret_placeholder().to_string()),
-        );
+        let (args, hidden_args) = mcp.args_preview(MCP_PREVIEW_MAX_ARGS);
+        let mut args = args
+            .into_iter()
+            .map(|arg| Value::String(bounded_trimmed_text_for_display(arg)))
+            .collect::<Vec<_>>();
+        if hidden_args > 0 {
+            args.push(Value::String(format!(
+                "[preview truncated: {hidden_args} more entries]"
+            )));
+        }
+        server.insert("args".to_string(), Value::Array(args));
         if !mcp.env_rows.is_empty() {
             let mut env = serde_json::Map::new();
             for row in mcp.env_rows.iter().take(MAX_ENV_KEYS) {
                 let key = row.key.chars().take(128).collect::<String>();
                 env.insert(
                     key,
-                    Value::String(redacted_secret_placeholder().to_string()),
+                    Value::String(bounded_trimmed_text_for_display(&row.value)),
                 );
             }
             let hidden = mcp.env_rows.len().saturating_sub(MAX_ENV_KEYS);
@@ -285,7 +290,7 @@ fn render_mcp_inline_fields(
                 mcp.input(*field).map_or_else(
                     || truncated_value_cell(value, table_area.width, label_col_width, theme),
                     |input| {
-                        let (visible, x) = inline_input_window(input, value_width, false);
+                        let (visible, x) = inline_input_window(input, value_width);
                         if idx == selected_idx {
                             cursor_x = Some(x);
                         }
@@ -358,9 +363,9 @@ pub(crate) fn mcp_field_label_and_value(
 
     let value = match field {
         McpAddField::Type => mcp.server_type.label().to_string(),
-        McpAddField::Command => safe_executable_basename_for_display(&mcp.command.value),
-        McpAddField::Args => texts::tui_mcp_args_hidden_count(mcp.args_count()),
-        McpAddField::Url => safe_url_origin_for_display(&mcp.url.value),
+        McpAddField::Command => bounded_trimmed_text_for_display(&mcp.command.value),
+        McpAddField::Args => mcp_args_summary(mcp),
+        McpAddField::Url => bounded_trimmed_text_for_display(&mcp.url.value),
         McpAddField::Env => mcp.env_summary(),
         McpAddField::AppClaude => {
             if mcp.apps.claude {
@@ -413,6 +418,25 @@ pub(crate) fn mcp_field_label_and_value(
     )
 }
 
+fn mcp_args_summary(mcp: &super::form::McpAddFormState) -> String {
+    const MAX_SUMMARY_ARGS: usize = 8;
+    const MAX_ARG_WIDTH: u16 = 48;
+
+    let (args, hidden) = mcp.args_preview(MAX_SUMMARY_ARGS);
+    let mut summary = args
+        .into_iter()
+        .map(|arg| {
+            serde_json::to_string(&truncate_to_display_width(arg, MAX_ARG_WIDTH))
+                .unwrap_or_else(|_| "\"\"".to_string())
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    if hidden > 0 {
+        summary.push_str(&format!(" … (+{hidden})"));
+    }
+    bounded_trimmed_text_for_display(&summary)
+}
+
 fn mcp_add_form_key_items(
     focus: FormFocus,
     editing: bool,
@@ -421,8 +445,6 @@ fn mcp_add_form_key_items(
     if editing && matches!(focus, FormFocus::Fields) {
         return vec![
             ("Enter", texts::tui_key_apply()),
-            ("Tab", texts::tui_key_next_field()),
-            ("Shift+Tab", texts::tui_key_previous_field()),
             ("Ctrl+S", texts::tui_key_save()),
             ("Esc", texts::tui_key_cancel()),
         ];

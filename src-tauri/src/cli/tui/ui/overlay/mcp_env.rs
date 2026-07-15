@@ -43,11 +43,8 @@ pub(super) fn render_mcp_env_picker_overlay(
     let visible_start = visible.start;
     let items = mcp.env_rows[visible.clone()].iter().map(|row| {
         let key = bounded_trimmed_text_for_display(&row.key);
-        ListItem::new(Line::raw(format!(
-            "{} = {}",
-            key,
-            redacted_secret_placeholder()
-        )))
+        let value = bounded_trimmed_text_for_display(&row.value);
+        ListItem::new(Line::raw(format!("{key} = {value}")))
     });
 
     let list = List::new(items)
@@ -127,7 +124,7 @@ pub(super) fn render_mcp_env_entry_editor_overlay(
         let input_inner = block.inner(input_area);
         frame.render_widget(block, input_area);
 
-        let (visible, cursor_x) = inline_input_window(input, input_inner.width, idx == 1);
+        let (visible, cursor_x) = inline_input_window(input, input_inner.width);
         frame.render_widget(
             Paragraph::new(Line::raw(visible)).wrap(Wrap { trim: false }),
             input_inner,

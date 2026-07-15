@@ -117,7 +117,7 @@ fn render_prompt_inline_fields(
             let editing = matches!(prompt.focus, FormFocus::Fields)
                 && prompt.text_edit_target() == Some(*field);
             let display = if editing {
-                let (visible, x) = inline_input_window(prompt.input(*field), value_width, false);
+                let (visible, x) = inline_input_window(prompt.input(*field), value_width);
                 if idx == selected_idx {
                     cursor_x = Some(x);
                 }
@@ -252,8 +252,6 @@ fn prompt_meta_form_key_items(
         FormFocus::Fields if editing => {
             keys.extend([
                 ("Enter", texts::tui_key_apply()),
-                ("Tab", texts::tui_key_next_field()),
-                ("Shift+Tab", texts::tui_key_previous_field()),
                 ("Ctrl+S", texts::tui_key_save()),
                 ("Esc", texts::tui_key_cancel()),
             ]);

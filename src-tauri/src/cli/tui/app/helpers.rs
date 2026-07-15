@@ -327,34 +327,13 @@ impl OpenClawAgentsFormState {
     }
 
     pub(crate) fn has_unmigratable_legacy_timeout(&self) -> bool {
-        self.to_form_like().has_unmigratable_legacy_timeout()
-    }
-
-    pub(crate) fn preserved_timeout_seconds(&self) -> Option<&Value> {
-        crate::cli::openclaw_form_normalization::preserved_non_string_runtime_seed(
-            &self.timeout,
-            self.timeout_seconds_seed.as_ref(),
-        )
-    }
-
-    pub(crate) fn preserved_context_tokens(&self) -> Option<&Value> {
-        crate::cli::openclaw_form_normalization::preserved_non_string_runtime_seed(
-            &self.context_tokens,
-            self.context_tokens_seed.as_ref(),
-        )
-    }
-
-    pub(crate) fn preserved_max_concurrent(&self) -> Option<&Value> {
-        crate::cli::openclaw_form_normalization::preserved_non_string_runtime_seed(
-            &self.max_concurrent,
-            self.max_concurrent_seed.as_ref(),
-        )
-    }
-
-    pub(crate) fn has_preserved_non_string_runtime_values(&self) -> bool {
-        self.preserved_timeout_seconds().is_some()
-            || self.preserved_context_tokens().is_some()
-            || self.preserved_max_concurrent().is_some()
+        const MAX_TIMEOUT_PARSE_BYTES: usize = 128;
+        if self.timeout.len() > MAX_TIMEOUT_PARSE_BYTES {
+            return self.has_legacy_timeout;
+        }
+        self.has_legacy_timeout
+            && !self.timeout.trim().is_empty()
+            && crate::cli::openclaw_form_normalization::parse_number(self.timeout.trim()).is_none()
     }
 
     fn to_form_like(&self) -> crate::cli::openclaw_form_normalization::OpenClawAgentsFormLike {
@@ -403,27 +382,6 @@ impl OpenClawToolsFormState {
             section: OpenClawToolsSection::Profile,
             row: 0,
         }
-    }
-
-    pub(crate) fn unsupported_profile(&self) -> Option<&str> {
-        let profile = self.profile.as_deref()?;
-        if openclaw_tools_profile_picker_index(Some(profile)).is_some() {
-            None
-        } else {
-            Some(profile)
-        }
-    }
-
-    pub(crate) fn current_profile_label(&self) -> String {
-        if let Some(index) = openclaw_tools_profile_picker_index(self.profile.as_deref()) {
-            return openclaw_tools_profile_picker_label(index).to_string();
-        }
-
-        let value = self.profile.as_deref().unwrap_or_default();
-        format!(
-            "{value} ({})",
-            texts::tui_openclaw_tools_unsupported_profile_label()
-        )
     }
 
     pub(crate) fn move_down(&mut self) {
@@ -630,90 +588,81 @@ fn model_picker_selection(current: &str, options: &[OpenClawModelOption]) -> usi
         .unwrap_or(OPENCLAW_AGENTS_MODEL_PICKER_NONE)
 }
 
-fn openclaw_tools_warning_matches_path(
-    data: &UiData,
-    warning: &crate::openclaw_config::OpenClawHealthWarning,
-) -> bool {
-    let config_path = data
-        .config
-        .openclaw_config_path
-        .as_ref()
-        .map(|path| path.display().to_string());
+pub(crate) const OPENCLAW_WARNING_SCAN_ITEMS: usize = 128;
+const OPENCLAW_WARNING_PATH_MATCH_MAX_BYTES: usize = 4 * 1024;
 
+pub(crate) fn bounded_openclaw_config_path(path: Option<&Path>) -> Option<&str> {
+    let encoded = path?.as_os_str().as_encoded_bytes();
+    if encoded.len() > OPENCLAW_WARNING_PATH_MATCH_MAX_BYTES {
+        return None;
+    }
+    std::str::from_utf8(encoded).ok()
+}
+
+fn openclaw_warning_matches_path(
+    warning: &crate::openclaw_config::OpenClawHealthWarning,
+    config_path: Option<&str>,
+    section_root: &str,
+    section_prefix: &str,
+) -> bool {
     match warning.path.as_deref() {
         None => true,
-        Some(path) if config_path.as_deref() == Some(path) => true,
-        Some("tools") => true,
-        Some(path) => path.starts_with("tools."),
+        Some(path) if config_path == Some(path) => true,
+        Some(path) => path == section_root || path.starts_with(section_prefix),
     }
+}
+
+fn openclaw_has_matching_warning(
+    data: &UiData,
+    section_root: &str,
+    section_prefix: &str,
+    section_missing: bool,
+) -> bool {
+    let config_path = bounded_openclaw_config_path(data.config.openclaw_config_path.as_deref());
+    let warnings = data.config.openclaw_warnings.as_deref().unwrap_or_default();
+
+    // A missing section plus more warnings than the render-time inspection
+    // budget is an uncertain parse state. Fail closed so an uninspected
+    // warning can never let an empty form overwrite malformed source data.
+    if section_missing && warnings.len() > OPENCLAW_WARNING_SCAN_ITEMS {
+        return true;
+    }
+
+    warnings
+        .iter()
+        .take(OPENCLAW_WARNING_SCAN_ITEMS)
+        .any(|warning| {
+            (section_missing || warning.code == "config_parse_failed")
+                && openclaw_warning_matches_path(warning, config_path, section_root, section_prefix)
+        })
 }
 
 pub(crate) fn openclaw_tools_load_failed(data: &UiData) -> bool {
     data.config.openclaw_tools.is_none()
-        && data
-            .config
-            .openclaw_warnings
-            .as_ref()
-            .into_iter()
-            .flatten()
-            .any(|warning| openclaw_tools_warning_matches_path(data, warning))
+        && openclaw_has_matching_warning(data, "tools", "tools.", true)
 }
 
 pub(crate) fn openclaw_tools_has_blocking_warning(data: &UiData) -> bool {
-    openclaw_tools_load_failed(data)
-        || data
-            .config
-            .openclaw_warnings
-            .as_ref()
-            .into_iter()
-            .flatten()
-            .any(|warning| {
-                warning.code == "config_parse_failed"
-                    && openclaw_tools_warning_matches_path(data, warning)
-            })
-}
-
-fn openclaw_agents_warning_matches_path(
-    data: &UiData,
-    warning: &crate::openclaw_config::OpenClawHealthWarning,
-) -> bool {
-    let config_path = data
-        .config
-        .openclaw_config_path
-        .as_ref()
-        .map(|path| path.display().to_string());
-
-    match warning.path.as_deref() {
-        None => true,
-        Some(path) if config_path.as_deref() == Some(path) => true,
-        Some("agents.defaults") => true,
-        Some(path) => path.starts_with("agents.defaults."),
-    }
+    openclaw_has_matching_warning(
+        data,
+        "tools",
+        "tools.",
+        data.config.openclaw_tools.is_none(),
+    )
 }
 
 pub(crate) fn openclaw_agents_load_failed(data: &UiData) -> bool {
     data.config.openclaw_agents_defaults.is_none()
-        && data
-            .config
-            .openclaw_warnings
-            .as_ref()
-            .into_iter()
-            .flatten()
-            .any(|warning| openclaw_agents_warning_matches_path(data, warning))
+        && openclaw_has_matching_warning(data, "agents.defaults", "agents.defaults.", true)
 }
 
 pub(crate) fn openclaw_agents_has_blocking_warning(data: &UiData) -> bool {
-    openclaw_agents_load_failed(data)
-        || data
-            .config
-            .openclaw_warnings
-            .as_ref()
-            .into_iter()
-            .flatten()
-            .any(|warning| {
-                warning.code == "config_parse_failed"
-                    && openclaw_agents_warning_matches_path(data, warning)
-            })
+    openclaw_has_matching_warning(
+        data,
+        "agents.defaults",
+        "agents.defaults.",
+        data.config.openclaw_agents_defaults.is_none(),
+    )
 }
 
 impl<'a> OpenClawDailyMemoryListItem<'a> {

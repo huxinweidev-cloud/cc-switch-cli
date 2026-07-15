@@ -2861,7 +2861,6 @@ pub struct TextInputState {
     pub prompt: String,
     pub input: TextInput,
     pub submit: TextSubmit,
-    pub secret: bool,
 }
 
 impl TextInputState {
@@ -3012,6 +3011,9 @@ pub enum Overlay {
     OpenClawAgentsFallbackPicker {
         insert_at: usize,
         selected: usize,
+        /// Option that matched the saved value when the picker opened. Keeping
+        /// its index avoids comparing arbitrary complete model ids every frame.
+        active: Option<usize>,
         options: Vec<OpenClawModelOption>,
     },
     McpAppsPicker {

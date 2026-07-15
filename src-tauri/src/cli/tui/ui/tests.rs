@@ -5,7 +5,7 @@ use ratatui::{
     style::{Color, Modifier},
     Terminal,
 };
-use serde_json::json;
+use serde_json::{json, Value};
 use serial_test::serial;
 use std::ffi::OsString;
 use std::path::Path;
@@ -80,25 +80,45 @@ fn visible_text_window_bounds_a_million_multibyte_characters() {
 }
 
 #[test]
-fn masked_inline_window_never_materializes_the_complete_secret() {
+fn inline_window_keeps_plaintext_visible_while_bounding_large_values() {
     let input = TextInput::new("x".repeat(1_000_000));
 
-    let (visible, cursor_x) = super::inline_input_window(&input, 10, true);
+    let (visible, cursor_x) = super::inline_input_window(&input, 10);
 
-    assert_eq!(visible.chars().count(), 9);
-    assert!(visible.chars().all(|ch| ch == '•'));
+    assert_eq!(visible, "xxxxxxxxx");
     assert_eq!(cursor_x, 9);
 }
 
 #[test]
-fn masked_inline_window_bounds_a_multibyte_secret() {
+fn inline_window_keeps_multibyte_plaintext_visible_within_display_width() {
     let input = TextInput::new("你".repeat(1_000_000));
 
-    let (visible, cursor_x) = super::inline_input_window(&input, 10, true);
+    let (visible, cursor_x) = super::inline_input_window(&input, 10);
 
-    assert_eq!(visible.chars().count(), 9);
-    assert!(visible.chars().all(|ch| ch == '•'));
-    assert_eq!(cursor_x, 9);
+    assert_eq!(visible, "你你你你");
+    assert_eq!(UnicodeWidthStr::width(visible.as_str()), 8);
+    assert_eq!(cursor_x, 8);
+}
+
+#[test]
+fn form_json_preview_scrolls_through_wrapped_segments_of_one_long_line() {
+    let _lock = lock_env();
+    let _no_color = EnvGuard::remove("NO_COLOR");
+    let backend = TestBackend::new(18, 6);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    let theme = theme_for(&AppType::Claude);
+    let text = format!("{{\"value\":\"{}VISIBLE_TAIL\"}}", "A".repeat(60));
+
+    terminal
+        .draw(|frame| {
+            super::render_form_json_preview(frame, &text, 2, true, frame.area(), &theme);
+        })
+        .expect("preview should render");
+
+    let rendered = all_text(terminal.backend().buffer());
+    assert!(!rendered.contains("{\"value\""), "{rendered}");
+    assert!(rendered.contains("VISIBLE_TA"), "{rendered}");
+    assert!(rendered.contains("IL\"}"), "{rendered}");
 }
 
 #[test]
@@ -127,20 +147,20 @@ fn visible_selection_window_stays_fixed_around_edges_and_selection() {
 }
 
 #[test]
-fn passive_json_redaction_bounds_a_million_byte_object_key() {
+fn plaintext_json_preview_bounds_a_million_byte_object_key() {
     let mut object = serde_json::Map::new();
     object.insert("K".repeat(1_000_000), json!("secret-value"));
 
-    let redacted = super::redact_sensitive_json(&serde_json::Value::Object(object));
-    let rendered = serde_json::to_string(&redacted).expect("redacted JSON should serialize");
+    let preview = super::bounded_json_preview(&serde_json::Value::Object(object));
+    let rendered = serde_json::to_string(&preview).expect("bounded JSON should serialize");
 
     assert!(rendered.len() < 1_000, "preview was not bounded");
-    assert!(!rendered.contains("secret-value"));
-    assert!(rendered.contains("[redacted]"));
+    assert!(rendered.contains("secret-value"), "{rendered}");
+    assert!(!rendered.contains("[redacted]"), "{rendered}");
 }
 
 #[test]
-fn provider_form_redacts_api_key_in_table_value() {
+fn provider_form_shows_api_key_in_table_value() {
     let mut form = crate::cli::tui::form::ProviderAddFormState::new(AppType::Claude);
     form.claude_api_key.set("sk-test-1234567890");
 
@@ -148,11 +168,11 @@ fn provider_form_redacts_api_key_in_table_value() {
         &form,
         crate::cli::tui::form::ProviderAddField::ClaudeApiKey,
     );
-    assert_eq!(value, "[redacted]");
+    assert_eq!(value, "sk-test-1234567890");
 }
 
 #[test]
-fn provider_and_usage_passive_url_rows_hide_embedded_credentials() {
+fn provider_and_usage_url_rows_show_the_complete_value_without_mutating_it() {
     let raw = "https://user:pass@example.test/v1/private?api_key=P2_URL_SECRET#fragment";
     let mut form = crate::cli::tui::form::ProviderAddFormState::new(AppType::Claude);
     form.claude_base_url.set(raw);
@@ -167,20 +187,14 @@ fn provider_and_usage_passive_url_rows_hide_embedded_credentials() {
         crate::cli::tui::form::UsageQueryField::BaseUrl,
     );
 
-    assert_eq!(provider_value, "https://example.test");
-    assert_eq!(usage_value, "https://example.test");
-    for value in [&provider_value, &usage_value] {
-        assert!(!value.contains("user"));
-        assert!(!value.contains("pass"));
-        assert!(!value.contains("P2_URL_SECRET"));
-        assert!(!value.contains("private"));
-    }
+    assert_eq!(provider_value, raw);
+    assert_eq!(usage_value, raw);
     assert_eq!(form.claude_base_url.value, raw);
     assert_eq!(form.usage_query_base_url.value, raw);
 }
 
 #[test]
-fn provider_inline_secret_edit_never_writes_plaintext_to_the_frame() {
+fn provider_inline_api_key_edit_renders_plaintext() {
     let _lock = lock_env();
     let _lang = use_test_language(Language::English);
     let _no_color = EnvGuard::remove("NO_COLOR");
@@ -202,13 +216,14 @@ fn provider_inline_secret_edit_never_writes_plaintext_to_the_frame() {
         160,
         40,
     ));
-    assert!(!all.contains(secret), "{all}");
-    assert!(all.contains('•'), "{all}");
-    assert!(all.contains("[redacted]"), "{all}");
+    assert!(all.contains(secret), "{all}");
+    assert!(!all.contains("[redacted]"), "{all}");
+    assert!(!all.contains("apply & next"), "{all}");
+    assert!(!all.contains("apply & previous"), "{all}");
 }
 
 #[test]
-fn mcp_preview_redacts_all_environment_values() {
+fn mcp_preview_shows_environment_values_in_plaintext() {
     let _lock = lock_env();
     let _lang = use_test_language(Language::English);
     let _no_color = EnvGuard::remove("NO_COLOR");
@@ -234,13 +249,13 @@ fn mcp_preview_redacts_all_environment_values() {
         80,
         35,
     ));
-    assert!(!all.contains(secret), "{all}");
+    assert!(all.contains(secret), "{all}");
     assert!(all.contains("CUSTOM_VALUE"), "{all}");
-    assert!(all.contains("[redacted]"), "{all}");
+    assert!(!all.contains("[redacted]"), "{all}");
 }
 
 #[test]
-fn mcp_preview_redacts_custom_header_values_by_container() {
+fn mcp_preview_shows_custom_header_values_in_plaintext() {
     let _lock = lock_env();
     let _lang = use_test_language(Language::English);
     let _no_color = EnvGuard::remove("NO_COLOR");
@@ -277,14 +292,14 @@ fn mcp_preview_redacts_custom_header_values_by_container() {
         160,
         40,
     ));
-    assert!(!all.contains(secret), "{all}");
-    assert!(!all.contains("safe-but-hidden-too"), "{all}");
+    assert!(all.contains(secret), "{all}");
+    assert!(all.contains("safe-but-hidden-too"), "{all}");
     assert!(all.contains("X-Custom-Auth"), "{all}");
-    assert!(all.contains("[redacted]"), "{all}");
+    assert!(!all.contains("[redacted]"), "{all}");
 }
 
 #[test]
-fn mcp_passive_stdio_fields_and_preview_hide_argument_payloads() {
+fn mcp_stdio_fields_and_preview_show_command_and_argument_payloads() {
     let _lock = lock_env();
     let _lang = use_test_language(Language::English);
     let _no_color = EnvGuard::remove("NO_COLOR");
@@ -310,14 +325,15 @@ fn mcp_passive_stdio_fields_and_preview_hide_argument_payloads() {
         160,
         40,
     ));
-    assert!(all.contains("node"), "{all}");
-    assert!(all.contains(&texts::tui_mcp_args_hidden_count(3)), "{all}");
-    assert!(!all.contains("B6_ARGS_SECRET"), "{all}");
-    assert!(!all.contains("positional-secret"), "{all}");
+    assert!(all.contains("/usr/local/bin/node"), "{all}");
+    assert!(all.contains("B6_ARGS_SECRET"), "{all}");
+    assert!(all.contains("positional-secret"), "{all}");
+    assert!(line_with(&all, "\"args\"").contains('['), "{all}");
+    assert!(!all.contains("[redacted]"), "{all}");
 }
 
 #[test]
-fn mcp_passive_remote_fields_and_preview_show_only_url_origin() {
+fn mcp_remote_fields_and_preview_show_the_complete_url() {
     let _lock = lock_env();
     let _lang = use_test_language(Language::English);
     let _no_color = EnvGuard::remove("NO_COLOR");
@@ -340,28 +356,27 @@ fn mcp_passive_remote_fields_and_preview_show_only_url_origin() {
         160,
         40,
     ));
-    assert!(all.contains("https://mcp.example.test"), "{all}");
-    for hidden in ["user:pass", "secret-path", "URL_SECRET", "access_token"] {
-        assert!(!all.contains(hidden), "{all}");
+    for visible in ["user:pass", "secret-path", "URL_SECRET", "access_token"] {
+        assert!(all.contains(visible), "{all}");
     }
 }
 
 #[test]
-fn mcp_passive_fields_fail_closed_for_invalid_url_and_shell_command() {
+fn mcp_fields_show_invalid_urls_and_shell_commands_verbatim() {
     let mut form = crate::cli::tui::form::McpAddFormState::new();
     form.command.set("sh -c secret");
     let (_, command) =
         super::mcp_field_label_and_value(&form, crate::cli::tui::form::McpAddField::Command);
-    assert_eq!(command, "[redacted]");
+    assert_eq!(command, "sh -c secret");
 
     form.server_type = crate::cli::tui::form::McpTransport::Http;
     form.url.set("not-a-url-with-secret");
     let (_, url) = super::mcp_field_label_and_value(&form, crate::cli::tui::form::McpAddField::Url);
-    assert_eq!(url, "[redacted]");
+    assert_eq!(url, "not-a-url-with-secret");
 }
 
 #[test]
-fn mcp_passive_redaction_never_mutates_the_serialized_form_payload() {
+fn mcp_plaintext_preview_never_mutates_the_serialized_form_payload() {
     let mut form = crate::cli::tui::form::McpAddFormState::new();
     form.command.set("node");
     form.set_args_values(vec![
@@ -374,7 +389,7 @@ fn mcp_passive_redaction_never_mutates_the_serialized_form_payload() {
     });
 
     let raw = form.to_mcp_server_json_value();
-    let redacted = super::redact_sensitive_json(&raw);
+    let preview = super::bounded_json_preview(&raw);
 
     assert_eq!(raw["server"]["command"], json!("node"));
     assert_eq!(
@@ -385,15 +400,11 @@ fn mcp_passive_redaction_never_mutates_the_serialized_form_payload() {
         raw["server"]["env"]["CUSTOM_VALUE"],
         json!("environment-secret")
     );
-    assert_eq!(redacted["server"]["args"], json!("[redacted]"));
-    assert_eq!(
-        redacted["server"]["env"]["CUSTOM_VALUE"],
-        json!("[redacted]")
-    );
+    assert_eq!(preview, raw);
 }
 
 #[test]
-fn mcp_env_picker_never_renders_environment_values() {
+fn mcp_env_picker_renders_environment_values_in_plaintext() {
     let _lock = lock_env();
     let _lang = use_test_language(Language::English);
     let _no_color = EnvGuard::remove("NO_COLOR");
@@ -416,9 +427,9 @@ fn mcp_env_picker_never_renders_environment_values() {
         100,
         35,
     ));
-    assert!(!all.contains(secret), "{all}");
+    assert!(all.contains(secret), "{all}");
     assert!(all.contains("CUSTOM_VALUE"), "{all}");
-    assert!(all.contains("[redacted]"), "{all}");
+    assert!(!all.contains("[redacted]"), "{all}");
 }
 
 #[test]
@@ -451,11 +462,12 @@ fn mcp_env_picker_materializes_only_the_selected_large_collection_window() {
     ));
     assert!(all.contains("SELECTED-ENV"), "{all}");
     assert!(!all.contains("ENV-00000"), "{all}");
-    assert!(!all.contains("secret-9999"), "{all}");
+    assert!(!all.contains("[redacted]"), "{all}");
+    assert!(all.len() < 20_000, "picker frame was not bounded");
 }
 
 #[test]
-fn mcp_env_value_editor_masks_the_active_value() {
+fn mcp_env_value_editor_shows_the_active_value_in_plaintext() {
     let _lock = lock_env();
     let _lang = use_test_language(Language::English);
     let _no_color = EnvGuard::remove("NO_COLOR");
@@ -481,9 +493,9 @@ fn mcp_env_value_editor_masks_the_active_value() {
         100,
         35,
     ));
-    assert!(!all.contains(secret), "{all}");
+    assert!(all.contains(secret), "{all}");
     assert!(all.contains("CUSTOM_VALUE"), "{all}");
-    assert!(all.contains('•'), "{all}");
+    assert!(!all.contains("[redacted]"), "{all}");
 }
 
 #[test]
@@ -1771,7 +1783,7 @@ fn tui_sessions_session_and_message_filters_are_independent() {
 }
 
 #[test]
-fn openclaw_tui_form_masks_api_key_in_default_view() {
+fn openclaw_tui_form_shows_api_key_in_default_view() {
     let _lock = lock_env();
     let _no_color = EnvGuard::remove("NO_COLOR");
 
@@ -1795,12 +1807,12 @@ fn openclaw_tui_form_masks_api_key_in_default_view() {
 
     let all = all_text(&render(&app, &minimal_data(&app.app_type)));
 
-    assert!(all.contains("[redacted]"), "{all}");
-    assert!(!all.contains("sk-openclaw-secret"), "{all}");
+    assert!(all.contains("sk-openclaw-secret"), "{all}");
+    assert!(!all.contains("[redacted]"), "{all}");
 }
 
 #[test]
-fn redact_sensitive_json_keeps_non_secret_token_count_fields_visible() {
+fn plaintext_json_preview_preserves_values_regardless_of_field_names() {
     let value = json!({
         "env": {
             "AWS_SECRET_ACCESS_KEY": "aws-secret-value",
@@ -1849,47 +1861,21 @@ fn redact_sensitive_json_keeps_non_secret_token_count_fields_visible() {
         "API_SECRET_VALUE": "secret-middle-value"
     });
 
-    let redacted = super::redact_sensitive_json(&value);
+    let preview = super::bounded_json_preview(&value);
 
+    assert_eq!(preview, value);
     assert_eq!(
-        redacted["env"]["AWS_SECRET_ACCESS_KEY"],
-        json!("[redacted]")
+        preview["env"]["AWS_SECRET_ACCESS_KEY"],
+        json!("aws-secret-value")
     );
-    assert_eq!(redacted["env"]["AWS_ACCESS_KEY_ID"], json!("[redacted]"));
-    assert_eq!(redacted["env"]["GITHUB_PAT"], json!("[redacted]"));
-    assert_eq!(redacted["env"]["DATABASE_URL"], json!("[redacted]"));
-    assert_eq!(redacted["models"][0]["maxTokens"], json!(8192));
-    assert_eq!(redacted["models"][0]["max_output_tokens"], json!(4096));
-    assert_eq!(redacted["tokenLimit"], json!(12345));
-    assert_eq!(redacted["auths"], json!("[redacted]"));
-    assert_eq!(redacted["oauths"], json!("[redacted]"));
-    assert_eq!(redacted["pats"], json!("[redacted]"));
-    assert_eq!(redacted["unknown"], json!("[redacted]"));
-    assert_eq!(redacted["models"][0]["apiKey"], json!("[redacted]"));
-    assert_eq!(redacted["password"], json!("[redacted]"));
-    assert_eq!(redacted["cookies"], json!("[redacted]"));
-    assert_eq!(redacted["credentials"], json!("[redacted]"));
-    assert_eq!(redacted["passwords"], json!("[redacted]"));
-    assert_eq!(redacted["api_keys"], json!("[redacted]"));
-    assert_eq!(redacted["auth_tokens"], json!("[redacted]"));
-    assert_eq!(redacted["headers"]["X-Custom-Auth"], json!("[redacted]"));
-    assert_eq!(redacted["headers"]["User-Agent"], json!("[redacted]"));
     assert_eq!(
-        redacted["env_http_headers"]["Authorization"],
-        json!("[redacted]")
+        preview["headers"]["X-Custom-Auth"],
+        json!("custom-header-secret")
     );
-    assert_eq!(redacted["env_http_headers"]["nested"], json!("[redacted]"));
-    assert_eq!(
-        redacted["evil_env_http_headers"]["Authorization"],
-        json!("[redacted]")
-    );
-    assert_eq!(redacted["PRIVATE_KEY"], json!("[redacted]"));
-    assert_eq!(redacted["SECRET_FOO"], json!("[redacted]"));
-    assert_eq!(redacted["API_SECRET_VALUE"], json!("[redacted]"));
 }
 
 #[test]
-fn redact_sensitive_json_only_exposes_token_metrics_with_unsigned_integer_types() {
+fn plaintext_json_preview_preserves_nonstandard_token_metric_types() {
     let value = json!({
         "models": [{
             "maxTokens": "8192-secret",
@@ -1902,21 +1888,13 @@ fn redact_sensitive_json_only_exposes_token_metrics_with_unsigned_integer_types(
         "tokenLimit": "12345-secret"
     });
 
-    let redacted = super::redact_sensitive_json(&value);
+    let preview = super::bounded_json_preview(&value);
 
-    for key in ["maxTokens", "minTokens", "inputTokens", "outputTokens"] {
-        assert_eq!(redacted["models"][0][key], json!("[redacted]"));
-    }
-    assert_eq!(redacted["models"][0]["promptTokens"], json!("[redacted]"));
-    assert_eq!(
-        redacted["models"][0]["completionTokens"],
-        json!("[redacted]")
-    );
-    assert_eq!(redacted["tokenLimit"], json!("[redacted]"));
+    assert_eq!(preview, value);
 }
 
 #[test]
-fn redacted_preview_collapses_opaque_payloads_and_bounds_known_collections() {
+fn plaintext_json_preview_bounds_all_large_collections() {
     let models = (0..10_000)
         .map(|index| {
             json!({
@@ -1930,24 +1908,63 @@ fn redacted_preview_collapses_opaque_payloads_and_bounds_known_collections() {
         "models": models,
     });
 
-    let redacted = super::redact_sensitive_json(&value);
-    let rendered_models = redacted["models"]
+    let preview = super::bounded_json_preview(&value);
+    let rendered_args = preview["args"]
+        .as_array()
+        .expect("args should retain a bounded preview array");
+    let rendered_models = preview["models"]
         .as_array()
         .expect("models should retain a bounded preview array");
 
-    assert_eq!(redacted["args"], json!("[redacted]"));
+    assert!(rendered_args.len() <= 129);
     assert!(rendered_models.len() <= 129);
-    assert!(rendered_models
-        .last()
-        .and_then(|value| value.as_str())
-        .is_some_and(|value| value.contains("preview truncated")));
-    let text = serde_json::to_string(&redacted).expect("redacted preview should serialize");
+    for collection in [rendered_args, rendered_models] {
+        assert!(collection
+            .last()
+            .and_then(|value| value.as_str())
+            .is_some_and(|value| value.contains("preview truncated")));
+    }
+    let text = serde_json::to_string(&preview).expect("bounded preview should serialize");
+    assert!(text.contains("arg-secret-0"), "{text}");
+    assert!(text.contains("secret-0"), "{text}");
     assert!(!text.contains("arg-secret-9999"));
     assert!(!text.contains("secret-9999"));
+    assert!(!text.contains("[redacted]"), "{text}");
 }
 
 #[test]
-fn codex_auth_preview_masks_every_leaf_regardless_of_field_name_or_type() {
+fn plaintext_json_preview_charges_depth_cutoff_nodes_to_the_global_budget() {
+    fn node_count(value: &Value) -> usize {
+        1 + match value {
+            Value::Array(items) => items.iter().map(node_count).sum::<usize>(),
+            Value::Object(map) => map.values().map(node_count).sum::<usize>(),
+            _ => 0,
+        }
+    }
+
+    let leaf = Value::Object(
+        (0..128)
+            .map(|index| (format!("key-{index}"), json!(format!("value-{index}"))))
+            .collect(),
+    );
+    let mut value = Value::Array((0..128).map(|_| leaf.clone()).collect());
+    for _ in 0..14 {
+        value = Value::Array(vec![value]);
+    }
+
+    let preview = super::bounded_json_preview(&value);
+
+    assert!(
+        node_count(&preview) <= 2_100,
+        "depth placeholders escaped the global node budget"
+    );
+    assert!(serde_json::to_string(&preview)
+        .expect("preview should serialize")
+        .contains("preview truncated"));
+}
+
+#[test]
+fn codex_auth_preview_preserves_every_leaf_in_plaintext() {
     let auth = json!({
         "id": "public-looking-secret",
         "name": "another-secret",
@@ -1955,16 +1972,13 @@ fn codex_auth_preview_masks_every_leaf_regardless_of_field_name_or_type() {
         "nested": { "enabled": true }
     });
 
-    let redacted = super::redact_codex_auth_json(&auth);
+    let preview = super::bounded_json_preview(&auth);
 
-    assert_eq!(redacted["id"], json!("[redacted]"));
-    assert_eq!(redacted["name"], json!("[redacted]"));
-    assert_eq!(redacted["maxTokens"], json!("[redacted]"));
-    assert_eq!(redacted["nested"], json!("[redacted]"));
+    assert_eq!(preview, auth);
 }
 
 #[test]
-fn provider_json_preview_never_renders_arbitrary_env_values() {
+fn provider_json_preview_renders_all_values_in_plaintext() {
     let _lock = lock_env();
     let _lang = use_test_language(Language::English);
     let _no_color = EnvGuard::remove("NO_COLOR");
@@ -1997,15 +2011,15 @@ fn provider_json_preview_never_renders_arbitrary_env_values() {
         160,
         40,
     ));
-    assert!(!all.contains(secret), "{all}");
-    assert!(!all.contains("another-secret"), "{all}");
-    assert!(!all.contains("provider-cookie-secret"), "{all}");
-    assert!(!all.contains("provider-credential-secret"), "{all}");
-    assert!(all.contains("[redacted]"), "{all}");
+    assert!(all.contains(secret), "{all}");
+    assert!(all.contains("another-secret"), "{all}");
+    assert!(all.contains("provider-cookie-secret"), "{all}");
+    assert!(all.contains("provider-credential-secret"), "{all}");
+    assert!(!all.contains("[redacted]"), "{all}");
 }
 
 #[test]
-fn provider_json_preview_omits_million_byte_scalar_before_save_projection() {
+fn provider_json_preview_omits_million_byte_scalar_while_field_stays_bounded_plaintext() {
     let _lock = lock_env();
     let _lang = use_test_language(Language::English);
     let _no_color = EnvGuard::remove("NO_COLOR");
@@ -2028,7 +2042,9 @@ fn provider_json_preview_omits_million_byte_scalar_before_save_projection() {
         all.contains(texts::tui_preview_omitted_too_large()),
         "{all}"
     );
-    assert!(!all.contains("SSSSSSSS"), "{all}");
+    assert!(all.contains("SSSSSSSS"), "{all}");
+    assert!(!all.contains("[redacted]"), "{all}");
+    assert!(all.len() < 20_000, "provider frame was not bounded");
 }
 
 #[test]
@@ -2151,7 +2167,7 @@ fn provider_json_preview_omits_oversized_nested_source_and_common_snippet() {
 }
 
 #[test]
-fn codex_toml_preview_redacts_literal_secrets_but_keeps_safe_references() {
+fn codex_toml_preview_keeps_all_literal_values_in_plaintext() {
     let source = r#"experimental_bearer_token = "top-level-secret"
 max_tokens = 8192
 token_limit = 12345
@@ -2193,7 +2209,7 @@ primary = "api-key-container-secret"
 primary = "auth-token-container-secret"
 "#;
 
-    let redacted = super::redact_sensitive_toml(source);
+    let preview = super::bounded_toml_preview(source);
 
     for secret in [
         "top-level-secret",
@@ -2211,30 +2227,30 @@ primary = "auth-token-container-secret"
         "api-key-container-secret",
         "auth-token-container-secret",
     ] {
-        assert!(!redacted.contains(secret), "{redacted}");
+        assert!(preview.contains(secret), "{preview}");
     }
-    assert!(redacted.contains("[redacted]"), "{redacted}");
-    assert!(redacted.contains("max_tokens = 8192"), "{redacted}");
-    assert!(redacted.contains("token_limit = 12345"), "{redacted}");
-    assert!(!redacted.contains("cc-switch-test"), "{redacted}");
-    assert!(redacted.contains("env_http_headers"), "{redacted}");
+    assert!(!preview.contains("[redacted]"), "{preview}");
+    assert!(preview.contains("max_tokens = 8192"), "{preview}");
+    assert!(preview.contains("token_limit = 12345"), "{preview}");
+    assert!(preview.contains("cc-switch-test"), "{preview}");
+    assert!(preview.contains("env_http_headers"), "{preview}");
 }
 
 #[test]
-fn codex_toml_preview_fails_closed_when_toml_is_invalid() {
+fn codex_toml_preview_keeps_invalid_source_visible_for_correction() {
     let source = "experimental_bearer_token = \"unterminated-secret";
-    let redacted = super::redact_sensitive_toml(source);
+    let preview = super::bounded_toml_preview(source);
 
-    assert_eq!(redacted, "[redacted]");
-    assert!(!redacted.contains("unterminated-secret"));
+    assert_eq!(preview, source);
+    assert!(!preview.contains("[redacted]"));
 }
 
 #[test]
 fn codex_toml_preview_omits_oversized_input_before_parsing() {
     let source = " ".repeat(super::TOML_PREVIEW_MAX_INPUT_BYTES + 1);
-    let redacted = super::redact_sensitive_toml(&source);
+    let preview = super::bounded_toml_preview(&source);
 
-    assert_eq!(redacted, texts::tui_preview_omitted_too_large());
+    assert_eq!(preview, texts::tui_preview_omitted_too_large());
 }
 
 #[test]
@@ -2243,18 +2259,21 @@ fn codex_toml_preview_bounds_known_collections_and_depth() {
         .map(|index| format!("{{ name = \"model-{index}\", apiKey = \"secret-{index}\" }}"))
         .collect::<Vec<_>>()
         .join(", ");
-    let redacted = super::redact_sensitive_toml(&format!("models = [{models}]"));
+    let preview = super::bounded_toml_preview(&format!("models = [{models}]"));
 
-    assert!(redacted.contains("preview truncated"), "{redacted}");
-    assert!(!redacted.contains("secret-499"), "{redacted}");
-    assert!(redacted.len() <= super::TOML_PREVIEW_MAX_INPUT_BYTES);
+    assert!(preview.contains("preview truncated"), "{preview}");
+    assert!(preview.contains("secret-0"), "{preview}");
+    assert!(!preview.contains("secret-499"), "{preview}");
+    assert!(!preview.contains("[redacted]"), "{preview}");
+    assert!(preview.len() <= super::TOML_PREVIEW_MAX_INPUT_BYTES);
 
     let deep_key = std::iter::repeat_n("models", 20)
         .collect::<Vec<_>>()
         .join(".");
-    let deep = super::redact_sensitive_toml(&format!("{deep_key} = {{ name = \"deep-secret\" }}"));
+    let deep = super::bounded_toml_preview(&format!("{deep_key} = {{ name = \"deep-secret\" }}"));
     assert!(deep.contains("preview truncated"), "{deep}");
     assert!(!deep.contains("deep-secret"), "{deep}");
+    assert!(!deep.contains("[redacted]"), "{deep}");
 }
 
 #[test]
@@ -2278,8 +2297,10 @@ fn compact_codex_preview_builds_only_the_selected_bounded_section() {
     let auth = super::codex_auth_preview_text(&form);
     assert!(auth.contains("CUSTOM_AUTH"), "{auth}");
     assert!(auth.contains("OPENAI_API_KEY"), "{auth}");
-    assert!(!auth.contains(hidden_auth_secret), "{auth}");
+    assert!(auth.contains(hidden_auth_secret), "{auth}");
+    assert!(auth.contains("current-api-key-secret"), "{auth}");
     assert!(!auth.contains(hidden_config_secret), "{auth}");
+    assert!(!auth.contains("[redacted]"), "{auth}");
     assert!(
         !auth.contains(texts::tui_preview_omitted_too_large()),
         "{auth}"
@@ -2291,7 +2312,7 @@ fn compact_codex_preview_builds_only_the_selected_bounded_section() {
 }
 
 #[test]
-fn codex_toml_preview_only_exposes_token_metrics_with_nonnegative_integer_types() {
+fn codex_toml_preview_preserves_values_regardless_of_metric_types_or_containers() {
     let source = r#"max_tokens = "8192-secret"
 min_tokens = -1
 input_tokens = 1.5
@@ -2313,10 +2334,10 @@ max_tokens = 7777
 token_limit = 8888
 "#;
 
-    let redacted = super::redact_sensitive_toml(source);
+    let preview = super::bounded_toml_preview(source);
 
-    assert!(redacted.contains("max_output_tokens = 4096"), "{redacted}");
-    for hidden in [
+    assert!(preview.contains("max_output_tokens = 4096"), "{preview}");
+    for visible in [
         "8192-secret",
         "12345-secret",
         "auths-container-secret",
@@ -2324,43 +2345,39 @@ token_limit = 8888
         "max_tokens = 7777",
         "token_limit = 8888",
     ] {
-        assert!(!redacted.contains(hidden), "{redacted}");
+        assert!(preview.contains(visible), "{preview}");
     }
-    assert!(redacted.matches("[redacted]").count() >= 10, "{redacted}");
+    assert!(!preview.contains("[redacted]"), "{preview}");
 }
 
 #[test]
-fn passive_display_helpers_strip_url_secrets_and_reject_shell_commands() {
+fn bounded_display_helper_keeps_urls_and_commands_in_plaintext() {
+    let url = "https://user:pass@[2001:db8::1]:8443/path/token?secret=value#fragment";
+    assert_eq!(super::bounded_trimmed_text_for_display(url), url);
     assert_eq!(
-        super::safe_url_origin_for_display(
-            "https://user:pass@[2001:db8::1]:8443/path/token?secret=value#fragment"
-        ),
-        "https://[2001:db8::1]:8443"
+        super::bounded_trimmed_text_for_display("file:///tmp/secret"),
+        "file:///tmp/secret"
     );
     assert_eq!(
-        super::safe_url_origin_for_display("file:///tmp/secret"),
-        "[redacted]"
+        super::bounded_trimmed_text_for_display("/usr/local/bin/node"),
+        "/usr/local/bin/node"
     );
     assert_eq!(
-        super::safe_executable_basename_for_display("/usr/local/bin/node"),
-        "node"
+        super::bounded_trimmed_text_for_display(r"C:\tools\node.exe"),
+        r"C:\tools\node.exe"
     );
     assert_eq!(
-        super::safe_executable_basename_for_display(r"C:\tools\node.exe"),
-        "node.exe"
+        super::bounded_trimmed_text_for_display("API_KEY=secret node"),
+        "API_KEY=secret node"
     );
     assert_eq!(
-        super::safe_executable_basename_for_display("API_KEY=secret node"),
-        "[redacted]"
-    );
-    assert_eq!(
-        super::safe_executable_basename_for_display("sh -c secret"),
-        "[redacted]"
+        super::bounded_trimmed_text_for_display("sh -c secret"),
+        "sh -c secret"
     );
 }
 
 #[test]
-fn codex_provider_form_never_renders_toml_bearer_tokens() {
+fn codex_provider_form_renders_toml_values_in_plaintext() {
     let _lock = lock_env();
     let _lang = use_test_language(Language::English);
     let _no_color = EnvGuard::remove("NO_COLOR");
@@ -2389,9 +2406,9 @@ fn codex_provider_form_never_renders_toml_bearer_tokens() {
         160,
         40,
     ));
-    assert!(!all.contains(secret), "{all}");
-    assert!(!all.contains(plural_container_secret), "{all}");
-    assert!(all.contains("[redacted]"), "{all}");
+    assert!(all.contains(secret), "{all}");
+    assert!(all.contains(plural_container_secret), "{all}");
+    assert!(!all.contains("[redacted]"), "{all}");
     assert!(all.contains("gpt-5.4"), "{all}");
 }
 
@@ -2422,7 +2439,7 @@ fn usage_query_script_validation_error_is_persistent_beside_preview() {
 }
 
 #[test]
-fn usage_query_custom_script_preview_fails_closed_for_unknown_literals() {
+fn usage_query_custom_script_preview_shows_literals_in_plaintext() {
     let _lock = lock_env();
     let _lang = use_test_language(Language::English);
     let _no_color = EnvGuard::remove("NO_COLOR");
@@ -2449,12 +2466,12 @@ fn usage_query_custom_script_preview_fails_closed_for_unknown_literals() {
         160,
         40,
     ));
-    assert!(!all.contains(secret), "{all}");
-    assert!(all.contains("[redacted]"), "{all}");
+    assert!(all.contains(secret), "{all}");
+    assert!(!all.contains("[redacted]"), "{all}");
 }
 
 #[test]
-fn usage_query_passive_preview_does_not_trim_a_million_byte_script() {
+fn usage_query_preview_omits_a_million_byte_script_without_unbounded_rendering() {
     let _lock = lock_env();
     let _lang = use_test_language(Language::English);
     let _no_color = EnvGuard::remove("NO_COLOR");
@@ -2476,7 +2493,11 @@ fn usage_query_passive_preview_does_not_trim_a_million_byte_script() {
         160,
         40,
     ));
-    assert!(all.contains("[redacted]"), "{all}");
+    assert!(
+        all.contains(texts::tui_preview_omitted_too_large()),
+        "{all}"
+    );
+    assert!(!all.contains("[redacted]"), "{all}");
     assert!(all.len() < 20_000, "script preview frame was not bounded");
 }
 
@@ -2673,8 +2694,9 @@ fn provider_form_fields_show_dashed_divider_before_hermes_rate_limit_delay() {
 }
 
 #[test]
-fn provider_form_usage_query_entry_shows_status_and_open_affordance() {
+fn provider_form_disabled_entries_show_only_disabled_while_enabled_entries_keep_summaries() {
     let _lock = lock_env();
+    let _lang = use_test_language(Language::English);
     let _no_color = EnvGuard::remove("NO_COLOR");
 
     let mut app = App::new(Some(AppType::Claude));
@@ -2685,12 +2707,41 @@ fn provider_form_usage_query_entry_shows_status_and_open_affordance() {
     form.focus = FormFocus::Fields;
     form.name.set("Demo Provider");
 
-    let (_label, value) = super::provider_field_label_and_value(
+    let (_label, disabled_usage) = super::provider_field_label_and_value(
         &form,
         crate::cli::tui::form::ProviderAddField::UsageQuery,
     );
-    assert!(value.contains("Disabled"), "{value}");
-    assert!(value.ends_with('›'), "{value}");
+    assert_eq!(disabled_usage, texts::disabled());
+
+    form.usage_query_enabled = true;
+    let (_label, enabled_usage) = super::provider_field_label_and_value(
+        &form,
+        crate::cli::tui::form::ProviderAddField::UsageQuery,
+    );
+    assert!(enabled_usage.contains(texts::enabled()), "{enabled_usage}");
+    assert!(
+        enabled_usage.contains(form.usage_query_template_value()),
+        "{enabled_usage}"
+    );
+
+    let mut codex_form = crate::cli::tui::form::ProviderAddFormState::new(AppType::Codex);
+    codex_form.id.set("relay");
+    let (_label, disabled_routing) = super::provider_field_label_and_value(
+        &codex_form,
+        crate::cli::tui::form::ProviderAddField::CodexLocalRouting,
+    );
+    assert_eq!(disabled_routing, texts::disabled());
+
+    codex_form.toggle_codex_local_routing_enabled();
+    let (_label, enabled_routing) = super::provider_field_label_and_value(
+        &codex_form,
+        crate::cli::tui::form::ProviderAddField::CodexLocalRouting,
+    );
+    assert!(
+        enabled_routing.contains(texts::enabled()),
+        "{enabled_routing}"
+    );
+    assert!(enabled_routing.contains('·'), "{enabled_routing}");
 
     app.form = Some(FormState::ProviderAdd(form));
     let all = all_text(&render(&app, &minimal_data(&app.app_type)));
@@ -3984,6 +4035,7 @@ fn openclaw_agents_picker_overlay_marks_current_option_when_editing_existing_fal
     app.overlay = Overlay::OpenClawAgentsFallbackPicker {
         insert_at: 1,
         selected: 1,
+        active: Some(0),
         options: vec![
             app::OpenClawModelOption {
                 value: "demo/fallback-b".to_string(),
@@ -4014,6 +4066,70 @@ fn openclaw_agents_picker_overlay_marks_current_option_when_editing_existing_fal
     assert!(
         all.contains(&buffer_cell_text("Demo Provider / 回退 C")),
         "{all}"
+    );
+}
+
+#[test]
+fn openclaw_agents_picker_bounds_large_options_and_keeps_edge_selections_visible() {
+    let _lock = lock_env();
+    let _lang = use_test_language(Language::English);
+    let _no_color = EnvGuard::remove("NO_COLOR");
+
+    let middle = 5_000usize;
+    let last = 9_999usize;
+    let mut options = (0..10_000)
+        .map(|index| app::OpenClawModelOption {
+            value: format!("demo/model-{index:05}"),
+            label: format!("MODEL-{index:05}"),
+        })
+        .collect::<Vec<_>>();
+    options[0].label = "FIRST-OPTION".to_string();
+    options[middle].label = format!("SELECTED-MIDDLE-{}", "X".repeat(2 * 1024 * 1024));
+    options[last].label = "LAST-OPTION".to_string();
+
+    let mut app = App::new(Some(AppType::OpenClaw));
+    app.route = Route::ConfigOpenClawAgents;
+    app.focus = Focus::Content;
+    app.overlay = Overlay::OpenClawAgentsFallbackPicker {
+        insert_at: 0,
+        selected: 0,
+        active: None,
+        options,
+    };
+
+    for (selected, visible, hidden) in [
+        (0, "FIRST-OPTION", "SELECTED-MIDDLE"),
+        (middle, "SELECTED-MIDDLE", "FIRST-OPTION"),
+        (last, "LAST-OPTION", "SELECTED-MIDDLE"),
+    ] {
+        let Overlay::OpenClawAgentsFallbackPicker {
+            selected: picker_selected,
+            ..
+        } = &mut app.overlay
+        else {
+            panic!("expected OpenClaw model picker");
+        };
+        *picker_selected = selected;
+
+        let all = all_text(&render_with_size(
+            &app,
+            &minimal_data(&app.app_type),
+            100,
+            35,
+        ));
+        assert!(all.contains(visible), "selected={selected}: {all}");
+        assert!(!all.contains(hidden), "selected={selected}: {all}");
+        assert!(all.len() < 20_000, "picker frame was not bounded");
+    }
+
+    let Overlay::OpenClawAgentsFallbackPicker { options, .. } = &app.overlay else {
+        panic!("expected OpenClaw model picker");
+    };
+    assert_eq!(options.len(), 10_000);
+    assert_eq!(
+        options[middle].label.len(),
+        "SELECTED-MIDDLE-".len() + 2 * 1024 * 1024,
+        "display truncation must not mutate the saved option"
     );
 }
 
@@ -6208,7 +6324,6 @@ fn text_input_overlay_renders_inner_input_box() {
         prompt: "Enter value".to_string(),
         input: TextInput::new("hello".to_string()),
         submit: TextSubmit::ConfigBackupName,
-        secret: false,
     });
     let data = minimal_data(&app.app_type);
 
@@ -7101,20 +7216,15 @@ fn openclaw_config_route_render_uses_dedicated_env_page() {
     ));
     assert!(all.contains(texts::tui_openclaw_config_env_description()));
     assert!(
-        line_with(&all, "OPENCLAW_ENV_TOKEN").contains("[redacted]"),
+        line_with(&all, "OPENCLAW_ENV_TOKEN").contains("demo-token"),
         "{all}"
     );
     assert!(
-        !line_with(&all, "OPENCLAW_ENV_TOKEN").contains("demo-token"),
+        line_with(&all, "OPENCLAW_ENV_MODE").contains("development"),
         "{all}"
     );
-    assert!(
-        line_with(&all, "OPENCLAW_ENV_MODE").contains("[redacted]"),
-        "{all}"
-    );
-    assert!(!all.contains("development"), "{all}");
-    assert!(line_with(&all, "MODEL").contains("[redacted]"), "{all}");
-    assert!(!all.contains("P2_ENV_SECRET"), "{all}");
+    assert!(line_with(&all, "MODEL").contains("P2_ENV_SECRET"), "{all}");
+    assert!(!all.contains("[redacted]"), "{all}");
     assert!(
         !has_visible_action_button_or_block(&content, texts::tui_openclaw_tools_save_label()),
         "{all}"
@@ -7138,7 +7248,7 @@ fn openclaw_config_route_render_uses_dedicated_env_page() {
 }
 
 #[test]
-fn openclaw_env_route_render_aligns_all_protected_values_in_two_columns() {
+fn openclaw_env_route_render_aligns_all_plaintext_values_in_two_columns() {
     let _lock = lock_env();
     let _lang = use_test_language(Language::English);
     let _no_color = EnvGuard::remove("NO_COLOR");
@@ -7157,15 +7267,45 @@ fn openclaw_env_route_render_aligns_all_protected_values_in_two_columns() {
 
     let buf = render_with_size(&app, &data, 120, 24);
     let content = content_text(&app, &buf);
-    let redacted_line = line_with(&content, "OPENCLAW_ENV_TOKEN");
-    let second_redacted_line = line_with(&content, "MODE");
+    let token_line = line_with(&content, "OPENCLAW_ENV_TOKEN");
+    let mode_line = line_with(&content, "MODE");
 
     assert_eq!(
-        display_column_in_line(redacted_line, "[redacted]"),
-        display_column_in_line(second_redacted_line, "[redacted]"),
+        display_column_in_line(token_line, "demo-token"),
+        display_column_in_line(mode_line, "development"),
         "{content}"
     );
-    assert!(!content.contains("development"), "{content}");
+    assert!(!content.contains("[redacted]"), "{content}");
+}
+
+#[test]
+fn openclaw_env_route_bounds_large_entries_to_the_visible_terminal_window() {
+    let _lock = lock_env();
+    let _lang = use_test_language(Language::English);
+    let _no_color = EnvGuard::remove("NO_COLOR");
+
+    let mut app = App::new(Some(AppType::OpenClaw));
+    app.route = Route::ConfigOpenClawEnv;
+    app.focus = Focus::Content;
+
+    let vars = (0..500)
+        .map(|index| {
+            (
+                format!("KEY_{index:04}_{}", "K".repeat(256)),
+                json!(format!("plaintext-{index}-{}", "x".repeat(2_048))),
+            )
+        })
+        .collect();
+    let mut data = minimal_data(&app.app_type);
+    data.config.openclaw_env = Some(crate::openclaw_config::OpenClawEnvConfig { vars });
+
+    // The smallest render verifies that width/height arithmetic saturates.
+    let _ = render_with_size(&app, &data, 12, 8);
+    let content = content_text(&app, &render_with_size(&app, &data, 80, 12));
+
+    assert!(content.contains("more entries"), "{content}");
+    assert!(content.contains('…'), "{content}");
+    assert!(!content.contains("[redacted]"), "{content}");
 }
 
 #[test]
@@ -7311,7 +7451,7 @@ fn openclaw_env_description_uses_explicit_muted_style() {
 }
 
 #[test]
-fn openclaw_env_route_render_styles_redacted_values_as_protected_tokens() {
+fn openclaw_env_route_render_uses_default_style_for_plaintext_values() {
     let _lock = lock_env();
     let _lang = use_test_language(Language::English);
     let _no_color = EnvGuard::remove("NO_COLOR");
@@ -7330,39 +7470,39 @@ fn openclaw_env_route_render_styles_redacted_values_as_protected_tokens() {
 
     let buf = render_with_size(&app, &data, 120, 24);
     let content = content_text(&app, &buf);
-    let redacted_row_index = line_index(&content, "OPENCLAW_ENV_TOKEN");
-    let redacted_row = line_with(&content, "OPENCLAW_ENV_TOKEN");
-    let redacted_label_col = column_in_line(redacted_row, "OPENCLAW_ENV_TOKEN");
-    let redacted_col = column_in_line(redacted_row, "[redacted]");
-    let redacted_label_cell = content_cell_at(&app, &buf, redacted_label_col, redacted_row_index);
-    let redacted_cell = content_cell_at(&app, &buf, redacted_col, redacted_row_index);
+    let token_row_index = line_index(&content, "OPENCLAW_ENV_TOKEN");
+    let token_row = line_with(&content, "OPENCLAW_ENV_TOKEN");
+    let token_label_col = column_in_line(token_row, "OPENCLAW_ENV_TOKEN");
+    let token_col = column_in_line(token_row, "demo-token");
+    let token_label_cell = content_cell_at(&app, &buf, token_label_col, token_row_index);
+    let token_cell = content_cell_at(&app, &buf, token_col, token_row_index);
 
     let second_row_index = line_index(&content, "OPENCLAW_ENV_MODE");
     let second_row = line_with(&content, "OPENCLAW_ENV_MODE");
     let second_label_col = column_in_line(second_row, "OPENCLAW_ENV_MODE");
-    let second_redacted_col = column_in_line(second_row, "[redacted]");
+    let second_value_col = column_in_line(second_row, "development");
     let second_label_cell = content_cell_at(&app, &buf, second_label_col, second_row_index);
-    let second_redacted_cell = content_cell_at(&app, &buf, second_redacted_col, second_row_index);
+    let second_value_cell = content_cell_at(&app, &buf, second_value_col, second_row_index);
 
-    assert_ne!(
-        cell_style_signature(second_redacted_cell),
+    assert_eq!(
+        cell_style_signature(second_value_cell),
         cell_style_signature(second_label_cell),
         "{content}"
     );
-    assert_ne!(
-        cell_style_signature(redacted_cell),
-        cell_style_signature(redacted_label_cell),
+    assert_eq!(
+        cell_style_signature(token_cell),
+        cell_style_signature(token_label_cell),
         "{content}"
     );
     assert_eq!(
-        cell_style_signature(redacted_cell),
-        cell_style_signature(second_redacted_cell),
+        cell_style_signature(token_cell),
+        cell_style_signature(second_value_cell),
         "{content}"
     );
 }
 
 #[test]
-fn openclaw_env_no_color_keeps_protected_placeholder_visible() {
+fn openclaw_env_no_color_keeps_plaintext_values_visible() {
     let _lock = lock_env();
     let _lang = use_test_language(Language::English);
     let _no_color = EnvGuard::set("NO_COLOR", "1");
@@ -7380,13 +7520,12 @@ fn openclaw_env_no_color_keeps_protected_placeholder_visible() {
     });
 
     let content = content_text(&app, &render_with_size(&app, &data, 120, 24));
-    let redacted_line = line_with(&content, "OPENCLAW_ENV_TOKEN");
-    let second_redacted_line = line_with(&content, "OPENCLAW_ENV_MODE");
+    let token_line = line_with(&content, "OPENCLAW_ENV_TOKEN");
+    let mode_line = line_with(&content, "OPENCLAW_ENV_MODE");
 
-    assert!(redacted_line.contains("[redacted]"), "{content}");
-    assert!(!redacted_line.contains("demo-token"), "{content}");
-    assert!(second_redacted_line.contains("[redacted]"), "{content}");
-    assert!(!second_redacted_line.contains("development"), "{content}");
+    assert!(token_line.contains("demo-token"), "{content}");
+    assert!(mode_line.contains("development"), "{content}");
+    assert!(!content.contains("[redacted]"), "{content}");
 }
 
 #[test]
@@ -7449,14 +7588,15 @@ fn openclaw_tools_route_shows_edit_and_delete_shortcuts_for_structured_rows() {
 }
 
 #[test]
-fn openclaw_tui_config_routes_redact_sensitive_preserved_fields() {
+fn openclaw_tui_config_routes_show_preserved_fields_in_plaintext() {
     let _lock = lock_env();
     let _no_color = EnvGuard::remove("NO_COLOR");
 
-    for (route, expected_label, setup) in [
+    for (route, expected_label, expected_value, setup) in [
         (
             Route::ConfigOpenClawTools,
             texts::tui_openclaw_tools_extra_fields_label(),
+            "tools-secret",
             json!({
                 "demo": {
                     "apiKey": "tools-secret"
@@ -7466,6 +7606,7 @@ fn openclaw_tui_config_routes_redact_sensitive_preserved_fields() {
         (
             Route::ConfigOpenClawAgents,
             texts::tui_openclaw_agents_preserved_fields_label(),
+            "Bearer agents-secret",
             json!({
                 "default": {
                     "Authorization": "Bearer agents-secret"
@@ -7492,9 +7633,52 @@ fn openclaw_tui_config_routes_redact_sensitive_preserved_fields() {
 
         let all = all_text(&render(&app, &data));
         assert!(all.contains(expected_label), "{all}");
-        assert!(all.contains("[redacted]"), "{all}");
-        assert!(!all.contains("tools-secret"), "{all}");
-        assert!(!all.contains("agents-secret"), "{all}");
+        assert!(all.contains(expected_value), "{all}");
+        assert!(!all.contains("[redacted]"), "{all}");
+    }
+}
+
+#[test]
+fn openclaw_tools_and_agents_extreme_preserved_rows_render_in_narrow_terminals() {
+    let _lock = lock_env();
+    let _lang = use_test_language(Language::English);
+    let _no_color = EnvGuard::remove("NO_COLOR");
+    let huge_multiline = "preserved-plaintext-value\n".repeat(10_000);
+
+    let mut tools_app = App::new(Some(AppType::OpenClaw));
+    tools_app.route = Route::ConfigOpenClawTools;
+    tools_app.focus = Focus::Content;
+    let mut tools_data = minimal_data(&tools_app.app_type);
+    tools_data.config.openclaw_tools = Some(crate::openclaw_config::OpenClawToolsConfig {
+        profile: Some("coding".to_string()),
+        allow: vec![huge_multiline.clone()],
+        deny: vec![huge_multiline.clone()],
+        extra: std::collections::HashMap::from([(
+            "preserved".to_string(),
+            json!({ "payload": huge_multiline.clone() }),
+        )]),
+    });
+
+    let mut agents_app = App::new(Some(AppType::OpenClaw));
+    agents_app.route = Route::ConfigOpenClawAgents;
+    agents_app.focus = Focus::Content;
+    let mut agents_data = minimal_data(&agents_app.app_type);
+    agents_data.config.openclaw_agents_defaults =
+        Some(crate::openclaw_config::OpenClawAgentsDefaults {
+            model: None,
+            models: None,
+            extra: std::collections::HashMap::from([(
+                "preserved".to_string(),
+                json!({ "payload": huge_multiline }),
+            )]),
+        });
+
+    for (app, data) in [(&tools_app, &tools_data), (&agents_app, &agents_data)] {
+        for (width, height) in [(32, 7), (40, 10), (64, 12)] {
+            let rendered = render_with_size(app, data, width, height);
+            assert_eq!(rendered.area.width, width);
+            assert_eq!(rendered.area.height, height);
+        }
     }
 }
 
@@ -7607,6 +7791,101 @@ fn openclaw_config_warning_banner_wraps_multiple_long_warnings_without_clipping(
         );
         assert!(all.contains("tail-one"), "{all}");
         assert!(all.contains("tail-two"), "{all}");
+    }
+}
+
+#[test]
+fn openclaw_config_extreme_multiline_warnings_keep_narrow_routes_renderable() {
+    let _lock = lock_env();
+    let _lang = use_test_language(Language::English);
+    let _no_color = EnvGuard::remove("NO_COLOR");
+    let config_path = "/tmp/openclaw/openclaw.json";
+    let huge_multiline = "parse warning segment\n\n".repeat(10_000);
+    let warnings = (0..40)
+        .map(|index| crate::openclaw_config::OpenClawHealthWarning {
+            code: "config_parse_failed".to_string(),
+            message: format!("warning-{index}\n{huge_multiline}"),
+            path: Some(config_path.to_string()),
+        })
+        .collect::<Vec<_>>();
+
+    for (route, description) in [
+        (
+            Route::ConfigOpenClawEnv,
+            texts::tui_openclaw_config_env_description(),
+        ),
+        (
+            Route::ConfigOpenClawTools,
+            texts::tui_openclaw_tools_description(),
+        ),
+        (
+            Route::ConfigOpenClawAgents,
+            texts::tui_openclaw_agents_description(),
+        ),
+    ] {
+        let mut app = App::new(Some(AppType::OpenClaw));
+        app.route = route;
+        app.focus = Focus::Content;
+
+        let mut data = minimal_data(&app.app_type);
+        data.config.openclaw_config_path = Some(std::path::PathBuf::from(config_path));
+        data.config.openclaw_warnings = Some(warnings.clone());
+        data.config.openclaw_env = Some(crate::openclaw_config::OpenClawEnvConfig::default());
+        data.config.openclaw_tools = Some(crate::openclaw_config::OpenClawToolsConfig::default());
+        data.config.openclaw_agents_defaults =
+            Some(crate::openclaw_config::OpenClawAgentsDefaults::default());
+
+        for (width, height) in [(32, 7), (40, 10), (64, 12)] {
+            let rendered = render_with_size(&app, &data, width, height);
+            assert_eq!(rendered.area.width, width);
+            assert_eq!(rendered.area.height, height);
+        }
+
+        let content = content_text(&app, &render_with_size(&app, &data, 80, 18));
+        assert!(
+            content.contains(texts::tui_openclaw_config_warning_title()),
+            "{content}"
+        );
+        let description_prefix = description.chars().take(24).collect::<String>();
+        assert!(content.contains(&description_prefix), "{content}");
+    }
+}
+
+#[test]
+fn openclaw_config_extreme_path_does_not_block_warning_matching_or_rendering() {
+    let _lock = lock_env();
+    let _lang = use_test_language(Language::English);
+    let _no_color = EnvGuard::remove("NO_COLOR");
+
+    let huge_path = std::path::PathBuf::from("p".repeat(2 * 1024 * 1024));
+    for (route, description) in [
+        (
+            Route::ConfigOpenClawEnv,
+            texts::tui_openclaw_config_env_description(),
+        ),
+        (
+            Route::ConfigOpenClawTools,
+            texts::tui_openclaw_tools_description(),
+        ),
+        (
+            Route::ConfigOpenClawAgents,
+            texts::tui_openclaw_agents_description(),
+        ),
+    ] {
+        let mut app = App::new(Some(AppType::OpenClaw));
+        app.route = route;
+        app.focus = Focus::Content;
+
+        let mut data = minimal_data(&app.app_type);
+        data.config.openclaw_config_path = Some(huge_path.clone());
+        data.config.openclaw_env = Some(crate::openclaw_config::OpenClawEnvConfig::default());
+        data.config.openclaw_tools = Some(crate::openclaw_config::OpenClawToolsConfig::default());
+        data.config.openclaw_agents_defaults =
+            Some(crate::openclaw_config::OpenClawAgentsDefaults::default());
+
+        let content = content_text(&app, &render_with_size(&app, &data, 80, 18));
+        let description_prefix = description.chars().take(24).collect::<String>();
+        assert!(content.contains(&description_prefix), "{content}");
     }
 }
 
@@ -8156,7 +8435,7 @@ fn openclaw_tools_route_keeps_selected_rule_visible_in_short_viewport() {
 }
 
 #[test]
-fn openclaw_tools_route_wraps_long_rule_values_in_narrow_width() {
+fn openclaw_tools_route_ellipsizes_long_rule_values_in_narrow_width() {
     let _lock = lock_env();
     let _lang = use_test_language(Language::English);
     let _no_color = EnvGuard::remove("NO_COLOR");
@@ -8186,30 +8465,35 @@ fn openclaw_tools_route_wraps_long_rule_values_in_narrow_width() {
 
     let rendered = render_with_size(&app, &data, 72, 18);
     let content = content_text(&app, &rendered);
-    assert!(
-        content.contains(&buffer_cell_text(tail_fragment)),
-        "{content}"
-    );
+    assert!(content.contains("allow.rules.segment"), "{content}");
+    assert!(content.contains('…'), "{content}");
+    assert!(!content.contains(tail_fragment), "{content}");
 
     let _no_color = EnvGuard::set("NO_COLOR", "1");
     let no_color_rendered = render_with_size(&app, &data, 72, 18);
     let no_color_content = content_text(&app, &no_color_rendered);
     assert!(
-        no_color_content.contains(&buffer_cell_text(tail_fragment)),
+        no_color_content.contains("allow.rules.segment"),
+        "{no_color_content}"
+    );
+    assert!(no_color_content.contains('…'), "{no_color_content}");
+    assert!(
+        !no_color_content.contains(tail_fragment),
         "{no_color_content}"
     );
 
-    let tail_row = line_with(&no_color_content, &buffer_cell_text(tail_fragment));
-    let tail_row_index = line_index(&no_color_content, &buffer_cell_text(tail_fragment));
-    let tail_row_col = display_column_in_line(tail_row, &buffer_cell_text(tail_fragment));
-    let tail_cell = content_cell_at(&app, &no_color_rendered, tail_row_col, tail_row_index);
+    let rule_prefix = buffer_cell_text("allow.rules.segment");
+    let rule_row = line_with(&no_color_content, &rule_prefix);
+    let rule_row_index = line_index(&no_color_content, &rule_prefix);
+    let rule_row_col = display_column_in_line(rule_row, &rule_prefix);
+    let rule_cell = content_cell_at(&app, &no_color_rendered, rule_row_col, rule_row_index);
     let add_row = line_with(&no_color_content, &buffer_cell_text("+ Add allow rule"));
     let add_row_index = line_index(&no_color_content, &buffer_cell_text("+ Add allow rule"));
     let add_row_col = display_column_in_line(add_row, &buffer_cell_text("+ Add allow rule"));
     let add_cell = content_cell_at(&app, &no_color_rendered, add_row_col, add_row_index);
 
     assert!(
-        tail_cell.modifier.contains(Modifier::REVERSED),
+        rule_cell.modifier.contains(Modifier::REVERSED),
         "{no_color_content}"
     );
     assert!(
@@ -9027,6 +9311,39 @@ fn workspace_route_render_wraps_long_summary_and_daily_memory_values_in_narrow_w
     assert!(content.contains(long_workspace_tail), "{content}");
     assert!(content.contains(long_memory_tail), "{content}");
     assert!(content.contains(long_preview_tail), "{content}");
+}
+
+#[test]
+fn workspace_route_extreme_wrapped_heights_render_in_narrow_terminals() {
+    let _lock = lock_env();
+    let _lang = use_test_language(Language::English);
+    let _no_color = EnvGuard::remove("NO_COLOR");
+
+    let mut app = App::new(Some(AppType::OpenClaw));
+    app.route = Route::ConfigOpenClawWorkspace;
+    app.focus = Focus::Content;
+    app.workspace_idx = 0;
+
+    let huge_component = "workspace-height-segment/".repeat(10_000);
+    let huge_preview = "daily-memory-height-segment\n".repeat(10_000);
+    let mut data = minimal_data(&app.app_type);
+    data.config.openclaw_workspace = OpenClawWorkspaceSnapshot {
+        directory_path: std::path::PathBuf::from(format!("/{huge_component}")),
+        file_exists: std::collections::HashMap::from([(ALLOWED_FILES[0].to_string(), true)]),
+        daily_memory_files: vec![DailyMemoryFileInfo {
+            filename: "2026-03-20.md".to_string(),
+            date: "2026-03-20".to_string(),
+            size_bytes: 12,
+            modified_at: 1,
+            preview: huge_preview,
+        }],
+    };
+
+    for (width, height) in [(32, 7), (40, 10), (64, 12), (72, 17)] {
+        let rendered = render_with_size(&app, &data, width, height);
+        assert_eq!(rendered.area.width, width);
+        assert_eq!(rendered.area.height, height);
+    }
 }
 
 #[test]
@@ -10193,7 +10510,7 @@ fn openclaw_agents_route_render_keeps_runtime_rows_single_line_when_space_is_tig
 }
 
 #[test]
-fn openclaw_agents_route_wraps_runtime_notes_and_hides_unknown_preview_values() {
+fn openclaw_agents_route_wraps_runtime_notes_and_shows_unknown_preview_values() {
     let _lock = lock_env();
     let _lang = use_test_language(Language::English);
     let _no_color = EnvGuard::remove("NO_COLOR");
@@ -10242,15 +10559,15 @@ fn openclaw_agents_route_wraps_runtime_notes_and_hides_unknown_preview_values() 
     );
     let warning_tail = line_index(&content, "timeoutSeconds.");
     let unknown_line = line_index(&content, "visibilityNote");
-    let redacted_line = line_index(&content, "[redacted]");
+    let retained_value_line = line_index(&content, "retained after wrap");
 
     assert!(warning_tail < workspace_line, "{content}");
     assert_eq!(timeout_line, workspace_line + 1, "{content}");
     assert_eq!(context_line, timeout_line + 1, "{content}");
     assert_eq!(max_line, context_line + 1, "{content}");
     assert!(unknown_line > max_line, "{content}");
-    assert!(redacted_line >= unknown_line, "{content}");
-    assert!(!content.contains("retained after wrap"), "{content}");
+    assert!(retained_value_line >= unknown_line, "{content}");
+    assert!(!content.contains("[redacted]"), "{content}");
 }
 
 #[test]
@@ -11039,4 +11356,99 @@ fn openclaw_provider_list_key_bar_localizes_actions_in_chinese() {
     assert!(!compact.contains("s添加/移除"), "{all}");
     assert!(!all.contains("add/remove"), "{all}");
     assert!(!all.contains("set default"), "{all}");
+}
+
+#[test]
+fn openclaw_tools_render_windows_ten_thousand_rules_without_mutating_full_values() {
+    let _lock = lock_env();
+    let _lang = use_test_language(Language::English);
+    let _no_color = EnvGuard::remove("NO_COLOR");
+
+    let mut app = App::new(Some(AppType::OpenClaw));
+    app.route = Route::ConfigOpenClawTools;
+    app.focus = Focus::Content;
+    let mut form = crate::cli::tui::app::OpenClawToolsFormState::from_snapshot(None);
+    form.profile = Some("coding".to_string());
+    form.allow = (0..10_000)
+        .map(|index| format!("allow-{index:05}"))
+        .collect();
+    form.deny = (0..10_000)
+        .map(|index| format!("deny-{index:05}"))
+        .collect();
+    form.extra
+        .insert("large".to_string(), json!("x".repeat(1_000_000)));
+    form.section = crate::cli::tui::app::OpenClawToolsSection::Deny;
+    form.row = 9_999;
+    app.openclaw_tools_form = Some(form);
+
+    let data = minimal_data(&app.app_type);
+    let content = content_text(&app, &render_with_size(&app, &data, 72, 15));
+
+    assert!(content.contains("deny-09999"), "{content}");
+    assert!(!content.contains("deny-00000"), "{content}");
+    let form = app
+        .openclaw_tools_form
+        .as_ref()
+        .expect("tools form retained");
+    assert_eq!(form.allow.len(), 10_000);
+    assert_eq!(form.deny.len(), 10_000);
+    assert_eq!(
+        form.extra
+            .get("large")
+            .and_then(Value::as_str)
+            .map(str::len),
+        Some(1_000_000)
+    );
+}
+
+#[test]
+fn openclaw_agents_render_windows_ten_thousand_fallbacks_and_borrows_huge_extra() {
+    let _lock = lock_env();
+    let _lang = use_test_language(Language::English);
+    let _no_color = EnvGuard::remove("NO_COLOR");
+
+    let mut app = App::new(Some(AppType::OpenClaw));
+    app.route = Route::ConfigOpenClawAgents;
+    app.focus = Focus::Content;
+    let mut form = crate::cli::tui::app::OpenClawAgentsFormState::from_snapshot(None);
+    form.primary_model = "provider/primary".to_string();
+    form.fallbacks = (0..10_000)
+        .map(|index| format!("fallback-{index:05}"))
+        .collect();
+    form.model_extra.insert(
+        "large-model-extra".to_string(),
+        json!("m".repeat(1_000_000)),
+    );
+    form.defaults_extra.insert(
+        "large-default-extra".to_string(),
+        json!("d".repeat(1_000_000)),
+    );
+    form.section = crate::cli::tui::app::OpenClawAgentsSection::FallbackModels;
+    form.row = 9_999;
+    app.openclaw_agents_form = Some(form);
+
+    let data = minimal_data(&app.app_type);
+    let content = content_text(&app, &render_with_size(&app, &data, 80, 15));
+
+    assert!(content.contains("fallback-09999"), "{content}");
+    assert!(!content.contains("fallback-00000"), "{content}");
+    let form = app
+        .openclaw_agents_form
+        .as_ref()
+        .expect("agents form retained");
+    assert_eq!(form.fallbacks.len(), 10_000);
+    assert_eq!(
+        form.model_extra
+            .get("large-model-extra")
+            .and_then(Value::as_str)
+            .map(str::len),
+        Some(1_000_000)
+    );
+    assert_eq!(
+        form.defaults_extra
+            .get("large-default-extra")
+            .and_then(Value::as_str)
+            .map(str::len),
+        Some(1_000_000)
+    );
 }

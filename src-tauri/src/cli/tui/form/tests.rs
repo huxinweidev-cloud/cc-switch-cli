@@ -3041,6 +3041,71 @@ fn mcp_form_only_replaces_canonical_arguments_after_valid_explicit_edit() {
 }
 
 #[test]
+fn mcp_form_args_budget_rejects_oversized_valid_and_malformed_input() {
+    const OVERSIZED_BYTES: usize = 2 * 1024 * 1024;
+
+    for input in [
+        "x".repeat(OVERSIZED_BYTES),
+        format!("'{}", "x".repeat(OVERSIZED_BYTES)),
+    ] {
+        let mut form = McpAddFormState::new();
+        form.set_args_values(vec!["previous".to_string()]);
+        form.args.set(input);
+
+        assert!(!form.args_input_is_valid());
+        assert!(!form.commit_args_input());
+        assert_eq!(
+            form.to_mcp_server_json_value()["server"]["args"],
+            json!(["previous"])
+        );
+    }
+}
+
+#[test]
+fn mcp_form_args_budget_rejects_more_than_256_parsed_args() {
+    let mut form = McpAddFormState::new();
+    form.set_args_values(vec!["previous".to_string()]);
+    form.args.set(
+        std::iter::repeat_n("token", 257)
+            .collect::<Vec<_>>()
+            .join(" "),
+    );
+
+    assert!(!form.args_input_is_valid());
+    assert!(!form.commit_args_input());
+    assert_eq!(
+        form.to_mcp_server_json_value()["server"]["args"],
+        json!(["previous"])
+    );
+}
+
+#[test]
+fn mcp_form_args_budget_accepts_exact_byte_and_item_limits() {
+    const MAX_BYTES: usize = 64 * 1024;
+    const MAX_ITEMS: usize = 256;
+
+    let prefix = "x ".repeat(MAX_ITEMS - 1);
+    let tail_len = MAX_BYTES - prefix.len();
+    let input = format!("{prefix}{}", "y".repeat(tail_len));
+    assert_eq!(input.len(), MAX_BYTES);
+
+    let mut form = McpAddFormState::new();
+    form.args.set(input);
+
+    assert!(form.args_input_is_valid());
+    assert!(form.commit_args_input());
+    let saved = form.to_mcp_server_json_value();
+    let args = saved["server"]["args"]
+        .as_array()
+        .expect("stdio args should remain an array");
+    assert_eq!(args.len(), MAX_ITEMS);
+    assert_eq!(
+        args.last().and_then(Value::as_str).map(str::len),
+        Some(tail_len)
+    );
+}
+
+#[test]
 fn mcp_form_preserves_imported_nul_arguments_without_offering_lossy_text_editing() {
     let mut form = McpAddFormState::new();
     form.set_args_values(vec!["contains\0nul".to_string()]);
@@ -3077,13 +3142,42 @@ fn mcp_form_keeps_large_imported_arguments_lazy_and_lossless() {
 
     assert!(form.shares_source_for_test(&shared));
     assert!(!form.args_text_is_materialized_for_test());
-    assert_eq!(form.args_count(), expected.len());
     assert!(!form.can_edit_field(McpAddField::Args));
     assert_eq!(
         form.to_mcp_server_json_value()["server"]["args"],
         json!(expected)
     );
     assert!(!form.has_unsaved_changes());
+}
+
+#[test]
+fn mcp_imported_argument_preview_only_inspects_the_bounded_slot_prefix() {
+    let mut args = (0..10_000).map(|index| json!(index)).collect::<Vec<_>>();
+    args.push(json!("late-string-must-not-be-scanned"));
+    let server = crate::app_config::McpServer {
+        id: "malformed-argv".to_string(),
+        name: "Malformed argv".to_string(),
+        server: json!({
+            "type": "stdio",
+            "command": "node",
+            "args": args.clone(),
+        }),
+        apps: crate::app_config::McpApps::default(),
+        description: None,
+        homepage: None,
+        docs: None,
+        tags: Vec::new(),
+    };
+
+    let form = McpAddFormState::from_server(&server);
+    let (preview, hidden) = form.args_preview(8);
+
+    assert!(preview.is_empty());
+    assert_eq!(hidden, 10_001);
+    assert_eq!(
+        form.to_mcp_server_json_value()["server"]["args"],
+        json!(args)
+    );
 }
 
 #[test]

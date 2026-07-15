@@ -161,7 +161,6 @@ mod tests {
             prompt: "Prompt".to_string(),
             input: TextInput::new(""),
             submit: TextSubmit::ConfigExport,
-            secret: false,
         })
         .is_editing());
         assert!(Overlay::ClaudeModelPicker {
@@ -1425,7 +1424,6 @@ mod tests {
             prompt: "Value".to_string(),
             input: TextInput::new("alpha beta"),
             submit: TextSubmit::ConfigBackupName,
-            secret: false,
         });
 
         app.on_key(ctrl(KeyCode::Char('a')), &data());
@@ -1579,7 +1577,6 @@ mod tests {
             Overlay::TextInput(TextInputState {
                 ref input,
                 submit: TextSubmit::ProviderCustomUserAgent,
-                secret: false,
                 ..
             }) if input.value == "existing-agent/1.0"
         ));
@@ -5272,7 +5269,6 @@ mod tests {
             prompt: texts::tui_openclaw_daily_memory_create_prompt().to_string(),
             input: TextInput::new("bad-name.md".to_string()),
             submit: TextSubmit::OpenClawDailyMemoryFilename,
-            secret: false,
         });
 
         let action = app.on_key(key(KeyCode::Enter), &UiData::default());
@@ -5576,7 +5572,6 @@ mod tests {
             prompt: texts::tui_openclaw_daily_memory_create_prompt().to_string(),
             input: TextInput::new("2026-03-20.md".to_string()),
             submit: TextSubmit::OpenClawDailyMemoryFilename,
-            secret: false,
         });
         let mut data = UiData::load(&AppType::OpenClaw).expect("load openclaw ui data");
 
@@ -5613,7 +5608,6 @@ mod tests {
             prompt: texts::tui_openclaw_daily_memory_create_prompt().to_string(),
             input: TextInput::new("2026-03-20.md".to_string()),
             submit: TextSubmit::OpenClawDailyMemoryFilename,
-            secret: false,
         });
         let mut data = UiData::load(&AppType::OpenClaw).expect("load openclaw ui data");
 
@@ -6899,6 +6893,61 @@ mod tests {
             .expect("model should be present after auto-save");
         assert_eq!(model.primary, "demo/model-c");
         assert!(model.fallbacks.is_empty());
+    }
+
+    #[test]
+    fn openclaw_agents_primary_picker_preserves_large_catalog_and_complete_values() {
+        let mut app = App::new(Some(AppType::OpenClaw));
+        app.route = Route::ConfigOpenClawAgents;
+        app.focus = Focus::Content;
+
+        let middle = 5_000usize;
+        let huge_model_id = format!("huge-model-{}", "x".repeat(2 * 1024 * 1024));
+        let mut models = (0..10_000)
+            .map(|index| (format!("model-{index:05}"), format!("Model {index:05}")))
+            .collect::<Vec<_>>();
+        models[middle].0 = huge_model_id.clone();
+        let model_refs = models
+            .iter()
+            .map(|(id, name)| (id.as_str(), name.as_str()))
+            .collect::<Vec<_>>();
+        let primary = format!("demo/{huge_model_id}");
+
+        let mut data = UiData::default();
+        data.providers.rows = vec![openclaw_provider_row("demo", "Demo Provider", &model_refs)];
+        data.config.openclaw_agents_defaults =
+            Some(crate::openclaw_config::OpenClawAgentsDefaults {
+                model: Some(crate::openclaw_config::OpenClawDefaultModel {
+                    primary: primary.clone(),
+                    fallbacks: Vec::new(),
+                    extra: std::collections::HashMap::new(),
+                }),
+                models: None,
+                extra: std::collections::HashMap::new(),
+            });
+
+        assert!(matches!(
+            app.on_key(key(KeyCode::Enter), &data),
+            Action::None
+        ));
+        let Overlay::OpenClawAgentsFallbackPicker {
+            selected,
+            active,
+            options,
+            ..
+        } = &app.overlay
+        else {
+            panic!("expected primary model picker");
+        };
+
+        assert_eq!(options.len(), 10_000);
+        assert_eq!(*active, Some(*selected));
+        assert_eq!(options[*selected].value, primary);
+        assert_eq!(models[middle].0, huge_model_id);
+        assert_eq!(
+            data.providers.rows[0].provider.settings_config["models"][middle]["id"].as_str(),
+            Some(models[middle].0.as_str())
+        );
     }
 
     #[test]
@@ -9296,6 +9345,57 @@ mod tests {
     }
 
     #[test]
+    fn openclaw_warning_helpers_bound_extreme_paths_and_warning_scans() {
+        let mut data = UiData::default();
+        data.config.openclaw_config_path =
+            Some(std::path::PathBuf::from("p".repeat(3 * 1024 * 1024)));
+        data.config.openclaw_warnings = Some(
+            (0..OPENCLAW_WARNING_SCAN_ITEMS)
+                .map(|index| crate::openclaw_config::OpenClawHealthWarning {
+                    code: "config_parse_failed".to_string(),
+                    message: format!("warning {index}"),
+                    path: Some("unrelated.section".to_string()),
+                })
+                .collect(),
+        );
+
+        assert!(!openclaw_tools_load_failed(&data));
+        assert!(!openclaw_agents_load_failed(&data));
+        assert!(!openclaw_tools_has_blocking_warning(&data));
+        assert!(!openclaw_agents_has_blocking_warning(&data));
+
+        data.config
+            .openclaw_warnings
+            .as_mut()
+            .expect("warnings")
+            .push(crate::openclaw_config::OpenClawHealthWarning {
+                code: "config_parse_failed".to_string(),
+                message: "warning beyond inspection budget".to_string(),
+                path: Some("unrelated.section".to_string()),
+            });
+
+        // The section is absent and the remaining warning is uninspected, so
+        // saving must fail closed even though the visible prefix is unrelated.
+        assert!(openclaw_tools_load_failed(&data));
+        assert!(openclaw_agents_load_failed(&data));
+
+        data.config.openclaw_tools = Some(crate::openclaw_config::OpenClawToolsConfig::default());
+        data.config.openclaw_agents_defaults =
+            Some(crate::openclaw_config::OpenClawAgentsDefaults::default());
+
+        assert!(!openclaw_tools_load_failed(&data));
+        assert!(!openclaw_agents_load_failed(&data));
+        assert!(!openclaw_tools_has_blocking_warning(&data));
+        assert!(!openclaw_agents_has_blocking_warning(&data));
+
+        data.config.openclaw_warnings.as_mut().expect("warnings")
+            [OPENCLAW_WARNING_SCAN_ITEMS - 1]
+            .path = None;
+        assert!(openclaw_tools_has_blocking_warning(&data));
+        assert!(openclaw_agents_has_blocking_warning(&data));
+    }
+
+    #[test]
     #[serial(home_settings)]
     fn openclaw_tools_save_is_blocked_for_real_malformed_tools_section_without_seeding_form() {
         let temp_home = TempDir::new().expect("create temp home");
@@ -9730,7 +9830,6 @@ mod tests {
             prompt: "path".to_string(),
             input: TextInput::new(r"\\wsl$\Ubuntu\home\demo\.openclaw".to_string()),
             submit: TextSubmit::SettingsOpenClawConfigDir,
-            secret: false,
         });
 
         let action = app.on_key(key(KeyCode::Enter), &UiData::default());
@@ -9745,7 +9844,6 @@ mod tests {
             prompt: "path".to_string(),
             input: TextInput::new("   ".to_string()),
             submit: TextSubmit::SettingsOpenClawConfigDir,
-            secret: false,
         });
 
         let action = app.on_key(key(KeyCode::Enter), &UiData::default());
@@ -10136,7 +10234,6 @@ mod tests {
             prompt: "port".to_string(),
             input: TextInput::new("15721".to_string()),
             submit: TextSubmit::SettingsProxyListenPort,
-            secret: false,
         });
         let action = app.on_key(key(KeyCode::Enter), &data);
         assert!(matches!(
@@ -10184,7 +10281,6 @@ mod tests {
             prompt: "port".to_string(),
             input: TextInput::new("15721".to_string()),
             submit: TextSubmit::SettingsProxyListenPort,
-            secret: false,
         });
 
         let mut data = UiData::default();
@@ -10216,7 +10312,6 @@ mod tests {
             prompt: "address".to_string(),
             input: TextInput::new("127.0.0.1".to_string()),
             submit: TextSubmit::SettingsProxyListenAddress,
-            secret: false,
         });
         let data = UiData::default();
         let action = app.on_key(key(KeyCode::Enter), &data);
@@ -10230,7 +10325,6 @@ mod tests {
             prompt: "port".to_string(),
             input: TextInput::new("15721".to_string()),
             submit: TextSubmit::SettingsProxyListenPort,
-            secret: false,
         });
         let action = app.on_key(key(KeyCode::Enter), &data);
         assert!(matches!(
@@ -10250,7 +10344,6 @@ mod tests {
             prompt: "address".to_string(),
             input: TextInput::new("bad host".to_string()),
             submit: TextSubmit::SettingsProxyListenAddress,
-            secret: false,
         });
         let data = UiData::default();
         let action = app.on_key(key(KeyCode::Enter), &data);
@@ -10268,7 +10361,6 @@ mod tests {
             prompt: "port".to_string(),
             input: TextInput::new("80".to_string()),
             submit: TextSubmit::SettingsProxyListenPort,
-            secret: false,
         });
         let action = app.on_key(key(KeyCode::Enter), &data);
         assert!(matches!(action, Action::None));
@@ -10291,7 +10383,6 @@ mod tests {
             prompt: "address".to_string(),
             input: TextInput::new("127.0.0.1".to_string()),
             submit: TextSubmit::SettingsProxyListenAddress,
-            secret: false,
         });
 
         let mut data = UiData::default();
@@ -10422,7 +10513,6 @@ mod tests {
             app.overlay,
             Overlay::TextInput(TextInputState {
                 submit: TextSubmit::WebDavJianguoyunPassword,
-                secret: true,
                 ..
             })
         ));
@@ -10488,7 +10578,6 @@ mod tests {
             app.overlay,
             Overlay::TextInput(TextInputState {
                 submit: TextSubmit::WebDavJianguoyunPassword,
-                secret: true,
                 ..
             })
         ));
@@ -13544,23 +13633,17 @@ mod tests {
     }
 
     #[test]
-    fn provider_inline_edit_tab_commits_and_backtab_moves_by_field_identity() {
+    fn provider_inline_edit_tab_and_backtab_do_not_apply_or_move() {
         let mut app = open_provider_fields_form(AppType::Claude);
-        let next_field = {
-            let Some(FormState::ProviderAdd(form)) = app.form.as_mut() else {
-                panic!("expected ProviderAdd form");
-            };
+        if let Some(FormState::ProviderAdd(form)) = app.form.as_mut() {
             form.name.set("A");
-            form.fields()
-                .into_iter()
-                .skip(1)
-                .find(|field| form.can_edit_main_field(*field))
-                .expect("an editable field should follow Name")
-        };
+            form.id.set("original-id");
+        }
 
         app.on_key(key(KeyCode::Enter), &data());
         app.on_key(key(KeyCode::Char('x')), &data());
         app.on_key(key(KeyCode::Tab), &data());
+        app.on_key(key(KeyCode::BackTab), &data());
 
         let Some(FormState::ProviderAdd(form)) = app.form.as_ref() else {
             panic!("expected ProviderAdd form");
@@ -13568,16 +13651,9 @@ mod tests {
         assert_eq!(form.name.value, "Ax");
         assert_eq!(
             form.text_edit_target(),
-            Some(form::ProviderTextField::Main(next_field))
+            Some(form::ProviderTextField::Main(ProviderAddField::Name))
         );
-
-        app.on_key(key(KeyCode::BackTab), &data());
-        assert!(matches!(
-            app.form,
-            Some(FormState::ProviderAdd(ref form))
-                if form.text_edit_target()
-                    == Some(form::ProviderTextField::Main(ProviderAddField::Name))
-        ));
+        assert_eq!(form.id.value, "original-id");
     }
 
     #[test]
@@ -13703,7 +13779,7 @@ mod tests {
     }
 
     #[test]
-    fn mcp_invalid_args_tab_stays_in_the_current_inline_editor() {
+    fn mcp_invalid_args_tab_is_a_noop_until_enter_applies() {
         let mut app = open_mcp_fields_form();
         if let Some(FormState::McpAdd(form)) = app.form.as_mut() {
             form.command.set("node");
@@ -13722,10 +13798,7 @@ mod tests {
             panic!("expected MCP form");
         };
         assert_eq!(form.text_edit_target(), Some(McpAddField::Args));
-        assert_eq!(
-            form.field_error(McpAddField::Args),
-            Some(texts::tui_mcp_args_invalid())
-        );
+        assert_eq!(form.field_error(McpAddField::Args), None);
         assert_eq!(
             form.to_mcp_server_json_value()["server"]["args"],
             serde_json::json!([])
@@ -14314,7 +14387,6 @@ mod tests {
             prompt: "Path".to_string(),
             input: TextInput::new(""),
             submit: TextSubmit::ConfigExport,
-            secret: false,
         });
 
         let action = app.on_key(key(KeyCode::Char('?')), &UiData::default());
@@ -15999,7 +16071,6 @@ mod tests {
             prompt: "Format: YYYY-MM-DD..YYYY-MM-DD".to_string(),
             input: TextInput::new("2026-06-01..2026-06-05"),
             submit: TextSubmit::UsageCustomRange,
-            secret: false,
         });
 
         let action = app.on_key(key(KeyCode::Enter), &UiData::default());
@@ -16021,7 +16092,6 @@ mod tests {
             prompt: "Format: YYYY-MM-DD..YYYY-MM-DD".to_string(),
             input: TextInput::new("2026-06-05..2026-06-01"),
             submit: TextSubmit::UsageCustomRange,
-            secret: false,
         });
 
         let action = app.on_key(key(KeyCode::Enter), &UiData::default());

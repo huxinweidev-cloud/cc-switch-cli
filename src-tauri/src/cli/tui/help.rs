@@ -365,8 +365,8 @@ fn provider_field_help(app_type: AppType, field: ProviderAddField) -> HelpConten
         | ProviderAddField::HermesApiKey => HelpContent::new(
             texts::tui_label_api_key(),
             help_lines(
-                "供应商 API Key。保存后会按该应用的配置规则写入存储配置；界面预览会隐藏敏感内容。",
-                "Provider API key. After saving, it is written using this app's config rules. The preview hides sensitive values.",
+                "供应商 API Key。保存后会按该应用的配置规则写入存储配置；界面会以明文显示当前值。",
+                "Provider API key. After saving, it is written using this app's config rules. The UI shows the current value in plaintext.",
             ),
         ),
         ProviderAddField::CodexModel => HelpContent::new(

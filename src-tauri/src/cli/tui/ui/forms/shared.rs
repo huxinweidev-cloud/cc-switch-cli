@@ -19,8 +19,6 @@ pub(crate) fn add_form_key_items(
     if editing && matches!(focus, FormFocus::Fields) {
         return vec![
             ("Enter", texts::tui_key_apply()),
-            ("Tab", texts::tui_key_next_field()),
-            ("Shift+Tab", texts::tui_key_previous_field()),
             ("Ctrl+S", texts::tui_key_save()),
             ("Esc", texts::tui_key_cancel()),
         ];
@@ -210,8 +208,6 @@ pub(crate) fn usage_query_form_key_items(
             if editing {
                 return vec![
                     ("Enter", texts::tui_key_apply()),
-                    ("Tab", texts::tui_key_next_field()),
-                    ("Shift+Tab", texts::tui_key_previous_field()),
                     ("Ctrl+S", texts::tui_key_save()),
                     ("Esc", texts::tui_key_cancel()),
                 ];
@@ -328,27 +324,6 @@ pub(crate) fn visible_text_window(text: &str, cursor: usize, width: usize) -> (S
     (visible, cursor_width.min(width) as u16)
 }
 
-fn masked_text_window(text: &str, cursor: usize, width: usize) -> (String, u16) {
-    if width == 0 {
-        return (String::new(), 0);
-    }
-
-    let cursor = super::form::TextInput::clamp_byte_boundary(text, cursor);
-    let before = text[..cursor]
-        .chars()
-        .rev()
-        .take(width.saturating_sub(1))
-        .count();
-    let after = text[cursor..]
-        .chars()
-        .take(width.saturating_sub(before))
-        .count();
-    (
-        "•".repeat(before.saturating_add(after)),
-        before.min(width) as u16,
-    )
-}
-
 pub(crate) const FORM_VALUE_MIN_WIDTH: u16 = 24;
 pub(crate) const FORM_SPLIT_MIN_BODY_WIDTH: u16 = 84;
 pub(crate) fn form_value_width(
@@ -371,16 +346,8 @@ pub(crate) fn form_can_split(
     area_width >= FORM_SPLIT_MIN_BODY_WIDTH
 }
 
-pub(crate) fn inline_input_window(
-    input: &super::form::TextInput,
-    width: u16,
-    secret: bool,
-) -> (String, u16) {
-    if secret {
-        masked_text_window(&input.value, input.cursor, width as usize)
-    } else {
-        visible_text_window(&input.value, input.cursor, width as usize)
-    }
+pub(crate) fn inline_input_window(input: &super::form::TextInput, width: u16) -> (String, u16) {
+    visible_text_window(&input.value, input.cursor, width as usize)
 }
 
 pub(crate) fn inline_field_cell(
@@ -502,16 +469,15 @@ pub(crate) fn render_form_json_preview_with_highlights(
         })
         .collect::<Vec<_>>();
 
-    let height = json_inner.height as usize;
-    if height == 0 {
+    if json_inner.width == 0 || json_inner.height == 0 {
         return;
     }
-    let max_start = lines.len().saturating_sub(height);
-    let start = scroll.min(max_start);
-    let end = (start + height).min(lines.len());
+    let scroll_y = u16::try_from(scroll).unwrap_or(u16::MAX);
 
     frame.render_widget(
-        Paragraph::new(lines[start..end].to_vec()).wrap(Wrap { trim: false }),
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .scroll((scroll_y, 0)),
         json_inner,
     );
 }
@@ -538,16 +504,15 @@ pub(crate) fn render_form_text_preview(
         .map(|s| Line::raw(s.to_string()))
         .collect::<Vec<_>>();
 
-    let height = inner.height as usize;
-    if height == 0 {
+    if inner.width == 0 || inner.height == 0 {
         return;
     }
-    let max_start = lines.len().saturating_sub(height);
-    let start = scroll.min(max_start);
-    let end = (start + height).min(lines.len());
+    let scroll_y = u16::try_from(scroll).unwrap_or(u16::MAX);
 
     frame.render_widget(
-        Paragraph::new(lines[start..end].to_vec()).wrap(Wrap { trim: false }),
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .scroll((scroll_y, 0)),
         inner,
     );
 }

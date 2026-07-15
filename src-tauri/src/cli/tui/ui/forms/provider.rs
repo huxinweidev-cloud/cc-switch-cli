@@ -225,29 +225,6 @@ fn codex_oauth_account_for_display(provider: &super::form::ProviderAddFormState)
         .unwrap_or_else(|| texts::tui_managed_accounts_follow_default().to_string())
 }
 
-fn provider_field_is_secret(field: ProviderAddField) -> bool {
-    matches!(
-        field,
-        ProviderAddField::ClaudeApiKey
-            | ProviderAddField::CodexApiKey
-            | ProviderAddField::GeminiApiKey
-            | ProviderAddField::OpenCodeApiKey
-            | ProviderAddField::HermesApiKey
-    )
-}
-
-fn provider_field_is_url(field: ProviderAddField) -> bool {
-    matches!(
-        field,
-        ProviderAddField::WebsiteUrl
-            | ProviderAddField::ClaudeBaseUrl
-            | ProviderAddField::CodexBaseUrl
-            | ProviderAddField::GeminiBaseUrl
-            | ProviderAddField::OpenCodeBaseUrl
-            | ProviderAddField::HermesBaseUrl
-    )
-}
-
 fn common_json_preview_value(app_type: &AppType, common_snippet: &str) -> Option<Value> {
     if common_snippet.trim().is_empty() {
         return None;
@@ -628,8 +605,7 @@ fn render_provider_inline_fields(
             provider.input(*field).map_or_else(
                 || truncated_value_cell(value, table_area.width, label_col_width, theme),
                 |input| {
-                    let (visible, x) =
-                        inline_input_window(input, value_width, provider_field_is_secret(*field));
+                    let (visible, x) = inline_input_window(input, value_width);
                     if idx == selected_idx {
                         cursor_x = Some(x);
                     }
@@ -777,7 +753,7 @@ fn render_provider_preview(
             .unwrap_or_else(|_| provider.to_provider_json_value());
         let json_value = provider_json_value
             .get("settingsConfig")
-            .map(redact_sensitive_json)
+            .map(bounded_json_preview)
             .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
         let json_text =
             serde_json::to_string_pretty(&json_value).unwrap_or_else(|_| "{}".to_string());
@@ -807,17 +783,14 @@ pub(crate) fn codex_auth_preview_text(provider: &super::form::ProviderAddFormSta
         .and_then(Value::as_object)
         .and_then(|settings| settings.get("auth"))
         .filter(|auth| auth.is_object())
-        .map(redact_codex_auth_json)
+        .map(bounded_json_preview)
         .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
 
     if !provider.is_codex_official_provider() {
-        let api_key_present = !provider.codex_api_key.value.is_empty();
+        let api_key = bounded_trimmed_text_for_display(&provider.codex_api_key.value);
         if let Value::Object(auth) = &mut auth_value {
-            if api_key_present {
-                auth.insert(
-                    "OPENAI_API_KEY".to_string(),
-                    Value::String(redacted_secret_placeholder().to_string()),
-                );
+            if !api_key.is_empty() {
+                auth.insert("OPENAI_API_KEY".to_string(), Value::String(api_key));
             } else {
                 auth.remove("OPENAI_API_KEY");
             }
@@ -852,7 +825,7 @@ pub(crate) fn codex_config_preview_text(provider: &super::form::ProviderAddFormS
     {
         return texts::tui_preview_omitted_too_large().to_string();
     }
-    redact_sensitive_toml(&provider.effective_codex_config_text())
+    bounded_toml_preview(&provider.effective_codex_config_text())
 }
 
 struct QuickConfigPage<'a> {
@@ -1574,11 +1547,7 @@ fn render_usage_query_inline_fields(
                 provider.usage_query_input(*field).map_or_else(
                     || truncated_value_cell(value, table_area.width, label_col_width, theme),
                     |input| {
-                        let (visible, x) = inline_input_window(
-                            input,
-                            value_width,
-                            usage_query_field_is_secret(*field),
-                        );
+                        let (visible, x) = inline_input_window(input, value_width);
                         if idx == selected_idx {
                             cursor_x = Some(x);
                         }
@@ -1714,8 +1683,8 @@ fn render_usage_query_script_preview(
     frame.render_widget(block.clone(), area);
     let inner = block.inner(area);
 
-    let redacted_script = redacted_usage_query_script(provider);
-    let script_preview = redacted_script.trim();
+    let script = usage_query_script_preview(provider);
+    let script_preview = script.trim();
     let mut lines = Vec::new();
     if let Some(error) = provider.usage_query_field_error(super::form::UsageQueryField::Script) {
         lines.push(Line::styled(
@@ -1750,29 +1719,11 @@ fn render_usage_query_script_preview(
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
 }
 
-fn redacted_usage_query_script(provider: &super::form::ProviderAddFormState) -> String {
+fn usage_query_script_preview(provider: &super::form::ProviderAddFormState) -> String {
     if provider.usage_query_code.len() > PROVIDER_PASSIVE_PARSE_MAX_BYTES {
-        return redacted_secret_placeholder().to_string();
+        return texts::tui_preview_omitted_too_large().to_string();
     }
-    let code = provider.usage_query_code.trim();
-    if code.is_empty() {
-        return String::new();
-    }
-
-    // Automatic previews must not expose literals from arbitrary JavaScript.
-    // Only exact, repository-owned presets are safe to render without a parser;
-    // any user edit is available through the explicitly opened editor instead.
-    for safe_preset in [
-        super::form::ProviderAddFormState::USAGE_QUERY_GENERAL_PRESET,
-        super::form::ProviderAddFormState::USAGE_QUERY_NEWAPI_PRESET,
-        super::form::ProviderAddFormState::USAGE_QUERY_CUSTOM_PRESET,
-    ] {
-        if code == safe_preset.trim() {
-            return safe_preset.to_string();
-        }
-    }
-
-    redacted_secret_placeholder().to_string()
+    provider.usage_query_code.clone()
 }
 
 fn render_usage_query_script_help(
@@ -1802,13 +1753,6 @@ fn render_usage_query_script_help(
         .collect::<Vec<_>>();
 
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
-}
-
-fn usage_query_field_is_secret(field: super::form::UsageQueryField) -> bool {
-    matches!(
-        field,
-        super::form::UsageQueryField::ApiKey | super::form::UsageQueryField::AccessToken
-    )
 }
 
 pub(crate) fn usage_query_field_label_and_value(
@@ -1874,15 +1818,7 @@ pub(crate) fn usage_query_field_label_and_value(
         super::form::UsageQueryField::Script => texts::tui_key_open().to_string(),
         _ => provider
             .usage_query_input(field)
-            .map(|input| {
-                if usage_query_field_is_secret(field) && !input.value.is_empty() {
-                    redacted_secret_placeholder().to_string()
-                } else if matches!(field, super::form::UsageQueryField::BaseUrl) {
-                    safe_url_origin_for_display(&input.value)
-                } else {
-                    bounded_trimmed_text_for_display(&input.value)
-                }
-            })
+            .map(|input| bounded_trimmed_text_for_display(&input.value))
             .unwrap_or_default(),
     };
 
@@ -2062,15 +1998,17 @@ pub(crate) fn provider_field_label_and_value(
                 "[ ]".to_string()
             }
         }
-        ProviderAddField::CodexLocalRouting => format!(
-            "{} · {} ›",
+        ProviderAddField::CodexLocalRouting => {
             if provider.codex_local_routing_enabled {
-                texts::enabled()
+                format!(
+                    "{} · {} ›",
+                    texts::enabled(),
+                    provider.codex_model_catalog_summary()
+                )
             } else {
-                texts::disabled()
-            },
-            provider.codex_model_catalog_summary()
-        ),
+                texts::disabled().to_string()
+            }
+        }
         ProviderAddField::LocalProxySettings => provider.local_proxy_settings_summary(),
         ProviderAddField::IncludeCommonConfig => {
             if provider.include_common_config {
@@ -2105,26 +2043,20 @@ pub(crate) fn provider_field_label_and_value(
         ProviderAddField::CommonConfigDivider => "- - - - - - - - - -".to_string(),
         ProviderAddField::CommonSnippet => format!("{} ›", texts::tui_key_open()),
         ProviderAddField::UsageQueryDivider => String::new(),
-        ProviderAddField::UsageQuery => format!(
-            "{} · {} ›",
+        ProviderAddField::UsageQuery => {
             if provider.usage_query_enabled {
-                texts::enabled()
+                format!(
+                    "{} · {} ›",
+                    texts::enabled(),
+                    provider.usage_query_template_value()
+                )
             } else {
-                texts::disabled()
-            },
-            provider.usage_query_template_value()
-        ),
+                texts::disabled().to_string()
+            }
+        }
         _ => provider
             .input(field)
-            .map(|v| {
-                if provider_field_is_secret(field) && !v.value.is_empty() {
-                    redacted_secret_placeholder().to_string()
-                } else if provider_field_is_url(field) {
-                    safe_url_origin_for_display(&v.value)
-                } else {
-                    bounded_trimmed_text_for_display(&v.value)
-                }
-            })
+            .map(|v| bounded_trimmed_text_for_display(&v.value))
             .unwrap_or_default(),
     };
 

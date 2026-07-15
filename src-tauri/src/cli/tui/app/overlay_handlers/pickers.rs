@@ -361,7 +361,6 @@ impl App {
                         prompt: texts::tui_label_custom_user_agent().to_string(),
                         input: TextInput::new(current),
                         submit: TextSubmit::ProviderCustomUserAgent,
-                        secret: false,
                     });
                 } else if selected == form::USER_AGENT_PICKER_NO_OVERRIDE_INDEX {
                     if let Some(FormState::ProviderAdd(provider)) = self.form.as_mut() {
@@ -895,6 +894,7 @@ impl App {
             insert_at,
             selected,
             options,
+            ..
         } = &mut self.overlay
         else {
             return None;
