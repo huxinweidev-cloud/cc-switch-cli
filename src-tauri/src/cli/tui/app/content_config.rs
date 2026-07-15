@@ -23,7 +23,6 @@ impl App {
             prompt: texts::tui_openclaw_daily_memory_create_prompt().to_string(),
             input: TextInput::new(initial),
             submit: TextSubmit::OpenClawDailyMemoryFilename,
-            secret: false,
         });
     }
 
@@ -86,7 +85,6 @@ impl App {
                             prompt: texts::tui_config_export_prompt().to_string(),
                             input: TextInput::new(texts::tui_default_config_export_path()),
                             submit: TextSubmit::ConfigExport,
-                            secret: false,
                         });
                         Action::None
                     }
@@ -96,7 +94,6 @@ impl App {
                             prompt: texts::tui_config_import_prompt().to_string(),
                             input: TextInput::new(texts::tui_default_config_export_path()),
                             submit: TextSubmit::ConfigImport,
-                            secret: false,
                         });
                         Action::None
                     }
@@ -106,7 +103,6 @@ impl App {
                             prompt: texts::tui_config_backup_prompt().to_string(),
                             input: TextInput::new(""),
                             submit: TextSubmit::ConfigBackupName,
-                            secret: false,
                         });
                         Action::None
                     }
@@ -344,7 +340,6 @@ impl App {
             prompt: texts::tui_openclaw_tools_pattern_placeholder().to_string(),
             input: TextInput::new(initial),
             submit: TextSubmit::OpenClawToolsRule { section, row },
-            secret: false,
         });
         Action::None
     }
@@ -514,37 +509,35 @@ impl App {
             prompt: title.to_string(),
             input: TextInput::new(buffer),
             submit: TextSubmit::OpenClawAgentsRuntimeField { field },
-            secret: false,
         });
         Action::None
     }
 
     fn open_openclaw_agents_model_picker(&mut self, data: &UiData) -> Action {
         let model_options = super::openclaw_agents_model_options(data);
-        let Some((insert_at, selected, options)) = ({
+        let Some((insert_at, selected, active, options)) = ({
             let form = self.openclaw_agents_form(data);
             match form.section {
-                OpenClawAgentsSection::PrimaryModel => (!model_options.is_empty()).then(|| {
-                    (
-                        0,
-                        form.primary_model_picker_selection(&model_options),
-                        model_options.clone(),
-                    )
-                }),
+                OpenClawAgentsSection::PrimaryModel if !model_options.is_empty() => {
+                    let selected = form.primary_model_picker_selection(&model_options);
+                    let active =
+                        (selected != OPENCLAW_AGENTS_MODEL_PICKER_NONE).then_some(selected);
+                    Some((0, selected, active, model_options))
+                }
+                OpenClawAgentsSection::PrimaryModel => None,
                 OpenClawAgentsSection::FallbackModels => {
                     let row = form.row.min(form.fallbacks.len());
                     if row < form.fallbacks.len() {
                         let options = form.available_fallback_options_for_row(row, &model_options);
                         (!options.is_empty()).then(|| {
-                            (
-                                row,
-                                form.current_fallback_picker_selection(row, &options),
-                                options,
-                            )
+                            let selected = form.current_fallback_picker_selection(row, &options);
+                            let active =
+                                (selected != OPENCLAW_AGENTS_MODEL_PICKER_NONE).then_some(selected);
+                            (row, selected, active, options)
                         })
                     } else {
                         let options = form.available_fallback_options(&model_options);
-                        (!options.is_empty()).then_some((row, 0, options))
+                        (!options.is_empty()).then_some((row, 0, None, options))
                     }
                 }
                 OpenClawAgentsSection::Runtime => None,
@@ -556,6 +549,7 @@ impl App {
         self.overlay = Overlay::OpenClawAgentsFallbackPicker {
             insert_at,
             selected,
+            active,
             options,
         };
         Action::None
@@ -696,7 +690,6 @@ impl App {
                             prompt: texts::tui_webdav_jianguoyun_username_prompt().to_string(),
                             input: TextInput::new(""),
                             submit: TextSubmit::WebDavJianguoyunUsername,
-                            secret: false,
                         });
                         Action::None
                     }
@@ -795,7 +788,6 @@ impl App {
                         prompt: texts::tui_settings_openclaw_config_dir_prompt().to_string(),
                         input: TextInput::new(buffer),
                         submit: TextSubmit::SettingsOpenClawConfigDir,
-                        secret: false,
                     });
                     Action::None
                 }
@@ -941,7 +933,6 @@ impl App {
                         prompt: texts::tui_settings_proxy_listen_address_prompt().to_string(),
                         input: TextInput::new(data.proxy.configured_listen_address.clone()),
                         submit: TextSubmit::SettingsProxyListenAddress,
-                        secret: false,
                     });
                     Action::None
                 }
@@ -958,7 +949,6 @@ impl App {
                         prompt: texts::tui_settings_proxy_listen_port_prompt().to_string(),
                         input: TextInput::new(data.proxy.configured_listen_port.to_string()),
                         submit: TextSubmit::SettingsProxyListenPort,
-                        secret: false,
                     });
                     Action::None
                 }
@@ -1359,7 +1349,9 @@ impl App {
         self.overlay = Overlay::None;
         self.focus = Focus::Content;
         self.editor = None;
-        self.form = Some(FormState::McpAdd(McpAddFormState::from_server(&row.server)));
+        self.form = Some(FormState::McpAdd(McpAddFormState::from_shared_server(
+            std::sync::Arc::clone(&row.server),
+        )));
     }
 
     pub(crate) fn open_prompt_create_form(&mut self, data: &UiData) {

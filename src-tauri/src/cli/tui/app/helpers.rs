@@ -327,34 +327,13 @@ impl OpenClawAgentsFormState {
     }
 
     pub(crate) fn has_unmigratable_legacy_timeout(&self) -> bool {
-        self.to_form_like().has_unmigratable_legacy_timeout()
-    }
-
-    pub(crate) fn preserved_timeout_seconds(&self) -> Option<&Value> {
-        crate::cli::openclaw_form_normalization::preserved_non_string_runtime_seed(
-            &self.timeout,
-            self.timeout_seconds_seed.as_ref(),
-        )
-    }
-
-    pub(crate) fn preserved_context_tokens(&self) -> Option<&Value> {
-        crate::cli::openclaw_form_normalization::preserved_non_string_runtime_seed(
-            &self.context_tokens,
-            self.context_tokens_seed.as_ref(),
-        )
-    }
-
-    pub(crate) fn preserved_max_concurrent(&self) -> Option<&Value> {
-        crate::cli::openclaw_form_normalization::preserved_non_string_runtime_seed(
-            &self.max_concurrent,
-            self.max_concurrent_seed.as_ref(),
-        )
-    }
-
-    pub(crate) fn has_preserved_non_string_runtime_values(&self) -> bool {
-        self.preserved_timeout_seconds().is_some()
-            || self.preserved_context_tokens().is_some()
-            || self.preserved_max_concurrent().is_some()
+        const MAX_TIMEOUT_PARSE_BYTES: usize = 128;
+        if self.timeout.len() > MAX_TIMEOUT_PARSE_BYTES {
+            return self.has_legacy_timeout;
+        }
+        self.has_legacy_timeout
+            && !self.timeout.trim().is_empty()
+            && crate::cli::openclaw_form_normalization::parse_number(self.timeout.trim()).is_none()
     }
 
     fn to_form_like(&self) -> crate::cli::openclaw_form_normalization::OpenClawAgentsFormLike {
@@ -403,27 +382,6 @@ impl OpenClawToolsFormState {
             section: OpenClawToolsSection::Profile,
             row: 0,
         }
-    }
-
-    pub(crate) fn unsupported_profile(&self) -> Option<&str> {
-        let profile = self.profile.as_deref()?;
-        if openclaw_tools_profile_picker_index(Some(profile)).is_some() {
-            None
-        } else {
-            Some(profile)
-        }
-    }
-
-    pub(crate) fn current_profile_label(&self) -> String {
-        if let Some(index) = openclaw_tools_profile_picker_index(self.profile.as_deref()) {
-            return openclaw_tools_profile_picker_label(index).to_string();
-        }
-
-        let value = self.profile.as_deref().unwrap_or_default();
-        format!(
-            "{value} ({})",
-            texts::tui_openclaw_tools_unsupported_profile_label()
-        )
     }
 
     pub(crate) fn move_down(&mut self) {
@@ -630,90 +588,81 @@ fn model_picker_selection(current: &str, options: &[OpenClawModelOption]) -> usi
         .unwrap_or(OPENCLAW_AGENTS_MODEL_PICKER_NONE)
 }
 
-fn openclaw_tools_warning_matches_path(
-    data: &UiData,
-    warning: &crate::openclaw_config::OpenClawHealthWarning,
-) -> bool {
-    let config_path = data
-        .config
-        .openclaw_config_path
-        .as_ref()
-        .map(|path| path.display().to_string());
+pub(crate) const OPENCLAW_WARNING_SCAN_ITEMS: usize = 128;
+const OPENCLAW_WARNING_PATH_MATCH_MAX_BYTES: usize = 4 * 1024;
 
+pub(crate) fn bounded_openclaw_config_path(path: Option<&Path>) -> Option<&str> {
+    let encoded = path?.as_os_str().as_encoded_bytes();
+    if encoded.len() > OPENCLAW_WARNING_PATH_MATCH_MAX_BYTES {
+        return None;
+    }
+    std::str::from_utf8(encoded).ok()
+}
+
+fn openclaw_warning_matches_path(
+    warning: &crate::openclaw_config::OpenClawHealthWarning,
+    config_path: Option<&str>,
+    section_root: &str,
+    section_prefix: &str,
+) -> bool {
     match warning.path.as_deref() {
         None => true,
-        Some(path) if config_path.as_deref() == Some(path) => true,
-        Some("tools") => true,
-        Some(path) => path.starts_with("tools."),
+        Some(path) if config_path == Some(path) => true,
+        Some(path) => path == section_root || path.starts_with(section_prefix),
     }
+}
+
+fn openclaw_has_matching_warning(
+    data: &UiData,
+    section_root: &str,
+    section_prefix: &str,
+    section_missing: bool,
+) -> bool {
+    let config_path = bounded_openclaw_config_path(data.config.openclaw_config_path.as_deref());
+    let warnings = data.config.openclaw_warnings.as_deref().unwrap_or_default();
+
+    // A missing section plus more warnings than the render-time inspection
+    // budget is an uncertain parse state. Fail closed so an uninspected
+    // warning can never let an empty form overwrite malformed source data.
+    if section_missing && warnings.len() > OPENCLAW_WARNING_SCAN_ITEMS {
+        return true;
+    }
+
+    warnings
+        .iter()
+        .take(OPENCLAW_WARNING_SCAN_ITEMS)
+        .any(|warning| {
+            (section_missing || warning.code == "config_parse_failed")
+                && openclaw_warning_matches_path(warning, config_path, section_root, section_prefix)
+        })
 }
 
 pub(crate) fn openclaw_tools_load_failed(data: &UiData) -> bool {
     data.config.openclaw_tools.is_none()
-        && data
-            .config
-            .openclaw_warnings
-            .as_ref()
-            .into_iter()
-            .flatten()
-            .any(|warning| openclaw_tools_warning_matches_path(data, warning))
+        && openclaw_has_matching_warning(data, "tools", "tools.", true)
 }
 
 pub(crate) fn openclaw_tools_has_blocking_warning(data: &UiData) -> bool {
-    openclaw_tools_load_failed(data)
-        || data
-            .config
-            .openclaw_warnings
-            .as_ref()
-            .into_iter()
-            .flatten()
-            .any(|warning| {
-                warning.code == "config_parse_failed"
-                    && openclaw_tools_warning_matches_path(data, warning)
-            })
-}
-
-fn openclaw_agents_warning_matches_path(
-    data: &UiData,
-    warning: &crate::openclaw_config::OpenClawHealthWarning,
-) -> bool {
-    let config_path = data
-        .config
-        .openclaw_config_path
-        .as_ref()
-        .map(|path| path.display().to_string());
-
-    match warning.path.as_deref() {
-        None => true,
-        Some(path) if config_path.as_deref() == Some(path) => true,
-        Some("agents.defaults") => true,
-        Some(path) => path.starts_with("agents.defaults."),
-    }
+    openclaw_has_matching_warning(
+        data,
+        "tools",
+        "tools.",
+        data.config.openclaw_tools.is_none(),
+    )
 }
 
 pub(crate) fn openclaw_agents_load_failed(data: &UiData) -> bool {
     data.config.openclaw_agents_defaults.is_none()
-        && data
-            .config
-            .openclaw_warnings
-            .as_ref()
-            .into_iter()
-            .flatten()
-            .any(|warning| openclaw_agents_warning_matches_path(data, warning))
+        && openclaw_has_matching_warning(data, "agents.defaults", "agents.defaults.", true)
 }
 
 pub(crate) fn openclaw_agents_has_blocking_warning(data: &UiData) -> bool {
-    openclaw_agents_load_failed(data)
-        || data
-            .config
-            .openclaw_warnings
-            .as_ref()
-            .into_iter()
-            .flatten()
-            .any(|warning| {
-                warning.code == "config_parse_failed"
-                    && openclaw_agents_warning_matches_path(data, warning)
-            })
+    openclaw_has_matching_warning(
+        data,
+        "agents.defaults",
+        "agents.defaults.",
+        data.config.openclaw_agents_defaults.is_none(),
+    )
 }
 
 impl<'a> OpenClawDailyMemoryListItem<'a> {
@@ -857,8 +806,8 @@ struct SessionVisibilityKey {
     rows_revision: u64,
     query: Option<String>,
     app_provider_id: String,
-    show_all: bool,
     rows_provider_id: Option<String>,
+    project_scope: Option<crate::session_manager::project_scope::SessionProjectScope>,
     detail_key: Option<String>,
     messages_revision: u64,
     messages_loaded: bool,
@@ -918,6 +867,243 @@ impl<'a> SessionRowsView<'a> {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum SessionProjectOption<'a> {
+    All {
+        session_count: usize,
+    },
+    Unknown {
+        session_count: usize,
+    },
+    Exact {
+        display_path: &'a str,
+        normalized_path: &'a str,
+        session_count: usize,
+    },
+}
+
+impl SessionProjectOption<'_> {
+    pub(crate) fn session_count(self) -> usize {
+        match self {
+            Self::All { session_count }
+            | Self::Unknown { session_count }
+            | Self::Exact { session_count, .. } => session_count,
+        }
+    }
+}
+
+pub(crate) fn session_project_option_count(
+    sessions: &SessionsState,
+    picker: &SessionProjectPickerState,
+) -> usize {
+    let Some(cache) = sessions
+        .project_catalog
+        .as_ref()
+        .filter(|_| sessions.project_catalog_is_current())
+    else {
+        return 0;
+    };
+    let show_unknown = cache.catalog.unknown.session_count > 0
+        || matches!(
+            sessions.project_scope,
+            crate::session_manager::project_scope::SessionProjectScope::Unknown
+        );
+    1usize
+        .saturating_add(usize::from(show_unknown))
+        .saturating_add(usize::from(picker.pinned_scope.is_some()))
+        .saturating_add(cache.catalog.projects.len())
+}
+
+pub(crate) fn session_project_option_at<'a>(
+    sessions: &'a SessionsState,
+    picker: &'a SessionProjectPickerState,
+    index: usize,
+) -> Option<SessionProjectOption<'a>> {
+    let cache = sessions
+        .project_catalog
+        .as_ref()
+        .filter(|_| sessions.project_catalog_is_current())?;
+    if index == 0 {
+        return Some(SessionProjectOption::All {
+            session_count: sessions
+                .base_manifest
+                .as_ref()
+                .map_or(0, |base| base.total_rows),
+        });
+    }
+
+    let mut cursor = 1usize;
+    if let Some(crate::session_manager::project_scope::SessionProjectScope::Exact {
+        display_path,
+        normalized_path,
+    }) = picker.pinned_scope.as_ref()
+    {
+        if index == cursor {
+            return Some(SessionProjectOption::Exact {
+                display_path,
+                normalized_path,
+                session_count: 0,
+            });
+        }
+        cursor = cursor.saturating_add(1);
+    }
+
+    if let Some(project) = index
+        .checked_sub(cursor)
+        .and_then(|project_index| cache.catalog.projects.get(project_index))
+    {
+        return Some(SessionProjectOption::Exact {
+            display_path: &project.display_path,
+            normalized_path: &project.normalized_path,
+            session_count: project.session_count,
+        });
+    }
+
+    let show_unknown = cache.catalog.unknown.session_count > 0
+        || matches!(
+            sessions.project_scope,
+            crate::session_manager::project_scope::SessionProjectScope::Unknown
+        );
+    let unknown_index = cursor.saturating_add(cache.catalog.projects.len());
+    (show_unknown && index == unknown_index).then_some(SessionProjectOption::Unknown {
+        session_count: cache.catalog.unknown.session_count,
+    })
+}
+
+pub(crate) fn session_project_picker_pinned_scope(
+    sessions: &SessionsState,
+) -> Option<crate::session_manager::project_scope::SessionProjectScope> {
+    let crate::session_manager::project_scope::SessionProjectScope::Exact {
+        normalized_path, ..
+    } = &sessions.project_scope
+    else {
+        return None;
+    };
+    let catalog = sessions
+        .project_catalog
+        .as_ref()
+        .filter(|_| sessions.project_catalog_is_current())?;
+    catalog
+        .catalog
+        .project_position(normalized_path)
+        .is_none()
+        .then(|| sessions.project_scope.clone())
+}
+
+pub(crate) fn session_project_option_scope(
+    option: SessionProjectOption<'_>,
+) -> crate::session_manager::project_scope::SessionProjectScope {
+    match option {
+        SessionProjectOption::All { .. } => {
+            crate::session_manager::project_scope::SessionProjectScope::All
+        }
+        SessionProjectOption::Unknown { .. } => {
+            crate::session_manager::project_scope::SessionProjectScope::Unknown
+        }
+        SessionProjectOption::Exact {
+            display_path,
+            normalized_path,
+            ..
+        } => crate::session_manager::project_scope::SessionProjectScope::Exact {
+            display_path: display_path.to_string(),
+            normalized_path: normalized_path.to_string(),
+        },
+    }
+}
+
+pub(crate) fn session_project_active_option_index(
+    sessions: &SessionsState,
+    picker: &SessionProjectPickerState,
+) -> usize {
+    let Some(cache) = sessions
+        .project_catalog
+        .as_ref()
+        .filter(|_| sessions.project_catalog_is_current())
+    else {
+        return 0;
+    };
+    match &sessions.project_scope {
+        crate::session_manager::project_scope::SessionProjectScope::All => 0,
+        crate::session_manager::project_scope::SessionProjectScope::Unknown => 1usize
+            .saturating_add(usize::from(picker.pinned_scope.is_some()))
+            .saturating_add(cache.catalog.projects.len()),
+        crate::session_manager::project_scope::SessionProjectScope::Exact {
+            normalized_path,
+            ..
+        } => {
+            if picker.pinned_scope.is_some() {
+                1
+            } else {
+                cache
+                    .catalog
+                    .project_position(normalized_path)
+                    .map(|index| 1usize.saturating_add(index))
+                    .unwrap_or(0)
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct SessionProjectFilterSource {
+    pub(crate) catalog:
+        std::sync::Arc<crate::session_manager::project_scope::SessionProjectCatalog>,
+    pub(crate) project_offset: usize,
+    pub(crate) fixed_matches: Vec<usize>,
+    pub(crate) trailing_matches: Vec<usize>,
+}
+
+pub(crate) fn session_project_filter_source(
+    sessions: &SessionsState,
+    picker: &SessionProjectPickerState,
+    query_lower: &str,
+) -> Option<SessionProjectFilterSource> {
+    let cache = sessions
+        .project_catalog
+        .as_ref()
+        .filter(|_| sessions.project_catalog_is_current())?;
+    let mut fixed_matches = Vec::with_capacity(2);
+    if texts::tui_sessions_all_projects()
+        .to_lowercase()
+        .contains(query_lower)
+    {
+        fixed_matches.push(0);
+    }
+    let mut cursor = 1usize;
+    if let Some(crate::session_manager::project_scope::SessionProjectScope::Exact {
+        display_path,
+        ..
+    }) = picker.pinned_scope.as_ref()
+    {
+        if crate::session_manager::project_scope::project_path_contains_query(
+            display_path,
+            query_lower,
+        ) {
+            fixed_matches.push(cursor);
+        }
+        cursor = cursor.saturating_add(1);
+    }
+    let show_unknown = cache.catalog.unknown.session_count > 0
+        || matches!(
+            sessions.project_scope,
+            crate::session_manager::project_scope::SessionProjectScope::Unknown
+        );
+    let unknown_index = cursor.saturating_add(cache.catalog.projects.len());
+    let trailing_matches = (show_unknown
+        && texts::tui_sessions_unknown_project()
+            .to_lowercase()
+            .contains(query_lower))
+    .then_some(unknown_index)
+    .into_iter()
+    .collect();
+    Some(SessionProjectFilterSource {
+        catalog: std::sync::Arc::clone(&cache.catalog),
+        project_offset: cursor,
+        fixed_matches,
+        trailing_matches,
+    })
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "session visibility combines route, filter, loaded-detail, and deep-search state"
@@ -925,28 +1111,33 @@ impl<'a> SessionRowsView<'a> {
 pub(crate) fn visible_sessions_for_state<'a>(
     filter: &FilterState,
     app_type: &AppType,
-    show_all: bool,
     rows_provider_id: Option<&str>,
+    project_scope: &crate::session_manager::project_scope::SessionProjectScope,
     rows: &'a [crate::session_manager::SessionMeta],
     detail_key: Option<&str>,
     messages_loaded: bool,
     messages: &[crate::session_manager::SessionMessage],
     deep_search_query: Option<&str>,
     deep_search_results: &[crate::session_manager::SessionSearchHit],
-    materialized_query: bool,
+    materialized_view: bool,
     rows_revision: u64,
     messages_revision: u64,
     deep_search_seq: u64,
     visibility_cache: &std::cell::RefCell<SessionVisibilityCache>,
 ) -> SessionRowsView<'a> {
-    let query = (!materialized_query)
-        .then(|| filter.query_lower())
-        .flatten();
-    let deep_search_query = (!materialized_query).then_some(deep_search_query).flatten();
+    let query = (!materialized_view).then(|| filter.query_lower()).flatten();
+    let deep_search_query = (!materialized_view).then_some(deep_search_query).flatten();
+    let project_scope = (!materialized_view
+        && !matches!(
+            project_scope,
+            crate::session_manager::project_scope::SessionProjectScope::All
+        ))
+    .then_some(project_scope);
     let provider_id = app_type.as_str();
     if query.is_none()
         && deep_search_query.is_none()
-        && (show_all || rows_provider_id == Some(provider_id))
+        && project_scope.is_none()
+        && rows_provider_id == Some(provider_id)
     {
         return SessionRowsView::All(rows);
     }
@@ -957,8 +1148,8 @@ pub(crate) fn visible_sessions_for_state<'a>(
         rows_revision,
         query: query.clone(),
         app_provider_id: provider_id.to_string(),
-        show_all,
         rows_provider_id: rows_provider_id.map(str::to_string),
+        project_scope: project_scope.cloned(),
         detail_key: detail_key.map(str::to_string),
         messages_revision,
         messages_loaded,
@@ -984,7 +1175,10 @@ pub(crate) fn visible_sessions_for_state<'a>(
             let indices = rows
                 .iter()
                 .enumerate()
-                .filter(|(_, row)| show_all || row.provider_id == provider_id)
+                .filter(|(_, row)| row.provider_id == provider_id)
+                .filter(|(_, row)| {
+                    project_scope.is_none_or(|scope| scope.matches(row.project_dir.as_deref()))
+                })
                 .filter(|(_, row)| {
                     if let Some(ref hit_paths) = deep_search_source_paths {
                         let in_hits = row

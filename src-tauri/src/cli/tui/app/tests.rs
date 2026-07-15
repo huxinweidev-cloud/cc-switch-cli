@@ -6,13 +6,16 @@ use super::*;
     reason = "test module mirrors the file layout"
 )]
 mod tests {
-    use super::types::{McpEnvEditorField, McpEnvEntryEditorState, UsageLogPager};
+    use super::types::{
+        McpEnvEditorField, McpEnvEntryEditorState, UsageLogPager, MODEL_FETCH_FILTER_MAX_MATCHES,
+    };
     use super::*;
     use crossterm::event::{KeyEvent, KeyModifiers};
     use serde_json::json;
     use serial_test::serial;
     use std::path::Path;
     use tempfile::TempDir;
+    use unicode_width::UnicodeWidthStr;
 
     use crate::cli::i18n::{texts, use_test_language, Language};
     use crate::cli::tui::data::ProviderRow;
@@ -158,7 +161,6 @@ mod tests {
             prompt: "Prompt".to_string(),
             input: TextInput::new(""),
             submit: TextSubmit::ConfigExport,
-            secret: false,
         })
         .is_editing());
         assert!(Overlay::ClaudeModelPicker {
@@ -175,8 +177,11 @@ mod tests {
             query: String::new(),
             fetching: false,
             models: Vec::new(),
+            filtered_indices: None,
+            filter_incomplete: false,
             error: None,
             selected_idx: 0,
+            selection_active: false,
         }
         .is_editing());
         assert!(Overlay::McpEnvEntryEditor(McpEnvEntryEditorState {
@@ -192,7 +197,7 @@ mod tests {
     fn select_provider_common_snippet_row(app: &mut App) {
         if let Some(FormState::ProviderAdd(form)) = app.form.as_mut() {
             form.focus = FormFocus::Fields;
-            form.editing = false;
+            form.clear_text_edit();
             let fields = form.fields();
             form.field_idx = fields
                 .iter()
@@ -262,7 +267,9 @@ mod tests {
 
     fn provider_editing_name(app: &App) -> (bool, String) {
         match app.form.as_ref() {
-            Some(FormState::ProviderAdd(form)) => (form.editing, form.name.value.clone()),
+            Some(FormState::ProviderAdd(form)) => {
+                (form.is_editing_main_text(), form.name.value.clone())
+            }
             _ => panic!("provider form should be open"),
         }
     }
@@ -297,7 +304,7 @@ mod tests {
 
     fn mcp_editing_id(app: &App) -> (bool, String) {
         match app.form.as_ref() {
-            Some(FormState::McpAdd(form)) => (form.editing, form.id.value.clone()),
+            Some(FormState::McpAdd(form)) => (form.text_edit.is_some(), form.id.value.clone()),
             _ => panic!("mcp form should be open"),
         }
     }
@@ -325,7 +332,7 @@ mod tests {
 
     fn prompt_editing_id(app: &App) -> (bool, String) {
         match app.form.as_ref() {
-            Some(FormState::PromptMeta(form)) => (form.editing, form.id.value.clone()),
+            Some(FormState::PromptMeta(form)) => (form.text_edit.is_some(), form.id.value.clone()),
             _ => panic!("prompt form should be open"),
         }
     }
@@ -333,7 +340,7 @@ mod tests {
     fn select_provider_usage_query_row(app: &mut App) {
         if let Some(FormState::ProviderAdd(form)) = app.form.as_mut() {
             form.focus = FormFocus::Fields;
-            form.editing = false;
+            form.clear_text_edit();
             let fields = form.fields();
             form.field_idx = fields
                 .iter()
@@ -347,7 +354,7 @@ mod tests {
     fn select_provider_field(app: &mut App, field: ProviderAddField) {
         if let Some(FormState::ProviderAdd(form)) = app.form.as_mut() {
             form.focus = FormFocus::Fields;
-            form.editing = false;
+            form.clear_text_edit();
             let fields = form.fields();
             form.field_idx = fields
                 .iter()
@@ -382,7 +389,7 @@ mod tests {
     fn select_usage_query_field(app: &mut App, field: UsageQueryField) {
         if let Some(FormState::ProviderAdd(form)) = app.form.as_mut() {
             form.focus = FormFocus::Fields;
-            form.usage_query_editing = false;
+            form.clear_text_edit();
             let fields = form.usage_query_table_fields();
             form.usage_query_field_idx = fields
                 .iter()
@@ -495,6 +502,38 @@ mod tests {
             &mut proxy_loading,
             None,
             None,
+            None,
+            &mut webdav_loading,
+            None,
+            &mut update_check,
+            None,
+            None,
+            action,
+        )
+    }
+
+    fn run_runtime_action_with_session_tx(
+        app: &mut App,
+        data: &mut UiData,
+        session_tx: &std::sync::mpsc::Sender<crate::cli::tui::runtime_systems::SessionReq>,
+        action: Action,
+    ) -> Result<(), AppError> {
+        let mut terminal = TuiTerminal::new_for_test().expect("create terminal");
+        let mut proxy_loading = RequestTracker::default();
+        let mut webdav_loading = RequestTracker::default();
+        let mut update_check = RequestTracker::default();
+
+        handle_action(
+            &mut terminal,
+            app,
+            data,
+            None,
+            None,
+            None,
+            None,
+            &mut proxy_loading,
+            None,
+            Some(session_tx),
             None,
             &mut webdav_loading,
             None,
@@ -1359,7 +1398,7 @@ mod tests {
         if let Some(FormState::ProviderAdd(form)) = app.form.as_mut() {
             form.focus = FormFocus::Fields;
             form.field_idx = notes_idx;
-            form.editing = false;
+            form.clear_text_edit();
         }
 
         // Enter edit mode for Notes.
@@ -1417,7 +1456,6 @@ mod tests {
             prompt: "Value".to_string(),
             input: TextInput::new("alpha beta"),
             submit: TextSubmit::ConfigBackupName,
-            secret: false,
         });
 
         app.on_key(ctrl(KeyCode::Char('a')), &data());
@@ -1451,8 +1489,8 @@ mod tests {
 
         if let Some(FormState::ProviderAdd(form)) = app.form.as_mut() {
             form.field_idx = name_idx;
-            form.editing = true;
             form.name.set("alpha beta");
+            assert!(form.begin_main_text_edit(ProviderAddField::Name));
         }
 
         app.on_key(ctrl(KeyCode::Char('a')), &data());
@@ -1571,7 +1609,6 @@ mod tests {
             Overlay::TextInput(TextInputState {
                 ref input,
                 submit: TextSubmit::ProviderCustomUserAgent,
-                secret: false,
                 ..
             }) if input.value == "existing-agent/1.0"
         ));
@@ -1731,12 +1768,13 @@ mod tests {
                 .iter()
                 .position(|field| *field == ProviderAddField::ClaudeFallbackModel)
                 .expect("fallback model field should exist");
-            form.editing = true;
+            assert!(form.begin_main_text_edit(ProviderAddField::ClaudeFallbackModel));
         }
 
         for ch in "gpt-4o".chars() {
             app.on_key(key(KeyCode::Char(ch)), &data());
         }
+        app.on_key(key(KeyCode::Enter), &data());
 
         // The fallback row lives outside the model-mapping sub-page, but editing it
         // must still mark the model config touched so ANTHROPIC_MODEL is persisted.
@@ -1763,8 +1801,8 @@ mod tests {
             .iter()
             .position(|field| *field == McpAddField::Name)
             .expect("name field should exist");
-        form.editing = true;
         form.name.set("alpha beta");
+        assert!(form.begin_text_edit(McpAddField::Name));
         app.form = Some(FormState::McpAdd(form));
 
         app.on_key(ctrl(KeyCode::Char('a')), &data());
@@ -1814,8 +1852,11 @@ mod tests {
             query: "alpha beta".to_string(),
             fetching: false,
             models: vec!["alpha beta".to_string()],
+            filtered_indices: None,
+            filter_incomplete: false,
             error: None,
             selected_idx: 0,
+            selection_active: false,
         };
 
         app.on_key(ctrl(KeyCode::Char('a')), &data());
@@ -1829,6 +1870,88 @@ mod tests {
                 if input.value == ">alpha "
                     && input.cursor == ">alpha ".chars().count()
                     && query == ">alpha "
+        ));
+    }
+
+    #[test]
+    fn model_fetch_filter_cache_uses_none_for_all_and_indices_for_matches() {
+        let models = vec![
+            "Alpha".to_string(),
+            "beta".to_string(),
+            "ALPHABET".to_string(),
+        ];
+
+        assert_eq!(model_fetch_filter(&models, "   ").indices, None);
+        assert_eq!(
+            model_fetch_filter(&models, " alp ").indices,
+            Some(vec![0, 2])
+        );
+        assert_eq!(
+            model_fetch_filter(&models, "missing").indices,
+            Some(Vec::new())
+        );
+    }
+
+    #[test]
+    fn model_fetch_filter_searches_a_typical_ten_thousand_row_catalog_completely() {
+        let models = (0..10_000)
+            .map(|index| format!("model-{index:05}"))
+            .collect::<Vec<_>>();
+
+        let filter = model_fetch_filter(&models, "09999");
+
+        assert_eq!(filter.indices, Some(vec![9_999]));
+        assert!(!filter.incomplete);
+    }
+
+    #[test]
+    fn model_fetch_filter_bounds_single_values_queries_and_match_collections() {
+        let models = vec!["x".repeat(1_000_000), "alpha".to_string()];
+        let filter = model_fetch_filter(&models, "alpha");
+        assert_eq!(filter.indices, Some(vec![1]));
+        assert!(filter.incomplete);
+
+        let oversized_query = "q".repeat(MODEL_FETCH_QUERY_MAX_BYTES + 1);
+        let filter = model_fetch_filter(&models, &oversized_query);
+        assert_eq!(filter.indices, Some(Vec::new()));
+        assert!(filter.incomplete);
+
+        let matching = vec!["match".to_string(); MODEL_FETCH_FILTER_MAX_MATCHES + 1];
+        let filter = model_fetch_filter(&matching, "match");
+        assert_eq!(
+            filter.indices.as_ref().map(Vec::len),
+            Some(MODEL_FETCH_FILTER_MAX_MATCHES)
+        );
+        assert!(filter.incomplete);
+    }
+
+    #[test]
+    fn model_fetch_navigation_does_not_copy_a_huge_model_into_the_query() {
+        let mut app = App::new(Some(AppType::Claude));
+        app.overlay = Overlay::ModelFetchPicker {
+            request_id: 1,
+            field: ProviderAddField::Name,
+            claude_idx: None,
+            input: TextInput::new("needle"),
+            query: "needle".to_string(),
+            fetching: false,
+            models: vec![format!("needle-{}", "x".repeat(1_000_000))],
+            filtered_indices: Some(vec![0]),
+            filter_incomplete: true,
+            error: None,
+            selected_idx: 0,
+            selection_active: false,
+        };
+
+        app.on_key(key(KeyCode::Down), &data());
+
+        assert!(matches!(
+            app.overlay,
+            Overlay::ModelFetchPicker {
+                ref input,
+                selection_active: true,
+                ..
+            } if input.value == "needle"
         ));
     }
 
@@ -1877,7 +2000,7 @@ mod tests {
 
         if let Some(FormState::ProviderAdd(form)) = app.form.as_mut() {
             form.focus = FormFocus::Fields;
-            form.editing = false;
+            form.clear_text_edit();
             let fields = form.fields();
             form.field_idx = fields
                 .iter()
@@ -2153,8 +2276,11 @@ mod tests {
             query: "gpt-5.4".to_string(),
             fetching: false,
             models: vec!["gpt-5.4".to_string()],
+            filtered_indices: None,
+            filter_incomplete: false,
             error: None,
             selected_idx: 0,
+            selection_active: false,
         };
         app.pending_overlay = Some(Overlay::HermesModelsPicker { editing: false });
 
@@ -2185,7 +2311,7 @@ mod tests {
         if let Some(FormState::ProviderAdd(form)) = app.form.as_mut() {
             form.focus = FormFocus::Fields;
             form.field_idx = 0;
-            form.editing = true;
+            assert!(form.begin_main_text_edit(ProviderAddField::Id));
         }
 
         for ch in "My Provider_1".chars() {
@@ -2196,6 +2322,18 @@ mod tests {
             panic!("expected ProviderAdd form");
         };
         assert_eq!(form.id.value, "myprovider1");
+    }
+
+    #[test]
+    fn provider_template_clears_stale_inline_errors() {
+        let mut form = ProviderAddFormState::new(AppType::Claude);
+        form.set_main_field_error(ProviderAddField::Name, "stale name error");
+        form.set_usage_query_field_error(UsageQueryField::Script, "stale script error");
+
+        form.apply_template(0, &[]);
+
+        assert!(form.field_errors.is_empty());
+        assert!(form.usage_query_field_errors.is_empty());
     }
 
     #[test]
@@ -2225,6 +2363,134 @@ mod tests {
 
         app.on_key(alt(KeyCode::Char('b')), &data());
         assert_eq!(app.editor.as_ref().unwrap().cursor_col, 0);
+    }
+
+    #[test]
+    fn editor_scrolls_within_one_long_wrapped_physical_line() {
+        let content = format!("{}TAIL", "x".repeat(120));
+        let mut editor = EditorState::new(
+            "Long line",
+            EditorKind::Plain,
+            EditorSubmit::PromptCreate {
+                id: "demo".to_string(),
+                name: "Demo".to_string(),
+                description: None,
+            },
+            &content,
+        );
+        editor.cursor_col = content.len();
+
+        editor.ensure_cursor_visible(Size {
+            width: 10,
+            height: 3,
+        });
+
+        assert_eq!(editor.scroll, 0);
+        assert!(editor.scroll_subline > 0);
+        assert!(editor.cursor_visual_offset_from_scroll(10).0 < 3);
+        assert!(editor
+            .visible_wrapped_lines(10, 3)
+            .iter()
+            .any(|line| line.contains("TAIL")));
+
+        editor.apply_text_command(TextEditCommand::MoveLineStart);
+        editor.ensure_cursor_visible(Size {
+            width: 10,
+            height: 3,
+        });
+        assert_eq!(editor.scroll_subline, 0);
+        assert_eq!(editor.cursor_visual_offset_from_scroll(10).0, 0);
+    }
+
+    #[test]
+    fn editor_large_ascii_line_materializes_only_the_visible_window() {
+        let content = format!("{}TAIL", "x".repeat(1_000_000));
+        let mut editor = EditorState::new(
+            "Large line",
+            EditorKind::Plain,
+            EditorSubmit::PromptCreate {
+                id: "demo".to_string(),
+                name: "Demo".to_string(),
+                description: None,
+            },
+            &content,
+        );
+        editor.cursor_col = content.len();
+        let viewport = Size {
+            width: 10,
+            height: 3,
+        };
+
+        let (scroll, subline) = editor.viewport_origin(viewport);
+        let visible = editor.visible_wrapped_lines_from(10, 3, scroll, subline);
+
+        assert_eq!(scroll, 0);
+        assert_eq!(visible.len(), 1);
+        assert!(visible.iter().map(String::len).sum::<usize>() <= 10);
+        assert!(visible.last().is_some_and(|line| line.ends_with("TAIL")));
+        assert!(
+            editor
+                .cursor_visual_offset_from_origin(10, scroll, subline)
+                .0
+                < 3
+        );
+    }
+
+    #[test]
+    fn editor_large_unicode_line_materializes_only_the_cursor_window() {
+        let content = format!("{}TAIL", "你".repeat(1_000_000));
+        let mut editor = EditorState::new(
+            "Large Unicode line",
+            EditorKind::Plain,
+            EditorSubmit::PromptCreate {
+                id: "demo".to_string(),
+                name: "Demo".to_string(),
+                description: None,
+            },
+            &content,
+        );
+        editor.cursor_col = content.len();
+        let viewport = Size {
+            width: 10,
+            height: 3,
+        };
+
+        let (scroll, subline) = editor.viewport_origin(viewport);
+        let visible = editor.visible_wrapped_lines_from(10, 3, scroll, subline);
+
+        assert_eq!((scroll, subline), (0, 0));
+        assert_eq!(visible.len(), 1);
+        assert!(UnicodeWidthStr::width(visible[0].as_str()) <= 10);
+        assert!(visible[0].chars().count() <= 10);
+        assert!(visible[0].ends_with("TAIL"));
+        assert!(
+            editor
+                .cursor_visual_offset_from_origin(10, scroll, subline)
+                .0
+                < 3
+        );
+    }
+
+    #[test]
+    fn editor_large_zero_width_line_keeps_rendered_character_count_bounded() {
+        let content = "\u{0301}".repeat(1_000_000);
+        let mut editor = EditorState::new(
+            "Large combining line",
+            EditorKind::Plain,
+            EditorSubmit::PromptCreate {
+                id: "demo".to_string(),
+                name: "Demo".to_string(),
+                description: None,
+            },
+            &content,
+        );
+        editor.cursor_col = content.len();
+
+        let visible = editor.visible_wrapped_lines_from(10, 3, 0, 0);
+
+        assert_eq!(visible.len(), 1);
+        assert!(visible[0].chars().count() <= 10);
+        assert_eq!(editor.cursor_visual_offset_from_origin(10, 0, 0), (0, 9));
     }
 
     #[test]
@@ -3146,7 +3412,8 @@ mod tests {
                 homepage: None,
                 docs: None,
                 tags: vec![],
-            },
+            }
+            .into(),
         });
 
         let action = app.on_key(key(KeyCode::Char(' ')), &data);
@@ -3177,7 +3444,8 @@ mod tests {
                 homepage: None,
                 docs: None,
                 tags: vec![],
-            },
+            }
+            .into(),
         });
 
         let action = app.on_key(key(KeyCode::Char('x')), &data);
@@ -3228,7 +3496,8 @@ mod tests {
                 homepage: None,
                 docs: None,
                 tags: vec![],
-            },
+            }
+            .into(),
         });
 
         let action = app.on_key(key(KeyCode::Char('m')), &data);
@@ -3262,7 +3531,8 @@ mod tests {
                 homepage: None,
                 docs: None,
                 tags: vec![],
-            },
+            }
+            .into(),
         });
 
         app.on_key(key(KeyCode::Char('m')), &data);
@@ -3299,7 +3569,8 @@ mod tests {
                 homepage: None,
                 docs: None,
                 tags: vec![],
-            },
+            }
+            .into(),
         });
 
         app.on_key(key(KeyCode::Char('m')), &data);
@@ -3330,7 +3601,8 @@ mod tests {
                 homepage: None,
                 docs: None,
                 tags: vec![],
-            },
+            }
+            .into(),
         });
 
         app.on_key(key(KeyCode::Char('m')), &data);
@@ -3371,7 +3643,8 @@ mod tests {
                 homepage: None,
                 docs: None,
                 tags: vec![],
-            },
+            }
+            .into(),
         });
 
         app.on_key(key(KeyCode::Char('m')), &data);
@@ -3418,7 +3691,8 @@ mod tests {
                 homepage: None,
                 docs: None,
                 tags: vec![],
-            },
+            }
+            .into(),
         });
 
         let action = app.on_key(key(KeyCode::Char('m')), &data);
@@ -3460,7 +3734,8 @@ mod tests {
                 homepage: None,
                 docs: None,
                 tags: vec![],
-            },
+            }
+            .into(),
         });
 
         let action = app.on_key(key(KeyCode::Char('e')), &data);
@@ -4541,7 +4816,7 @@ mod tests {
 
         if let Some(FormState::ProviderAdd(form)) = app.form.as_mut() {
             form.focus = super::super::form::FormFocus::Fields;
-            form.editing = false;
+            form.clear_text_edit();
             let fields = form.fields();
             form.field_idx = fields
                 .iter()
@@ -4574,7 +4849,7 @@ mod tests {
 
         if let Some(FormState::ProviderAdd(form)) = app.form.as_mut() {
             form.focus = super::super::form::FormFocus::Fields;
-            form.editing = false;
+            form.clear_text_edit();
             let fields = form.fields();
             form.field_idx = fields
                 .iter()
@@ -5026,7 +5301,6 @@ mod tests {
             prompt: texts::tui_openclaw_daily_memory_create_prompt().to_string(),
             input: TextInput::new("bad-name.md".to_string()),
             submit: TextSubmit::OpenClawDailyMemoryFilename,
-            secret: false,
         });
 
         let action = app.on_key(key(KeyCode::Enter), &UiData::default());
@@ -5330,7 +5604,6 @@ mod tests {
             prompt: texts::tui_openclaw_daily_memory_create_prompt().to_string(),
             input: TextInput::new("2026-03-20.md".to_string()),
             submit: TextSubmit::OpenClawDailyMemoryFilename,
-            secret: false,
         });
         let mut data = UiData::load(&AppType::OpenClaw).expect("load openclaw ui data");
 
@@ -5367,7 +5640,6 @@ mod tests {
             prompt: texts::tui_openclaw_daily_memory_create_prompt().to_string(),
             input: TextInput::new("2026-03-20.md".to_string()),
             submit: TextSubmit::OpenClawDailyMemoryFilename,
-            secret: false,
         });
         let mut data = UiData::load(&AppType::OpenClaw).expect("load openclaw ui data");
 
@@ -6653,6 +6925,61 @@ mod tests {
             .expect("model should be present after auto-save");
         assert_eq!(model.primary, "demo/model-c");
         assert!(model.fallbacks.is_empty());
+    }
+
+    #[test]
+    fn openclaw_agents_primary_picker_preserves_large_catalog_and_complete_values() {
+        let mut app = App::new(Some(AppType::OpenClaw));
+        app.route = Route::ConfigOpenClawAgents;
+        app.focus = Focus::Content;
+
+        let middle = 5_000usize;
+        let huge_model_id = format!("huge-model-{}", "x".repeat(2 * 1024 * 1024));
+        let mut models = (0..10_000)
+            .map(|index| (format!("model-{index:05}"), format!("Model {index:05}")))
+            .collect::<Vec<_>>();
+        models[middle].0 = huge_model_id.clone();
+        let model_refs = models
+            .iter()
+            .map(|(id, name)| (id.as_str(), name.as_str()))
+            .collect::<Vec<_>>();
+        let primary = format!("demo/{huge_model_id}");
+
+        let mut data = UiData::default();
+        data.providers.rows = vec![openclaw_provider_row("demo", "Demo Provider", &model_refs)];
+        data.config.openclaw_agents_defaults =
+            Some(crate::openclaw_config::OpenClawAgentsDefaults {
+                model: Some(crate::openclaw_config::OpenClawDefaultModel {
+                    primary: primary.clone(),
+                    fallbacks: Vec::new(),
+                    extra: std::collections::HashMap::new(),
+                }),
+                models: None,
+                extra: std::collections::HashMap::new(),
+            });
+
+        assert!(matches!(
+            app.on_key(key(KeyCode::Enter), &data),
+            Action::None
+        ));
+        let Overlay::OpenClawAgentsFallbackPicker {
+            selected,
+            active,
+            options,
+            ..
+        } = &app.overlay
+        else {
+            panic!("expected primary model picker");
+        };
+
+        assert_eq!(options.len(), 10_000);
+        assert_eq!(*active, Some(*selected));
+        assert_eq!(options[*selected].value, primary);
+        assert_eq!(models[middle].0, huge_model_id);
+        assert_eq!(
+            data.providers.rows[0].provider.settings_config["models"][middle]["id"].as_str(),
+            Some(models[middle].0.as_str())
+        );
     }
 
     #[test]
@@ -9050,6 +9377,57 @@ mod tests {
     }
 
     #[test]
+    fn openclaw_warning_helpers_bound_extreme_paths_and_warning_scans() {
+        let mut data = UiData::default();
+        data.config.openclaw_config_path =
+            Some(std::path::PathBuf::from("p".repeat(3 * 1024 * 1024)));
+        data.config.openclaw_warnings = Some(
+            (0..OPENCLAW_WARNING_SCAN_ITEMS)
+                .map(|index| crate::openclaw_config::OpenClawHealthWarning {
+                    code: "config_parse_failed".to_string(),
+                    message: format!("warning {index}"),
+                    path: Some("unrelated.section".to_string()),
+                })
+                .collect(),
+        );
+
+        assert!(!openclaw_tools_load_failed(&data));
+        assert!(!openclaw_agents_load_failed(&data));
+        assert!(!openclaw_tools_has_blocking_warning(&data));
+        assert!(!openclaw_agents_has_blocking_warning(&data));
+
+        data.config
+            .openclaw_warnings
+            .as_mut()
+            .expect("warnings")
+            .push(crate::openclaw_config::OpenClawHealthWarning {
+                code: "config_parse_failed".to_string(),
+                message: "warning beyond inspection budget".to_string(),
+                path: Some("unrelated.section".to_string()),
+            });
+
+        // The section is absent and the remaining warning is uninspected, so
+        // saving must fail closed even though the visible prefix is unrelated.
+        assert!(openclaw_tools_load_failed(&data));
+        assert!(openclaw_agents_load_failed(&data));
+
+        data.config.openclaw_tools = Some(crate::openclaw_config::OpenClawToolsConfig::default());
+        data.config.openclaw_agents_defaults =
+            Some(crate::openclaw_config::OpenClawAgentsDefaults::default());
+
+        assert!(!openclaw_tools_load_failed(&data));
+        assert!(!openclaw_agents_load_failed(&data));
+        assert!(!openclaw_tools_has_blocking_warning(&data));
+        assert!(!openclaw_agents_has_blocking_warning(&data));
+
+        data.config.openclaw_warnings.as_mut().expect("warnings")
+            [OPENCLAW_WARNING_SCAN_ITEMS - 1]
+            .path = None;
+        assert!(openclaw_tools_has_blocking_warning(&data));
+        assert!(openclaw_agents_has_blocking_warning(&data));
+    }
+
+    #[test]
     #[serial(home_settings)]
     fn openclaw_tools_save_is_blocked_for_real_malformed_tools_section_without_seeding_form() {
         let temp_home = TempDir::new().expect("create temp home");
@@ -9484,7 +9862,6 @@ mod tests {
             prompt: "path".to_string(),
             input: TextInput::new(r"\\wsl$\Ubuntu\home\demo\.openclaw".to_string()),
             submit: TextSubmit::SettingsOpenClawConfigDir,
-            secret: false,
         });
 
         let action = app.on_key(key(KeyCode::Enter), &UiData::default());
@@ -9499,7 +9876,6 @@ mod tests {
             prompt: "path".to_string(),
             input: TextInput::new("   ".to_string()),
             submit: TextSubmit::SettingsOpenClawConfigDir,
-            secret: false,
         });
 
         let action = app.on_key(key(KeyCode::Enter), &UiData::default());
@@ -9890,7 +10266,6 @@ mod tests {
             prompt: "port".to_string(),
             input: TextInput::new("15721".to_string()),
             submit: TextSubmit::SettingsProxyListenPort,
-            secret: false,
         });
         let action = app.on_key(key(KeyCode::Enter), &data);
         assert!(matches!(
@@ -9938,7 +10313,6 @@ mod tests {
             prompt: "port".to_string(),
             input: TextInput::new("15721".to_string()),
             submit: TextSubmit::SettingsProxyListenPort,
-            secret: false,
         });
 
         let mut data = UiData::default();
@@ -9970,7 +10344,6 @@ mod tests {
             prompt: "address".to_string(),
             input: TextInput::new("127.0.0.1".to_string()),
             submit: TextSubmit::SettingsProxyListenAddress,
-            secret: false,
         });
         let data = UiData::default();
         let action = app.on_key(key(KeyCode::Enter), &data);
@@ -9984,7 +10357,6 @@ mod tests {
             prompt: "port".to_string(),
             input: TextInput::new("15721".to_string()),
             submit: TextSubmit::SettingsProxyListenPort,
-            secret: false,
         });
         let action = app.on_key(key(KeyCode::Enter), &data);
         assert!(matches!(
@@ -10004,7 +10376,6 @@ mod tests {
             prompt: "address".to_string(),
             input: TextInput::new("bad host".to_string()),
             submit: TextSubmit::SettingsProxyListenAddress,
-            secret: false,
         });
         let data = UiData::default();
         let action = app.on_key(key(KeyCode::Enter), &data);
@@ -10022,7 +10393,6 @@ mod tests {
             prompt: "port".to_string(),
             input: TextInput::new("80".to_string()),
             submit: TextSubmit::SettingsProxyListenPort,
-            secret: false,
         });
         let action = app.on_key(key(KeyCode::Enter), &data);
         assert!(matches!(action, Action::None));
@@ -10045,7 +10415,6 @@ mod tests {
             prompt: "address".to_string(),
             input: TextInput::new("127.0.0.1".to_string()),
             submit: TextSubmit::SettingsProxyListenAddress,
-            secret: false,
         });
 
         let mut data = UiData::default();
@@ -10176,7 +10545,6 @@ mod tests {
             app.overlay,
             Overlay::TextInput(TextInputState {
                 submit: TextSubmit::WebDavJianguoyunPassword,
-                secret: true,
                 ..
             })
         ));
@@ -10242,7 +10610,6 @@ mod tests {
             app.overlay,
             Overlay::TextInput(TextInputState {
                 submit: TextSubmit::WebDavJianguoyunPassword,
-                secret: true,
                 ..
             })
         ));
@@ -10359,7 +10726,13 @@ mod tests {
 
         let action = app.on_key(ctrl(KeyCode::Char('s')), &UiData::default());
         assert!(matches!(action, Action::None));
-        assert!(matches!(app.form, Some(FormState::PromptMeta(_))));
+        assert!(matches!(
+            app.form,
+            Some(FormState::PromptMeta(ref form))
+                if form.focus == FormFocus::Fields
+                    && form.fields().get(form.field_idx) == Some(&PromptMetaField::Name)
+                    && form.field_error(PromptMetaField::Name).is_some()
+        ));
         assert!(app.editor.is_none());
     }
 
@@ -11089,6 +11462,26 @@ mod tests {
     }
 
     #[test]
+    fn provider_key_app_save_focuses_id_before_name_when_both_are_missing() {
+        let mut app = App::new(Some(AppType::Hermes));
+        app.route = Route::Providers;
+        app.focus = Focus::Content;
+        app.form = Some(FormState::ProviderAdd(ProviderAddFormState::new(
+            AppType::Hermes,
+        )));
+
+        let action = app.on_key(ctrl(KeyCode::Char('s')), &UiData::default());
+
+        assert!(matches!(action, Action::None));
+        let Some(FormState::ProviderAdd(form)) = app.form.as_ref() else {
+            panic!("expected provider form");
+        };
+        assert_eq!(form.fields()[form.field_idx], ProviderAddField::Id);
+        assert!(form.main_field_error(ProviderAddField::Id).is_some());
+        assert!(form.main_field_error(ProviderAddField::Name).is_none());
+    }
+
+    #[test]
     fn provider_add_form_codex_requires_base_url_before_submit() {
         let mut app = App::new(Some(AppType::Codex));
         app.route = Route::Providers;
@@ -11114,6 +11507,13 @@ mod tests {
                 message,
                 ..
             }) if message == texts::base_url_empty_error()
+        ));
+        assert!(matches!(
+            app.form,
+            Some(FormState::ProviderAdd(ref form))
+                if form.focus == FormFocus::Fields
+                    && form.fields().get(form.field_idx) == Some(&ProviderAddField::CodexBaseUrl)
+                    && form.main_field_error(ProviderAddField::CodexBaseUrl).is_some()
         ));
     }
 
@@ -11422,7 +11822,8 @@ mod tests {
                 homepage: None,
                 docs: None,
                 tags: vec![],
-            },
+            }
+            .into(),
         });
 
         app.on_key(key(KeyCode::Char('e')), &data);
@@ -11465,7 +11866,8 @@ mod tests {
                 homepage: None,
                 docs: None,
                 tags: vec![],
-            },
+            }
+            .into(),
         });
 
         app.on_key(key(KeyCode::Char('e')), &data);
@@ -11670,7 +12072,13 @@ mod tests {
         app.on_key(key(KeyCode::Esc), &data);
         let action = app.on_key(key(KeyCode::Enter), &data);
         assert!(matches!(action, Action::None));
-        assert!(matches!(app.form, Some(FormState::McpAdd(_))));
+        assert!(matches!(
+            app.form,
+            Some(FormState::McpAdd(ref form))
+                if form.focus == FormFocus::Fields
+                    && form.fields().get(form.field_idx) == Some(&McpAddField::Url)
+                    && form.field_error(McpAddField::Url).is_some()
+        ));
     }
 
     #[test]
@@ -11700,6 +12108,35 @@ mod tests {
         assert_eq!(form.server_type, McpTransport::Http);
         assert!(form.fields().contains(&McpAddField::Url));
         assert!(!form.fields().contains(&McpAddField::Command));
+    }
+
+    #[test]
+    fn mcp_template_clears_stale_inline_errors() {
+        let mut app = App::new(Some(AppType::Claude));
+        let mut form = McpAddFormState::new();
+        form.id.set("server");
+        form.focus = FormFocus::Fields;
+        app.form = Some(FormState::McpAdd(form));
+
+        let action = app.on_key(ctrl(KeyCode::Char('s')), &UiData::default());
+        assert!(matches!(action, Action::None));
+        assert!(matches!(
+            app.form,
+            Some(FormState::McpAdd(ref form))
+                if form.field_error(McpAddField::Name).is_some()
+        ));
+
+        if let Some(FormState::McpAdd(form)) = app.form.as_mut() {
+            form.focus = FormFocus::Templates;
+            form.template_idx = 1;
+        }
+        app.on_key(key(KeyCode::Enter), &UiData::default());
+
+        assert!(matches!(
+            app.form,
+            Some(FormState::McpAdd(ref form))
+                if form.name.value == "Filesystem" && form.field_errors.is_empty()
+        ));
     }
 
     #[test]
@@ -11952,7 +12389,7 @@ mod tests {
 
         if let Some(super::super::form::FormState::ProviderAdd(form)) = app.form.as_mut() {
             form.focus = super::super::form::FormFocus::Fields;
-            form.editing = false;
+            form.clear_text_edit();
             form.field_idx = form
                 .fields()
                 .iter()
@@ -11985,7 +12422,7 @@ mod tests {
 
         if let Some(super::super::form::FormState::ProviderAdd(form)) = app.form.as_mut() {
             form.focus = super::super::form::FormFocus::Fields;
-            form.editing = false;
+            form.clear_text_edit();
             form.field_idx = form
                 .fields()
                 .iter()
@@ -12022,7 +12459,7 @@ mod tests {
 
         if let Some(super::super::form::FormState::ProviderAdd(form)) = app.form.as_mut() {
             form.focus = super::super::form::FormFocus::Fields;
-            form.editing = false;
+            form.clear_text_edit();
             form.field_idx = form
                 .fields()
                 .iter()
@@ -12148,7 +12585,7 @@ mod tests {
 
         if let Some(super::super::form::FormState::ProviderAdd(form)) = app.form.as_mut() {
             form.focus = super::super::form::FormFocus::Fields;
-            form.editing = false;
+            form.clear_text_edit();
             form.field_idx = form
                 .fields()
                 .iter()
@@ -12204,7 +12641,7 @@ mod tests {
 
         if let Some(super::super::form::FormState::ProviderAdd(form)) = app.form.as_mut() {
             form.focus = super::super::form::FormFocus::Fields;
-            form.editing = false;
+            form.clear_text_edit();
             form.field_idx = form
                 .fields()
                 .iter()
@@ -12240,7 +12677,7 @@ mod tests {
 
         if let Some(super::super::form::FormState::ProviderAdd(form)) = app.form.as_mut() {
             form.focus = super::super::form::FormFocus::Fields;
-            form.editing = false;
+            form.clear_text_edit();
             form.codex_base_url.set("https://api.example.com/v1");
             form.field_idx = form
                 .fields()
@@ -12285,7 +12722,7 @@ mod tests {
 
         if let Some(super::super::form::FormState::ProviderAdd(form)) = app.form.as_mut() {
             form.focus = super::super::form::FormFocus::Fields;
-            form.editing = false;
+            form.clear_text_edit();
             form.codex_base_url.set("https://api.example.com/v1");
             form.field_idx = form
                 .fields()
@@ -12324,7 +12761,7 @@ mod tests {
 
         if let Some(super::super::form::FormState::ProviderAdd(form)) = app.form.as_mut() {
             form.focus = super::super::form::FormFocus::Fields;
-            form.editing = false;
+            form.clear_text_edit();
             form.codex_base_url.set("https://api.example.com/v1");
             form.field_idx = form
                 .fields()
@@ -12425,8 +12862,11 @@ mod tests {
             query: "kimi-k2".to_string(),
             fetching: false,
             models: vec!["kimi-k2".to_string()],
+            filtered_indices: None,
+            filter_incomplete: false,
             error: None,
             selected_idx: 0,
+            selection_active: false,
         };
         app.on_key(key(KeyCode::Enter), &data);
 
@@ -12610,7 +13050,7 @@ mod tests {
 
         if let Some(super::super::form::FormState::ProviderAdd(form)) = app.form.as_mut() {
             form.focus = super::super::form::FormFocus::Fields;
-            form.editing = false;
+            form.clear_text_edit();
             form.field_idx = form
                 .fields()
                 .iter()
@@ -12652,7 +13092,7 @@ mod tests {
 
         if let Some(super::super::form::FormState::ProviderAdd(form)) = app.form.as_mut() {
             form.focus = super::super::form::FormFocus::Fields;
-            form.editing = false;
+            form.clear_text_edit();
             form.field_idx = form
                 .fields()
                 .iter()
@@ -12685,7 +13125,7 @@ mod tests {
 
         if let Some(super::super::form::FormState::ProviderAdd(form)) = app.form.as_mut() {
             form.focus = super::super::form::FormFocus::Fields;
-            form.editing = false;
+            form.clear_text_edit();
             form.field_idx = form
                 .fields()
                 .iter()
@@ -13198,6 +13638,103 @@ mod tests {
     }
 
     #[test]
+    fn provider_inline_edit_esc_restores_value_cursor_error_and_side_effects() {
+        let mut app = open_provider_fields_form(AppType::Claude);
+        if let Some(FormState::ProviderAdd(form)) = app.form.as_mut() {
+            form.name.set("Original");
+            form.name.cursor = 3;
+            form.id.set("stable-id");
+            form.set_main_field_error(ProviderAddField::Name, "required");
+        }
+
+        app.on_key(key(KeyCode::Enter), &data());
+        app.on_key(key(KeyCode::Char('X')), &data());
+        app.on_key(key(KeyCode::Esc), &data());
+
+        let Some(FormState::ProviderAdd(form)) = app.form.as_ref() else {
+            panic!("expected ProviderAdd form");
+        };
+        assert_eq!(form.name.value, "Original");
+        assert_eq!(form.name.cursor, 3);
+        assert_eq!(form.id.value, "stable-id");
+        assert_eq!(
+            form.main_field_error(ProviderAddField::Name),
+            Some("required")
+        );
+        assert!(!form.is_editing_main_text());
+    }
+
+    #[test]
+    fn provider_inline_edit_tab_and_backtab_do_not_apply_or_move() {
+        let mut app = open_provider_fields_form(AppType::Claude);
+        if let Some(FormState::ProviderAdd(form)) = app.form.as_mut() {
+            form.name.set("A");
+            form.id.set("original-id");
+        }
+
+        app.on_key(key(KeyCode::Enter), &data());
+        app.on_key(key(KeyCode::Char('x')), &data());
+        app.on_key(key(KeyCode::Tab), &data());
+        app.on_key(key(KeyCode::BackTab), &data());
+
+        let Some(FormState::ProviderAdd(form)) = app.form.as_ref() else {
+            panic!("expected ProviderAdd form");
+        };
+        assert_eq!(form.name.value, "Ax");
+        assert_eq!(
+            form.text_edit_target(),
+            Some(form::ProviderTextField::Main(ProviderAddField::Name))
+        );
+        assert_eq!(form.id.value, "original-id");
+    }
+
+    #[test]
+    fn provider_model_enter_edits_and_f_fetches() {
+        let mut app = open_provider_fields_form(AppType::Gemini);
+        if let Some(FormState::ProviderAdd(form)) = app.form.as_mut() {
+            form.gemini_auth_type = GeminiAuthType::ApiKey;
+            form.gemini_api_key.set("gemini-secret");
+            form.gemini_base_url.set("https://gemini.example.test");
+        }
+        select_provider_field(&mut app, ProviderAddField::GeminiModel);
+
+        let action = app.on_key(key(KeyCode::Enter), &data());
+        assert!(matches!(action, Action::None));
+        assert!(matches!(
+            app.form,
+            Some(FormState::ProviderAdd(ref form))
+                if form.text_edit_target()
+                    == Some(form::ProviderTextField::Main(ProviderAddField::GeminiModel))
+        ));
+
+        app.on_key(key(KeyCode::Esc), &data());
+        let action = app.on_key(key(KeyCode::Char('f')), &data());
+        assert!(matches!(
+            action,
+            Action::ProviderModelFetch {
+                field: ProviderAddField::GeminiModel,
+                base_url,
+                api_key: Some(api_key),
+                ..
+            } if base_url == "https://gemini.example.test" && api_key == "gemini-secret"
+        ));
+    }
+
+    #[test]
+    fn provider_action_rows_ignore_space() {
+        let mut app = open_provider_fields_form(AppType::Claude);
+        select_provider_field(&mut app, ProviderAddField::ClaudeQuickConfig);
+
+        app.on_key(key(KeyCode::Char(' ')), &data());
+
+        assert!(matches!(
+            app.form,
+            Some(FormState::ProviderAdd(ref form))
+                if matches!(form.page, form::ProviderFormPage::Main)
+        ));
+    }
+
+    #[test]
     fn provider_form_down_same_as_j() {
         let mut app = open_provider_fields_form(AppType::Claude);
 
@@ -13248,6 +13785,55 @@ mod tests {
         assert!(
             value.contains('j') && value.contains('k'),
             "j/k should be typed as characters in editing mode, got: {value}"
+        );
+    }
+
+    #[test]
+    fn mcp_inline_edit_esc_restores_value_cursor_and_error() {
+        let mut app = open_mcp_fields_form();
+        if let Some(FormState::McpAdd(form)) = app.form.as_mut() {
+            form.id.set("server-id");
+            form.id.cursor = 2;
+            form.set_field_error(McpAddField::Id, "required");
+        }
+
+        app.on_key(key(KeyCode::Enter), &data());
+        app.on_key(key(KeyCode::Char('X')), &data());
+        app.on_key(key(KeyCode::Esc), &data());
+
+        let Some(FormState::McpAdd(form)) = app.form.as_ref() else {
+            panic!("expected MCP form");
+        };
+        assert_eq!(form.id.value, "server-id");
+        assert_eq!(form.id.cursor, 2);
+        assert_eq!(form.field_error(McpAddField::Id), Some("required"));
+        assert!(form.text_edit.is_none());
+    }
+
+    #[test]
+    fn mcp_invalid_args_tab_is_a_noop_until_enter_applies() {
+        let mut app = open_mcp_fields_form();
+        if let Some(FormState::McpAdd(form)) = app.form.as_mut() {
+            form.command.set("node");
+            let fields = form.fields();
+            form.field_idx = fields
+                .iter()
+                .position(|field| *field == McpAddField::Args)
+                .expect("Args field should exist");
+            assert!(form.begin_text_edit(McpAddField::Args));
+            form.args.set("'unterminated");
+        }
+
+        app.on_key(key(KeyCode::Tab), &data());
+
+        let Some(FormState::McpAdd(form)) = app.form.as_ref() else {
+            panic!("expected MCP form");
+        };
+        assert_eq!(form.text_edit_target(), Some(McpAddField::Args));
+        assert_eq!(form.field_error(McpAddField::Args), None);
+        assert_eq!(
+            form.to_mcp_server_json_value()["server"]["args"],
+            serde_json::json!([])
         );
     }
 
@@ -13303,6 +13889,28 @@ mod tests {
             value.contains('j') && value.contains('k'),
             "j/k should be typed as characters in editing mode, got: {value}"
         );
+    }
+
+    #[test]
+    fn prompt_inline_edit_esc_restores_value_cursor_and_error() {
+        let mut app = open_prompt_fields_form();
+        if let Some(FormState::PromptMeta(form)) = app.form.as_mut() {
+            form.id.set("prompt-id");
+            form.id.cursor = 4;
+            form.set_field_error(PromptMetaField::Id, "invalid id");
+        }
+
+        app.on_key(key(KeyCode::Enter), &data());
+        app.on_key(key(KeyCode::Char('X')), &data());
+        app.on_key(key(KeyCode::Esc), &data());
+
+        let Some(FormState::PromptMeta(form)) = app.form.as_ref() else {
+            panic!("expected PromptMeta form");
+        };
+        assert_eq!(form.id.value, "prompt-id");
+        assert_eq!(form.id.cursor, 4);
+        assert_eq!(form.field_error(PromptMetaField::Id), Some("invalid id"));
+        assert!(form.text_edit.is_none());
     }
 
     #[test]
@@ -13811,7 +14419,6 @@ mod tests {
             prompt: "Path".to_string(),
             input: TextInput::new(""),
             submit: TextSubmit::ConfigExport,
-            secret: false,
         });
 
         let action = app.on_key(key(KeyCode::Char('?')), &UiData::default());
@@ -13836,8 +14443,11 @@ mod tests {
             query: String::new(),
             fetching: false,
             models: Vec::new(),
+            filtered_indices: None,
+            filter_incomplete: false,
             error: None,
             selected_idx: 0,
+            selection_active: false,
         };
 
         let action = app.on_key(key(KeyCode::Char('?')), &UiData::default());
@@ -13983,7 +14593,7 @@ mod tests {
                 panic!("expected ProviderAdd form");
             };
             form.focus = FormFocus::Fields;
-            form.editing = false;
+            form.clear_text_edit();
             let fields = form.fields();
             let divider_idx = fields
                 .iter()
@@ -14165,20 +14775,13 @@ mod tests {
         let action = app.on_key(key(KeyCode::Enter), &data);
         assert!(matches!(action, Action::None));
 
-        // Ctrl+S no longer saves from the usage-query sub-page; it is ignored there.
-        let ignored = app.on_key(ctrl(KeyCode::Char('s')), &data);
-        assert!(matches!(ignored, Action::None));
-        assert!(
-            matches!(
-                app.form.as_ref(),
-                Some(FormState::ProviderAdd(form))
-                    if matches!(form.page, super::super::form::ProviderFormPage::UsageQuery)
-            ),
-            "Ctrl+S on a sub-page must not close/submit the form"
-        );
+        select_usage_query_field(&mut app, UsageQueryField::BaseUrl);
+        app.on_key(key(KeyCode::Enter), &data);
+        for ch in "https://usage.example.test".chars() {
+            app.on_key(key(KeyCode::Char(ch)), &data);
+        }
 
-        // Return to the main page, then Ctrl+S saves.
-        app.on_key(key(KeyCode::Esc), &data);
+        // Ctrl+S saves the whole provider draft from a sub-page as well.
         let submit = app.on_key(ctrl(KeyCode::Char('s')), &data);
         assert!(matches!(
             submit,
@@ -14188,6 +14791,127 @@ mod tests {
             } if content.contains("\"usage_script\"")
                 && content.contains("\"enabled\": true")
                 && content.contains("\"templateType\": \"general\"")
+                && content.contains("https://usage.example.test")
+        ));
+    }
+
+    #[test]
+    fn provider_save_keeps_usage_script_validation_error_on_the_preview() {
+        let mut app = App::new(Some(AppType::Claude));
+        app.route = Route::Providers;
+        app.focus = Focus::Content;
+        let mut form = ProviderAddFormState::new(AppType::Claude);
+        form.name.set("Provider One");
+        form.id.set("provider-one");
+        form.open_usage_query_page();
+        form.usage_query_enabled = true;
+        form.usage_query_template = UsageQueryTemplate::General;
+        form.usage_query_code.clear();
+        app.form = Some(FormState::ProviderAdd(form));
+
+        let action = app.on_key(ctrl(KeyCode::Char('s')), &data());
+
+        assert!(matches!(action, Action::None));
+        assert!(matches!(
+            app.form,
+            Some(FormState::ProviderAdd(ref form))
+                if form.page == form::ProviderFormPage::UsageQuery
+                    && form.focus == FormFocus::JsonPreview
+                    && form
+                        .usage_query_field_error(UsageQueryField::Script)
+                        .is_some_and(|message| !message.is_empty())
+        ));
+    }
+
+    #[test]
+    fn provider_save_keeps_usage_script_error_when_name_validation_runs_first() {
+        let mut app = App::new(Some(AppType::Claude));
+        app.route = Route::Providers;
+        app.focus = Focus::Content;
+        let mut form = ProviderAddFormState::new(AppType::Claude);
+        form.open_usage_query_page();
+        form.usage_query_enabled = true;
+        form.usage_query_template = UsageQueryTemplate::General;
+        form.usage_query_code = "const result = response;".to_string();
+        form.set_usage_query_field_error(UsageQueryField::Script, "old script error");
+        app.form = Some(FormState::ProviderAdd(form));
+
+        let action = app.on_key(ctrl(KeyCode::Char('s')), &data());
+
+        assert!(matches!(action, Action::None));
+        let Some(FormState::ProviderAdd(form)) = app.form.as_ref() else {
+            panic!("expected provider form");
+        };
+        assert_eq!(form.page, form::ProviderFormPage::Main);
+        assert_eq!(form.fields()[form.field_idx], ProviderAddField::Name);
+        assert!(form.main_field_error(ProviderAddField::Name).is_some());
+        assert!(form
+            .usage_query_field_error(UsageQueryField::Script)
+            .is_some_and(|message| message.contains("return")));
+    }
+
+    #[test]
+    fn hermes_valid_base_url_does_not_skip_usage_script_validation() {
+        let mut app = App::new(Some(AppType::Hermes));
+        app.route = Route::Providers;
+        app.focus = Focus::Content;
+        let mut form = ProviderAddFormState::new(AppType::Hermes);
+        form.id.set("hermes-provider");
+        form.name.set("Hermes Provider");
+        form.hermes_base_url.set("not-a-url");
+        form.usage_query_enabled = true;
+        form.usage_query_template = UsageQueryTemplate::General;
+        form.usage_query_code = "const result = response;".to_string();
+        app.form = Some(FormState::ProviderAdd(form));
+
+        let invalid_base_action = app.on_key(ctrl(KeyCode::Char('s')), &data());
+        assert!(matches!(invalid_base_action, Action::None));
+        let Some(FormState::ProviderAdd(form)) = app.form.as_mut() else {
+            panic!("expected provider form");
+        };
+        assert_eq!(
+            form.fields()[form.field_idx],
+            ProviderAddField::HermesBaseUrl
+        );
+        form.hermes_base_url.set("https://hermes.example.test/v1");
+
+        let invalid_script_action = app.on_key(ctrl(KeyCode::Char('s')), &data());
+
+        assert!(matches!(invalid_script_action, Action::None));
+        let Some(FormState::ProviderAdd(form)) = app.form.as_ref() else {
+            panic!("expected provider form");
+        };
+        assert_eq!(form.page, form::ProviderFormPage::UsageQuery);
+        assert_eq!(form.focus, FormFocus::JsonPreview);
+        assert!(form
+            .usage_query_field_error(UsageQueryField::Script)
+            .is_some_and(|message| message.contains("return")));
+    }
+
+    #[test]
+    fn usage_query_space_only_toggles_boolean_fields() {
+        let mut app = open_provider_fields_form(AppType::Claude);
+        let Some(FormState::ProviderAdd(form)) = app.form.as_mut() else {
+            panic!("expected ProviderAdd form");
+        };
+        form.open_usage_query_page();
+
+        select_usage_query_field(&mut app, UsageQueryField::Enabled);
+        app.on_key(key(KeyCode::Char(' ')), &data());
+        assert!(matches!(
+            app.form,
+            Some(FormState::ProviderAdd(ref form)) if form.usage_query_enabled
+        ));
+
+        select_usage_query_field(&mut app, UsageQueryField::Template);
+        app.on_key(key(KeyCode::Char(' ')), &data());
+        assert!(matches!(app.overlay, Overlay::None));
+
+        select_usage_query_field(&mut app, UsageQueryField::BaseUrl);
+        app.on_key(key(KeyCode::Char(' ')), &data());
+        assert!(matches!(
+            app.form,
+            Some(FormState::ProviderAdd(ref form)) if form.text_edit.is_none()
         ));
     }
 
@@ -14288,6 +15012,295 @@ mod tests {
         app.sessions.provider_id = Some("claude".to_string());
         app.sessions.rows.push(session_meta_for_app("claude"));
         app
+    }
+
+    #[test]
+    fn session_project_picker_filters_and_applies_an_exact_scope() {
+        let directory = tempfile::tempdir().expect("manifest fixture directory");
+        let store =
+            crate::session_manager::paged_manifest::PagedManifestStore::open_at(directory.path())
+                .expect("manifest fixture store");
+        let mut builder = store
+            .begin_build("claude")
+            .expect("manifest fixture builder");
+        builder
+            .push(session_meta(
+                "claude",
+                "alpha",
+                "Alpha",
+                "/repo/alpha",
+                "/tmp/alpha.jsonl",
+                "claude --resume alpha",
+            ))
+            .expect("alpha row");
+        builder
+            .push(session_meta(
+                "claude",
+                "beta",
+                "Beta",
+                "/repo/beta",
+                "/tmp/beta.jsonl",
+                "claude --resume beta",
+            ))
+            .expect("beta row");
+        let mut unknown = session_meta(
+            "claude",
+            "unknown",
+            "Unknown",
+            "/unused",
+            "/tmp/unknown.jsonl",
+            "claude --resume unknown",
+        );
+        unknown.project_dir = None;
+        builder.push(unknown).expect("unknown project row");
+        let published = builder.publish().expect("publish manifest fixture");
+
+        let mut app = App::new(Some(AppType::Claude));
+        app.route = Route::Sessions;
+        app.focus = Focus::Content;
+        let _ = app.sessions.start_scan("claude".to_string());
+        let scope_epoch = app.sessions.scope_epoch;
+        assert!(app.sessions.remember_base_manifest(
+            scope_epoch,
+            "claude",
+            published.generation.clone(),
+            published.total_rows,
+            published.reader.clone(),
+        ));
+        let catalog = crate::session_manager::project_scope::aggregate_project_directories(
+            &published.reader,
+            &|| false,
+        )
+        .expect("project catalog");
+        let request_id = app
+            .sessions
+            .start_project_catalog()
+            .expect("catalog request");
+        assert!(app.sessions.finish_project_catalog(
+            request_id,
+            scope_epoch,
+            "claude".to_string(),
+            published.generation,
+            catalog,
+        ));
+        app.overlay = Overlay::SessionProjectPicker(SessionProjectPickerState {
+            input: crate::cli::tui::text_edit::TextInput::new(""),
+            selected_idx: 0,
+            path_scroll: 0,
+            filtered_indices: None,
+            pinned_scope: None,
+            filter_error: None,
+        });
+
+        let Overlay::SessionProjectPicker(picker) = &app.overlay else {
+            panic!("project picker remains open");
+        };
+        assert_eq!(session_project_option_count(&app.sessions, picker), 4);
+        assert!(matches!(
+            session_project_option_at(&app.sessions, picker, 0),
+            Some(SessionProjectOption::All { .. })
+        ));
+        assert!(matches!(
+            session_project_option_at(&app.sessions, picker, 1),
+            Some(SessionProjectOption::Exact { .. })
+        ));
+        assert!(matches!(
+            session_project_option_at(&app.sessions, picker, 2),
+            Some(SessionProjectOption::Exact { .. })
+        ));
+        assert!(matches!(
+            session_project_option_at(&app.sessions, picker, 3),
+            Some(SessionProjectOption::Unknown { .. })
+        ));
+        let unknown_filter = session_project_filter_source(
+            &app.sessions,
+            picker,
+            &texts::tui_sessions_unknown_project().to_lowercase(),
+        )
+        .expect("unknown project filter source");
+        assert!(unknown_filter.fixed_matches.is_empty());
+        assert_eq!(unknown_filter.project_offset, 1);
+        assert_eq!(unknown_filter.trailing_matches, vec![3]);
+        app.sessions.project_scope =
+            crate::session_manager::project_scope::SessionProjectScope::Unknown;
+        assert_eq!(
+            session_project_active_option_index(&app.sessions, picker),
+            3
+        );
+        app.sessions.project_scope =
+            crate::session_manager::project_scope::SessionProjectScope::All;
+
+        let Overlay::SessionProjectPicker(picker) = &mut app.overlay else {
+            panic!("project picker remains open");
+        };
+        picker.selected_idx = 1;
+        assert!(matches!(
+            app.on_key(KeyEvent::new(KeyCode::Right, KeyModifiers::SHIFT), &data()),
+            Action::None
+        ));
+        let Overlay::SessionProjectPicker(picker) = &app.overlay else {
+            panic!("project picker remains open");
+        };
+        assert_ne!(picker.path_scroll, 0);
+        assert!(matches!(
+            app.on_key(KeyEvent::new(KeyCode::Left, KeyModifiers::SHIFT), &data()),
+            Action::None
+        ));
+        let Overlay::SessionProjectPicker(picker) = &app.overlay else {
+            panic!("project picker remains open");
+        };
+        assert_eq!(picker.path_scroll, 0);
+        assert!(matches!(
+            app.on_key(KeyEvent::new(KeyCode::End, KeyModifiers::SHIFT), &data()),
+            Action::None
+        ));
+        let Overlay::SessionProjectPicker(picker) = &app.overlay else {
+            panic!("project picker remains open");
+        };
+        assert_eq!(picker.path_scroll, usize::MAX);
+        assert!(matches!(
+            app.on_key(KeyEvent::new(KeyCode::Home, KeyModifiers::SHIFT), &data()),
+            Action::None
+        ));
+        let Overlay::SessionProjectPicker(picker) = &app.overlay else {
+            panic!("project picker remains open");
+        };
+        assert_eq!(picker.path_scroll, 0);
+
+        assert!(matches!(
+            app.on_key(key(KeyCode::Char('b')), &data()),
+            Action::SessionsProjectFilter { query } if query == "b"
+        ));
+        let Overlay::SessionProjectPicker(picker) = &app.overlay else {
+            panic!("project picker remains open");
+        };
+        assert!(picker
+            .filtered_indices
+            .as_deref()
+            .is_some_and(<[_]>::is_empty));
+
+        // Project matching is intentionally performed by the sessions worker;
+        // install its raw option index before exercising Enter selection.
+        let Overlay::SessionProjectPicker(picker) = &mut app.overlay else {
+            panic!("project picker remains open");
+        };
+        picker.filtered_indices = Some(vec![2]);
+
+        let action = app.on_key(key(KeyCode::Enter), &data());
+        assert!(matches!(
+            action,
+            Action::SessionsProjectApply {
+                scope: crate::session_manager::project_scope::SessionProjectScope::Exact {
+                    ref display_path,
+                    ..
+                }
+            } if display_path == "/repo/beta"
+        ));
+        assert!(matches!(app.overlay, Overlay::None));
+    }
+
+    #[test]
+    fn project_picker_help_and_escape_restore_then_cancel_the_picker() {
+        let _lang = use_test_language(Language::English);
+        let mut app = App::new(Some(AppType::Claude));
+        app.route = Route::Sessions;
+        app.overlay = Overlay::SessionProjectPicker(SessionProjectPickerState {
+            input: crate::cli::tui::text_edit::TextInput::new("repo"),
+            selected_idx: 0,
+            path_scroll: 0,
+            filtered_indices: Some(Vec::new()),
+            pinned_scope: None,
+            filter_error: None,
+        });
+
+        assert!(matches!(
+            app.on_key(key(KeyCode::Char('?')), &data()),
+            Action::None
+        ));
+        assert!(matches!(app.overlay, Overlay::Help(_)));
+        let help = help_text(&app);
+        assert!(help.contains("h/l are aliases"), "{help}");
+        assert!(help.contains("PgUp/PgDn"), "{help}");
+        assert!(
+            help.contains("Sessions always show the current app"),
+            "{help}"
+        );
+        assert!(matches!(
+            app.pending_overlay,
+            Some(Overlay::SessionProjectPicker(_))
+        ));
+
+        assert!(matches!(
+            app.on_key(key(KeyCode::Esc), &data()),
+            Action::None
+        ));
+        assert!(matches!(app.overlay, Overlay::SessionProjectPicker(_)));
+        assert!(matches!(
+            app.on_key(key(KeyCode::Esc), &data()),
+            Action::SessionsProjectFilterCancel
+        ));
+        assert!(matches!(app.overlay, Overlay::None));
+    }
+
+    #[test]
+    fn leaving_sessions_releases_a_cancelled_project_catalog_request() {
+        let mut app = App::new(Some(AppType::Claude));
+        app.route = Route::Sessions;
+        app.sessions.project_catalog_active = Some(7);
+        app.sessions.project_catalog_loading = true;
+        app.pending_project_catalog = true;
+        let mut data = UiData::default();
+
+        run_runtime_action(&mut app, &mut data, Action::SwitchRoute(Route::Main))
+            .expect("leave sessions");
+
+        assert_eq!(app.sessions.project_catalog_active, None);
+        assert!(!app.sessions.project_catalog_loading);
+        assert!(!app.pending_project_catalog);
+    }
+
+    #[test]
+    fn project_scope_query_edit_cancel_preserves_the_replacement_debounce() {
+        let mut app = App::new(Some(AppType::Claude));
+        app.sessions.project_scope =
+            crate::session_manager::project_scope::SessionProjectScope::exact("/repo/alpha")
+                .expect("exact project");
+        app.sessions.deep_search_query = Some("old".to_string());
+        app.sessions.deep_search_pending = Some(("new".to_string(), 0));
+        let mut data = UiData::default();
+
+        run_runtime_action(&mut app, &mut data, Action::SessionsDeepSearchCancel)
+            .expect("cancel superseded search");
+
+        assert_eq!(
+            app.sessions.deep_search_pending.as_ref(),
+            Some(&("new".to_string(), 0))
+        );
+        assert!(app.sessions.deep_search_query.is_none());
+        assert!(app.sessions.deep_search_active.is_none());
+    }
+
+    #[test]
+    fn applying_the_active_project_does_not_cancel_its_inflight_view() {
+        let mut app = App::new(Some(AppType::Claude));
+        let scope =
+            crate::session_manager::project_scope::SessionProjectScope::exact("/repo/alpha")
+                .expect("exact project");
+        app.sessions.project_scope = scope.clone();
+        app.sessions.deep_search_active = Some(17);
+        let mut data = UiData::default();
+        let (session_tx, session_rx) = std::sync::mpsc::channel();
+
+        run_runtime_action_with_session_tx(
+            &mut app,
+            &mut data,
+            &session_tx,
+            Action::SessionsProjectApply { scope },
+        )
+        .expect("apply active project");
+
+        assert_eq!(app.sessions.deep_search_active, Some(17));
+        assert!(session_rx.try_recv().is_err());
     }
 
     #[test]
@@ -14556,23 +15569,69 @@ mod tests {
     }
 
     #[test]
-    fn sessions_scope_toggle_does_not_discard_completed_state_before_stash() {
+    fn sessions_a_is_unbound_and_keeps_current_app_history() {
         let mut app = app_with_session_page();
         let data = UiData::default();
 
-        app.on_key(key(KeyCode::Char('a')), &data);
-        assert!(app.sessions.show_all_providers);
-        assert!(
-            app.sessions.loaded_once,
-            "the refresh scheduler must still be able to stash completed provider rows"
+        let action = app.on_key(key(KeyCode::Char('a')), &data);
+
+        assert!(matches!(action, Action::None));
+        assert_eq!(app.sessions.provider_id.as_deref(), Some("claude"));
+        let visible = visible_sessions_for_state(
+            &app.filter,
+            &app.app_type,
+            app.sessions.provider_id.as_deref(),
+            &app.sessions.project_scope,
+            &app.sessions.rows,
+            app.sessions.detail_key.as_deref(),
+            app.sessions.messages_loaded,
+            &app.sessions.messages,
+            app.sessions.deep_search_query.as_deref(),
+            &app.sessions.deep_search_results,
+            app.sessions
+                .materialized_view_is_current(app.filter.query_lower().as_deref()),
+            app.sessions.rows_revision,
+            app.sessions.messages_revision,
+            app.sessions.deep_search_seq,
+            &app.sessions.visibility_cache,
+        );
+        assert_eq!(visible.len(), 1);
+        assert_eq!(
+            visible.get(0).map(|row| row.provider_id.as_str()),
+            Some("claude")
+        );
+    }
+
+    #[test]
+    fn sessions_history_with_unverified_rows_is_current_app_only() {
+        let app = app_with_session_page();
+        let rows = vec![
+            session_meta_for_app("claude"),
+            session_meta_for_app("codex"),
+        ];
+
+        let visible = visible_sessions_for_state(
+            &app.filter,
+            &app.app_type,
+            None,
+            &app.sessions.project_scope,
+            &rows,
+            None,
+            false,
+            &[],
+            None,
+            &[],
+            false,
+            0,
+            0,
+            0,
+            &app.sessions.visibility_cache,
         );
 
-        app.sessions.provider_id = Some("all".to_string());
-        app.on_key(key(KeyCode::Esc), &data);
-        assert!(!app.sessions.show_all_providers);
-        assert!(
-            app.sessions.loaded_once,
-            "leaving all-providers must preserve the completed all scope until it is stashed"
+        assert_eq!(visible.len(), 1);
+        assert_eq!(
+            visible.get(0).map(|row| row.provider_id.as_str()),
+            Some("claude")
         );
     }
 
@@ -14804,8 +15863,11 @@ mod tests {
             query: String::new(),
             fetching: false,
             models: vec!["claude-haiku-4-20250514".to_string()],
+            filtered_indices: None,
+            filter_incomplete: false,
             error: None,
             selected_idx: 0,
+            selection_active: false,
         };
 
         let action = app.on_key(key(KeyCode::Enter), &data());
@@ -14843,8 +15905,11 @@ mod tests {
             query: String::new(),
             fetching: false,
             models: vec!["model-a".to_string()],
+            filtered_indices: None,
+            filter_incomplete: false,
             error: None,
             selected_idx: 0,
+            selection_active: false,
         };
 
         let action = app.on_key(key(KeyCode::Esc), &data());
@@ -14880,8 +15945,11 @@ mod tests {
             query: String::new(),
             fetching: false,
             models: vec!["model-a".to_string(), "model-b".to_string()],
+            filtered_indices: None,
+            filter_incomplete: false,
             error: None,
             selected_idx: 0,
+            selection_active: false,
         };
 
         let action = app.on_key(key(KeyCode::Enter), &data());
@@ -14920,8 +15988,11 @@ mod tests {
             query: "gpt-5.4".to_string(),
             fetching: false,
             models: vec!["gpt-5.4".to_string()],
+            filtered_indices: None,
+            filter_incomplete: false,
             error: None,
             selected_idx: 0,
+            selection_active: false,
         };
         app.pending_overlay = Some(Overlay::HermesModelsPicker { editing: false });
 
@@ -15233,17 +16304,15 @@ mod tests {
     }
 
     #[test]
-    fn sessions_provider_scope_change_restarts_nonempty_deep_search() {
+    fn sessions_a_does_not_cancel_an_active_search() {
         let mut app = app_with_session_page();
         app.filter.input.set("needle");
+        app.sessions.deep_search_active = Some(7);
 
         let action = app.on_key(key(KeyCode::Char('a')), &UiData::default());
 
-        assert!(app.sessions.show_all_providers);
-        assert!(matches!(
-            action,
-            Action::SessionsDeepSearch { query } if query == "needle"
-        ));
+        assert!(matches!(action, Action::None));
+        assert_eq!(app.sessions.deep_search_active, Some(7));
     }
 
     #[test]
@@ -15367,7 +16436,6 @@ mod tests {
             prompt: "Format: YYYY-MM-DD..YYYY-MM-DD".to_string(),
             input: TextInput::new("2026-06-01..2026-06-05"),
             submit: TextSubmit::UsageCustomRange,
-            secret: false,
         });
 
         let action = app.on_key(key(KeyCode::Enter), &UiData::default());
@@ -15389,7 +16457,6 @@ mod tests {
             prompt: "Format: YYYY-MM-DD..YYYY-MM-DD".to_string(),
             input: TextInput::new("2026-06-05..2026-06-01"),
             submit: TextSubmit::UsageCustomRange,
-            secret: false,
         });
 
         let action = app.on_key(key(KeyCode::Enter), &UiData::default());

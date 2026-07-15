@@ -9,7 +9,7 @@ use crate::codex_config::{
 use crate::config::{
     atomic_write, copy_file, create_managed_config_parent_dirs, get_app_config_dir,
 };
-use crate::database::{is_official_seed_id, Database};
+use crate::database::{is_official_seed_id, run_sqlite_backup_to_completion, Database};
 use crate::error::AppError;
 use crate::settings::{
     CodexOfficialHistoryUnifyMigration, CodexProviderTemplateMigration,
@@ -1200,53 +1200,99 @@ fn backup_codex_state_db(
         .join("state")
         .join(relative_backup_path(db_path, codex_dir));
     create_managed_config_parent_dirs(&backup_path)?;
+    // Reserve the destination ourselves on every platform. This guarantees that
+    // SQLite never opens an existing backup and that failure cleanup only removes
+    // a file created by this invocation.
+    create_codex_state_backup_file(&backup_path)?;
+
+    let mut backup_conn = match open_codex_state_backup_connection(&backup_path) {
+        Ok(conn) => conn,
+        Err(err) => {
+            remove_codex_state_backup_artifacts(&backup_path);
+            return Err(err);
+        }
+    };
+    let backup_result = match Backup::new(source_conn, &mut backup_conn) {
+        Ok(backup) => run_sqlite_backup_to_completion(&backup),
+        Err(err) => Err(AppError::Database(format!(
+            "初始化 Codex state DB 备份失败: {err}"
+        ))),
+    };
+    drop(backup_conn);
+
+    if let Err(err) = backup_result {
+        remove_codex_state_backup_artifacts(&backup_path);
+        return Err(AppError::Database(format!(
+            "写入 Codex state DB 备份失败: {err}"
+        )));
+    }
+    Ok(())
+}
+
+fn create_codex_state_backup_file(backup_path: &Path) -> Result<(), AppError> {
+    match fs::symlink_metadata(backup_path) {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            return Err(AppError::InvalidInput(format!(
+                "Codex state DB 备份文件不能是符号链接: {}",
+                backup_path.display()
+            )));
+        }
+        Ok(meta) if meta.is_file() => {
+            return Err(AppError::InvalidInput(format!(
+                "Codex state DB 备份文件已存在: {}",
+                backup_path.display()
+            )));
+        }
+        Ok(_) => {
+            return Err(AppError::InvalidInput(format!(
+                "Codex state DB 备份路径不是普通文件: {}",
+                backup_path.display()
+            )));
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => return Err(AppError::io(backup_path, err)),
+    }
+
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
-        match std::fs::symlink_metadata(&backup_path) {
-            Ok(meta) if meta.file_type().is_symlink() => {
-                return Err(AppError::InvalidInput(format!(
-                    "Codex state DB 备份文件不能是符号链接: {}",
-                    backup_path.display()
-                )));
-            }
-            Ok(meta) if meta.is_file() => {
-                return Err(AppError::InvalidInput(format!(
-                    "Codex state DB 备份文件已存在: {}",
-                    backup_path.display()
-                )));
-            }
-            Ok(_) => {
-                return Err(AppError::InvalidInput(format!(
-                    "Codex state DB 备份路径不是普通文件: {}",
-                    backup_path.display()
-                )));
-            }
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-                std::fs::OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .mode(0o600)
-                    .open(&backup_path)
-                    .map_err(|e| AppError::io(&backup_path, e))?;
-            }
-            Err(err) => return Err(AppError::io(&backup_path, err)),
-        }
+        options.mode(0o600);
     }
 
-    let mut backup_conn = open_codex_state_backup_connection(&backup_path)?;
-    let backup = Backup::new(source_conn, &mut backup_conn)
-        .map_err(|e| AppError::Database(format!("初始化 Codex state DB 备份失败: {e}")))?;
-    backup
-        .run_to_completion(5, Duration::from_millis(25), None)
-        .map_err(|e| AppError::Database(format!("写入 Codex state DB 备份失败: {e}")))?;
-    Ok(())
+    match options.open(backup_path) {
+        Ok(_) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => Err(AppError::InvalidInput(
+            format!("Codex state DB 备份文件已存在: {}", backup_path.display()),
+        )),
+        Err(err) => Err(AppError::io(backup_path, err)),
+    }
+}
+
+fn remove_codex_state_backup_artifacts(backup_path: &Path) {
+    let mut artifacts = vec![backup_path.to_path_buf()];
+    for suffix in ["-journal", "-wal", "-shm"] {
+        let mut artifact = backup_path.as_os_str().to_os_string();
+        artifact.push(suffix);
+        artifacts.push(PathBuf::from(artifact));
+    }
+
+    for artifact in artifacts {
+        match fs::remove_file(&artifact) {
+            Ok(()) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => log::warn!(
+                "Failed to remove incomplete Codex state backup {}: {err}",
+                artifact.display()
+            ),
+        }
+    }
 }
 
 fn open_codex_state_backup_connection(backup_path: &Path) -> Result<Connection, AppError> {
     let open_path = canonicalize_existing_parent(backup_path)?;
     let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
-        | OpenFlags::SQLITE_OPEN_CREATE
         | OpenFlags::SQLITE_OPEN_NO_MUTEX
         | OpenFlags::SQLITE_OPEN_NOFOLLOW;
 
@@ -1994,6 +2040,98 @@ base_url = "https://proxy.example/v1"
         }
     }
 
+    #[test]
+    fn codex_state_db_backup_does_not_throttle_completed_pages() {
+        let dir = tempdir().expect("tempdir");
+        let codex_dir = dir.path().join(".codex");
+        fs::create_dir_all(&codex_dir).expect("create codex dir");
+        let db_path = codex_dir.join(CODEX_STATE_DB_FILENAME);
+        let conn = Connection::open(&db_path).expect("open db");
+        conn.execute_batch(
+            "CREATE TABLE threads (
+                id TEXT PRIMARY KEY,
+                model_provider TEXT NOT NULL
+            );
+            CREATE TABLE backup_padding (payload BLOB NOT NULL);
+            INSERT INTO threads (id, model_provider) VALUES ('a', 'rightcode');
+            INSERT INTO backup_padding (payload) VALUES (zeroblob(8388608));",
+        )
+        .expect("seed large state db");
+
+        let backup_root = dir.path().join("backup");
+        let started = std::time::Instant::now();
+        backup_codex_state_db(&db_path, &codex_dir, &backup_root, &conn)
+            .expect("back up large Codex state db");
+        let elapsed = started.elapsed();
+
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "an 8 MiB backup must not sleep after every five pages: {elapsed:?}"
+        );
+        let backup_path = backup_root.join("state").join(CODEX_STATE_DB_FILENAME);
+        let backup_conn = Connection::open(&backup_path).expect("open backup db");
+        let integrity: String = backup_conn
+            .query_row("PRAGMA integrity_check;", [], |row| row.get(0))
+            .expect("check backup integrity");
+        assert_eq!(integrity, "ok");
+        let bytes: i64 = backup_conn
+            .query_row("SELECT length(payload) FROM backup_padding", [], |row| {
+                row.get(0)
+            })
+            .expect("read backed up payload");
+        assert_eq!(bytes, 8 * 1024 * 1024);
+    }
+
+    #[test]
+    fn codex_state_db_backup_cleans_files_after_a_real_busy_timeout() {
+        let dir = tempdir().expect("tempdir");
+        let codex_dir = dir.path().join(".codex");
+        fs::create_dir_all(&codex_dir).expect("create codex dir");
+        let db_path = codex_dir.join(CODEX_STATE_DB_FILENAME);
+        let conn = Connection::open(&db_path).expect("open db");
+        conn.execute_batch(
+            "PRAGMA journal_mode=DELETE;
+             CREATE TABLE threads (
+                 id TEXT PRIMARY KEY,
+                 model_provider TEXT NOT NULL
+             );
+             INSERT INTO threads (id, model_provider) VALUES ('a', 'rightcode');",
+        )
+        .expect("seed state db");
+        conn.busy_timeout(Duration::from_millis(50))
+            .expect("set source busy timeout");
+
+        let locker = Connection::open(&db_path).expect("open lock connection");
+        locker
+            .execute_batch("BEGIN EXCLUSIVE;")
+            .expect("lock source db");
+
+        let backup_root = dir.path().join("backup");
+        let started = std::time::Instant::now();
+        let error = backup_codex_state_db(&db_path, &codex_dir, &backup_root, &conn)
+            .expect_err("locked source backup should fail");
+        let elapsed = started.elapsed();
+        locker
+            .execute_batch("ROLLBACK;")
+            .expect("release source db");
+
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "the backup layer must not multiply the 50ms connection timeout: {elapsed:?}"
+        );
+        assert!(error.to_string().contains("busy_timeout"));
+
+        let backup_path = backup_root.join("state").join(CODEX_STATE_DB_FILENAME);
+        for suffix in ["", "-journal", "-wal", "-shm"] {
+            let mut artifact = backup_path.as_os_str().to_os_string();
+            artifact.push(suffix);
+            assert!(
+                !PathBuf::from(artifact).exists(),
+                "failed Codex backup must not leave {suffix} artifact"
+            );
+        }
+    }
+
     #[cfg(unix)]
     #[test]
     fn codex_migration_backups_reject_parent_dir_config_path_before_creating_dirs() {
@@ -2083,9 +2221,9 @@ base_url = "https://proxy.example/v1"
         );
     }
 
-    #[cfg(unix)]
     #[test]
     fn codex_state_db_backup_rejects_existing_backup_path() {
+        #[cfg(unix)]
         use std::os::unix::fs::PermissionsExt;
 
         let dir = tempdir().expect("tempdir");
@@ -2108,6 +2246,7 @@ base_url = "https://proxy.example/v1"
         fs::create_dir_all(backup_path.parent().expect("backup parent"))
             .expect("create backup parent");
         fs::write(&backup_path, b"existing").expect("write existing backup");
+        #[cfg(unix)]
         fs::set_permissions(&backup_path, fs::Permissions::from_mode(0o644))
             .expect("set existing backup permissions");
 
@@ -2123,15 +2262,18 @@ base_url = "https://proxy.example/v1"
             b"existing",
             "state db backup must not overwrite an existing backup file"
         );
-        let mode = fs::metadata(&backup_path)
-            .expect("metadata existing backup")
-            .permissions()
-            .mode()
-            & 0o777;
-        assert_eq!(
-            mode, 0o644,
-            "rejected existing backup path should be left untouched"
-        );
+        #[cfg(unix)]
+        {
+            let mode = fs::metadata(&backup_path)
+                .expect("metadata existing backup")
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(
+                mode, 0o644,
+                "rejected existing backup path should be left untouched"
+            );
+        }
     }
 
     #[test]

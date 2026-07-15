@@ -15,6 +15,14 @@ pub enum Action {
         query: String,
     },
     SessionsDeepSearchCancel,
+    SessionsProjectCatalogLoad,
+    SessionsProjectFilter {
+        query: String,
+    },
+    SessionsProjectFilterCancel,
+    SessionsProjectApply {
+        scope: crate::session_manager::project_scope::SessionProjectScope,
+    },
     SessionMessagesLoad {
         key: String,
         provider_id: String,
@@ -558,6 +566,10 @@ pub struct App {
     pub should_quit: bool,
     /// When set, the main loop should fire a SessionsDeepSearch action.
     pub pending_deep_search: Option<String>,
+    /// A project picker opened before the current base manifest was ready.
+    pub pending_project_catalog: bool,
+    /// Latest picker query waiting for a current project catalog/worker lane.
+    pub pending_project_filter: Option<String>,
     pub last_size: Size,
     pub tick: u64,
     pub proxy_input_activity_samples: Vec<u64>,
@@ -573,7 +585,8 @@ pub struct App {
     pub usage_query_notice_confirmed: bool,
 
     pub local_env_results: Vec<crate::services::local_env_check::ToolCheckResult>,
-    pub local_env_loading: bool,
+    pub local_env_pending: HashSet<crate::services::local_env_check::LocalTool>,
+    pub local_env_generation: u64,
 
     pub usage: UsageState,
     pub pricing: PricingState,

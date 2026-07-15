@@ -248,6 +248,44 @@ fn init_rejects_future_schema_before_creating_tables() {
 
 #[test]
 #[serial_test::serial]
+fn init_aborts_migration_when_pre_migration_backup_fails() {
+    let _lock = crate::test_support::lock_test_home_and_settings();
+    let temp = tempfile::tempdir().expect("create temp dir");
+    let _guard = ConfigDirEnvGuard::set(temp.path());
+    let db_path = temp.path().join("cc-switch.db");
+
+    let db = Database::init().expect("initialize current database");
+    Database::set_user_version(
+        &db.conn.lock().expect("lock database connection"),
+        SCHEMA_VERSION - 1,
+    )
+    .expect("downgrade schema marker");
+    drop(db);
+
+    // A regular file at the backup-directory path deterministically makes the
+    // safety backup fail before any schema migration can begin.
+    std::fs::write(temp.path().join("backups"), b"not-a-directory")
+        .expect("block backup directory creation");
+
+    let err = match Database::init() {
+        Ok(_) => panic!("migration must not proceed without its safety backup"),
+        Err(err) => err,
+    };
+    assert!(
+        err.to_string().contains("Pre-migration backup failed"),
+        "unexpected error: {err}"
+    );
+
+    let conn = Connection::open(&db_path).expect("reopen database");
+    assert_eq!(
+        Database::get_user_version(&conn).expect("read schema version"),
+        SCHEMA_VERSION - 1,
+        "failed backup must leave the schema version unchanged"
+    );
+}
+
+#[test]
+#[serial_test::serial]
 fn init_rejects_unsafe_config_dir() {
     let _lock = crate::test_support::lock_test_home_and_settings();
     let _guard = ConfigDirEnvGuard::set(Path::new("/tmp"));
@@ -2593,6 +2631,87 @@ fn model_pricing_delete_survives_reseed_until_user_upserts() {
         )
         .expect("count restored pricing");
     assert_eq!(count, 1, "manual upsert should clear delete marker");
+}
+
+#[test]
+fn model_pricing_seeds_gpt_5_6_family_and_aliases() {
+    let db = Database::memory().expect("create memory db");
+    let conn = db.conn.lock().expect("lock conn");
+
+    let expected = [
+        ("gpt-5.6-sol", "5", "30", "0.50", "6.25"),
+        ("gpt-5.6-terra", "2.50", "15", "0.25", "3.125"),
+        ("gpt-5.6-luna", "1", "6", "0.10", "1.25"),
+        ("gpt-5.6", "5", "30", "0.50", "6.25"),
+        ("gpt-5.6-high", "5", "30", "0.50", "6.25"),
+    ];
+
+    for (model_id, input, output, cache_read, cache_write) in expected {
+        let pricing: (String, String, String, String) = conn
+            .query_row(
+                "SELECT input_cost_per_million, output_cost_per_million,
+                        cache_read_cost_per_million, cache_creation_cost_per_million
+                 FROM model_pricing WHERE model_id = ?1",
+                [model_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap_or_else(|error| panic!("query {model_id} pricing: {error}"));
+        assert_eq!(
+            pricing,
+            (
+                input.to_string(),
+                output.to_string(),
+                cache_read.to_string(),
+                cache_write.to_string(),
+            ),
+            "unexpected pricing for {model_id}"
+        );
+    }
+}
+
+#[test]
+fn model_pricing_repairs_only_untouched_upstream_gpt_5_6_seeds() {
+    let db = Database::memory().expect("create memory db");
+    {
+        let conn = db.conn.lock().expect("lock conn");
+        conn.execute(
+            "UPDATE model_pricing SET cache_creation_cost_per_million = '0'
+             WHERE model_id = 'gpt-5.6-sol'",
+            [],
+        )
+        .expect("restore upstream zero cache-write seed");
+        conn.execute(
+            "UPDATE model_pricing
+             SET input_cost_per_million = '9', cache_creation_cost_per_million = '0'
+             WHERE model_id = 'gpt-5.6-terra'",
+            [],
+        )
+        .expect("set custom Terra pricing");
+    }
+
+    db.ensure_model_pricing_seeded()
+        .expect("ensure pricing seeded");
+
+    let conn = db.conn.lock().expect("lock conn");
+    let sol_cache_write: String = conn
+        .query_row(
+            "SELECT cache_creation_cost_per_million FROM model_pricing
+             WHERE model_id = 'gpt-5.6-sol'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("query repaired Sol pricing");
+    assert_eq!(sol_cache_write, "6.25");
+
+    let terra_custom: (String, String) = conn
+        .query_row(
+            "SELECT input_cost_per_million, cache_creation_cost_per_million
+             FROM model_pricing WHERE model_id = 'gpt-5.6-terra'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("query custom Terra pricing");
+    assert_eq!(terra_custom, ("9".to_string(), "0".to_string()));
 }
 
 #[test]

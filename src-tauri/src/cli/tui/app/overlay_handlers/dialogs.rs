@@ -360,7 +360,6 @@ impl App {
                         },
                         input: TextInput::new(raw),
                         submit: TextSubmit::UsageCustomRange,
-                        secret: false,
                     });
                     Action::None
                 }
@@ -396,7 +395,6 @@ impl App {
                 prompt: codex_model_catalog_field_prompt(field).to_string(),
                 input: TextInput::new(trimmed),
                 submit: TextSubmit::CodexModelCatalogField { row, field },
-                secret: false,
             });
             return Action::None;
         }
@@ -448,7 +446,6 @@ impl App {
                 prompt: texts::tui_webdav_jianguoyun_username_prompt().to_string(),
                 input: TextInput::new(""),
                 submit: TextSubmit::WebDavJianguoyunUsername,
-                secret: false,
             });
             return Action::None;
         }
@@ -459,7 +456,6 @@ impl App {
             prompt: texts::tui_webdav_jianguoyun_app_password_prompt().to_string(),
             input: TextInput::new(""),
             submit: TextSubmit::WebDavJianguoyunPassword,
-            secret: true,
         });
         Action::None
     }
@@ -472,7 +468,6 @@ impl App {
                 prompt: texts::tui_webdav_jianguoyun_app_password_prompt().to_string(),
                 input: TextInput::new(""),
                 submit: TextSubmit::WebDavJianguoyunPassword,
-                secret: true,
             });
             return Action::None;
         }
@@ -513,7 +508,6 @@ impl App {
                 prompt: texts::tui_settings_proxy_listen_address_prompt().to_string(),
                 input: TextInput::new(trimmed),
                 submit: TextSubmit::SettingsProxyListenAddress,
-                secret: false,
             });
             return Action::None;
         }
@@ -541,7 +535,6 @@ impl App {
                 prompt: texts::tui_settings_proxy_listen_port_prompt().to_string(),
                 input: TextInput::new(trimmed),
                 submit: TextSubmit::SettingsProxyListenPort,
-                secret: false,
             });
             return Action::None;
         };
@@ -556,7 +549,6 @@ impl App {
                 prompt: texts::tui_settings_proxy_listen_port_prompt().to_string(),
                 input: TextInput::new(trimmed),
                 submit: TextSubmit::SettingsProxyListenPort,
-                secret: false,
             });
             return Action::None;
         }

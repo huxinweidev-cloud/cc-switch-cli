@@ -131,9 +131,10 @@ pub(crate) fn render_overlay(
         }
         Overlay::ModelFetchPicker {
             input,
-            query,
             fetching,
             models,
+            filtered_indices,
+            filter_incomplete,
             error,
             selected_idx,
             ..
@@ -142,12 +143,22 @@ pub(crate) fn render_overlay(
             content_area,
             theme,
             input,
-            query,
             *fetching,
             models,
+            filtered_indices.as_deref(),
+            *filter_incomplete,
             error.as_deref(),
             *selected_idx,
         ),
+        Overlay::SessionProjectPicker(picker) => {
+            super::pickers::render_session_project_picker_overlay(
+                frame,
+                app,
+                content_area,
+                theme,
+                picker,
+            )
+        }
         Overlay::OpenClawToolsProfilePicker { selected } => {
             super::pickers::render_openclaw_tools_profile_picker_overlay(
                 frame,
@@ -158,13 +169,17 @@ pub(crate) fn render_overlay(
             )
         }
         Overlay::OpenClawAgentsFallbackPicker {
-            selected, options, ..
+            selected,
+            active,
+            options,
+            ..
         } => super::pickers::render_openclaw_agents_fallback_picker_overlay(
             frame,
             app,
             content_area,
             theme,
             *selected,
+            *active,
             options,
         ),
         Overlay::McpAppsPicker {
