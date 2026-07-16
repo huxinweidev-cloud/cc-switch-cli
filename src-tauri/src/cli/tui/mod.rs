@@ -830,29 +830,9 @@ impl UiDataByAppCache {
             };
             key
         };
-        let (app_type, range) = key.clone();
         self.usage_pricing_dirty_by_key.remove(&key);
-        self.queue_usage_pricing_load(app, usage_pricing_req_tx, &app_type, range);
-
-        if self.pending_usage_pricing_by_key.contains_key(&key) {
-            true
-        } else {
-            // Keep the refresh intent if the worker was unavailable or the
-            // request channel disconnected. A later tick can retry it.
-            self.usage_pricing_dirty_by_key.insert(key);
-            false
-        }
-    }
-
-    fn request_usage_pricing_refresh_after_external_usage_sync(
-        &mut self,
-        app: &mut App,
-        usage_pricing_req_tx: Option<&mpsc::Sender<UsagePricingReq>>,
-        app_type: &AppType,
-        range: data::UsageRangePreset,
-    ) -> bool {
-        self.mark_usage_pricing_dirty(app_type, range);
-        self.flush_dirty_usage_pricing(app, usage_pricing_req_tx)
+        let (app_type, range) = key;
+        self.queue_usage_pricing_load(app, usage_pricing_req_tx, &app_type, range)
     }
 
     fn queue_usage_pricing_load(
@@ -861,8 +841,14 @@ impl UiDataByAppCache {
         usage_pricing_req_tx: Option<&mpsc::Sender<UsagePricingReq>>,
         app_type: &AppType,
         range: data::UsageRangePreset,
-    ) {
+    ) -> bool {
         let range = usage_pricing_logical_range(range);
+        let key = usage_pricing_load_key(app_type, range);
+        if self.pending_usage_pricing_by_key.contains_key(&key) {
+            app.usage.start_loading(app_type.clone(), range);
+            return true;
+        }
+
         if matches!(range, data::UsageRangePreset::Custom(_)) {
             app.usage.clear_custom_loading_for_app(app_type);
             self.pending_usage_pricing_by_key
@@ -887,12 +873,6 @@ impl UiDataByAppCache {
                 });
         }
 
-        let key = usage_pricing_load_key(app_type, range);
-        if self.pending_usage_pricing_by_key.contains_key(&key) {
-            app.usage.start_loading(app_type.clone(), range);
-            return;
-        }
-
         let Some(tx) = usage_pricing_req_tx else {
             if matches!(range, data::UsageRangePreset::Custom(_)) {
                 app.push_toast(
@@ -901,7 +881,7 @@ impl UiDataByAppCache {
                     ToastKind::Warning,
                 );
             }
-            return;
+            return false;
         };
 
         self.next_usage_pricing_request_id = self.next_usage_pricing_request_id.wrapping_add(1);
@@ -935,8 +915,10 @@ impl UiDataByAppCache {
                 format!("Usage/pricing refresh request failed: {err}"),
                 ToastKind::Warning,
             );
+            false
         } else {
             app.usage.start_loading(app_type.clone(), range);
+            true
         }
     }
 
@@ -1192,11 +1174,22 @@ fn handle_usage_pricing_msg(
             if app.app_type != app_type || app.usage.range != range {
                 return false;
             }
+            let refresh_targets_current_page = app
+                .usage
+                .log_pager
+                .request_is_refresh(page, request_id, direction)
+                && app.usage.log_pager.current_page() == page;
             match result {
                 Ok(loaded) => {
-                    app.usage
+                    let accepted = app
+                        .usage
                         .log_pager
                         .finish_request(page, request_id, direction, loaded);
+                    if accepted && refresh_targets_current_page {
+                        app.usage.sync_current_log_selection(
+                            data.usage.recent_logs_for(app.usage.range),
+                        );
+                    }
                 }
                 Err(UsageLogLoadError::Cancelled) => {
                     app.usage
@@ -1204,9 +1197,17 @@ fn handle_usage_pricing_msg(
                         .cancel_request(page, request_id, direction);
                 }
                 Err(UsageLogLoadError::Failed(err)) => {
-                    app.usage
-                        .log_pager
-                        .fail_request(page, request_id, direction, err);
+                    let refresh_failed =
+                        app.usage
+                            .log_pager
+                            .fail_request(page, request_id, direction, err.clone())
+                            && refresh_targets_current_page;
+                    if refresh_failed {
+                        app.push_toast(
+                            format!("Usage log page refresh failed: {err}"),
+                            ToastKind::Warning,
+                        );
+                    }
                 }
             }
             false
@@ -1260,18 +1261,21 @@ fn handle_usage_pricing_msg(
 fn queue_background_session_usage_sync(
     sync_req_tx: Option<&mpsc::Sender<SessionUsageSyncReq>>,
     sync_tracker: &mut RequestTracker,
-) {
+) -> bool {
     let Some(tx) = sync_req_tx else {
-        return;
+        return false;
     };
     if sync_tracker.active.is_some() {
-        return;
+        return true;
     }
 
     let request_id = sync_tracker.start();
     if let Err(err) = tx.send(SessionUsageSyncReq::Run { request_id }) {
         sync_tracker.cancel();
         log::debug!("queue background session usage sync failed: {err}");
+        false
+    } else {
+        true
     }
 }
 
@@ -1294,7 +1298,7 @@ fn maybe_queue_usage_session_sync(
         return;
     }
     *started = true;
-    queue_background_session_usage_sync(sync_req_tx, sync_tracker);
+    let _ = queue_background_session_usage_sync(sync_req_tx, sync_tracker);
 }
 
 /// Lazily load the active app's usage/pricing when a Usage or Pricing view is
@@ -1330,7 +1334,19 @@ fn maybe_queue_usage_log_prefetch(
     data_cache: &mut UiDataByAppCache,
     usage_pricing_req_tx: Option<&mpsc::Sender<UsagePricingReq>>,
 ) {
-    if !matches!(app.route, route::Route::UsageLogs) {
+    if !matches!(app.route, route::Route::UsageLogs)
+        || !matches!(app.usage.pane, app::UsagePane::Recent)
+    {
+        return;
+    }
+
+    // A manual current-page refresh owns the single log-query worker until it
+    // completes. Speculative prefetching here would supersede that request.
+    let current_page = app.usage.log_pager.current_page();
+    if app.usage.log_page_refresh_after_aggregate_requested()
+        || app.usage.log_pager.has_refresh_pending()
+        || app.usage.log_pager.page_is_pending(current_page)
+    {
         return;
     }
 
@@ -1354,7 +1370,7 @@ fn maybe_queue_usage_log_prefetch(
     if !app
         .usage
         .log_pager
-        .start_request(page, request_id, load.direction)
+        .start_load_request(page, request_id, load)
     {
         return;
     }
@@ -1386,6 +1402,93 @@ fn maybe_queue_usage_log_prefetch(
             format!("failed to queue usage log page: {err}"),
         );
     }
+}
+
+/// Refresh a visible keyset page only after all aggregate work has settled.
+/// The aggregate owns the same log-query worker for its fast head query, so
+/// waiting here prevents the two refresh halves from repeatedly cancelling one
+/// another. The old page remains visible until its exact anchored query wins.
+fn maybe_queue_usage_log_page_refresh_after_aggregate(
+    app: &mut App,
+    data_cache: &mut UiDataByAppCache,
+    usage_pricing_req_tx: Option<&mpsc::Sender<UsagePricingReq>>,
+) {
+    if !app.usage.log_page_refresh_after_aggregate_requested() {
+        return;
+    }
+    if !matches!(app.route, route::Route::UsageLogs)
+        || !matches!(app.usage.pane, app::UsagePane::Recent)
+    {
+        app.usage.finish_log_page_refresh_after_aggregate();
+        return;
+    }
+    if !data_cache.pending_usage_pricing_by_key.is_empty()
+        || !data_cache.usage_pricing_dirty_by_key.is_empty()
+    {
+        return;
+    }
+
+    let page = app.usage.log_pager.current_page();
+    if page == 0 {
+        app.usage.finish_log_page_refresh_after_aggregate();
+        return;
+    }
+    if app.usage.log_pager.page_is_pending(page) {
+        return;
+    }
+    let Some(load) = app.usage.log_pager.current_page_refresh_request() else {
+        app.usage.finish_log_page_refresh_after_aggregate();
+        return;
+    };
+
+    data_cache.next_usage_pricing_request_id =
+        data_cache.next_usage_pricing_request_id.wrapping_add(1);
+    let request_id = data_cache.next_usage_pricing_request_id;
+    if !app
+        .usage
+        .log_pager
+        .start_load_request(page, request_id, load)
+    {
+        return;
+    }
+
+    let Some(tx) = usage_pricing_req_tx else {
+        app.usage.log_pager.fail_request(
+            page,
+            request_id,
+            load.direction,
+            "usage log worker is not running".to_string(),
+        );
+        app.push_toast(
+            "Usage log worker is not running; keeping the previous page.".to_string(),
+            ToastKind::Warning,
+        );
+        app.usage.finish_log_page_refresh_after_aggregate();
+        return;
+    };
+    if let Err(err) = tx.send(UsagePricingReq::LoadLogPage {
+        request_id,
+        generation: data_cache.data_generation,
+        app_state_epoch: data_cache.app_state_epoch,
+        app_type: app.app_type.clone(),
+        range: app.usage.range,
+        page,
+        cursor: load.cursor,
+        direction: load.direction,
+        limit: data::USAGE_LOG_PAGE_SIZE,
+    }) {
+        app.usage.log_pager.fail_request(
+            page,
+            request_id,
+            load.direction,
+            format!("failed to queue usage log page refresh: {err}"),
+        );
+        app.push_toast(
+            format!("Failed to queue usage log page refresh: {err}"),
+            ToastKind::Warning,
+        );
+    }
+    app.usage.finish_log_page_refresh_after_aggregate();
 }
 
 fn queue_usage_log_detail_refresh(
@@ -1435,11 +1538,16 @@ fn handle_session_usage_sync_msg(
     if !sync_tracker.finish_if_active(request_id) {
         return;
     }
+    app.usage.finish_manual_session_refresh();
 
     if let Err(err) = result {
         log::debug!("background session usage sync failed: {err}");
-        return;
     }
+
+    // A best-effort import may commit records before another source reports an
+    // error. Treat every completed cycle as a Usage invalidation boundary; the
+    // follow-up query is also useful for proxy rows written during the sync.
+    data_cache.invalidate_usage_pricing_cache_after_external_usage_sync();
 
     if usage_pricing_req_tx.is_none() {
         log::debug!("background session usage sync finished; usage/pricing worker unavailable");
@@ -1449,19 +1557,22 @@ fn handle_session_usage_sync_msg(
     // Completed aggregates are now stale, but their request tokens remain
     // valid. Keep the visible snapshot in place and arrange one final query
     // after any aggregate already in flight has completed.
-    data_cache.invalidate_usage_pricing_cache_after_external_usage_sync();
-
     let current_app_type = app.app_type.clone();
     // Always refresh the range the user is actually viewing (Today / 30d / custom),
     // otherwise the active range would show stale numbers after the sync finishes
     // while the user is sitting on the Usage view.
     let active_range = app.usage.range;
     data_cache.mark_usage_pricing_dirty(&current_app_type, active_range);
-    // Keep the default 7-day window warm too (used as the cached default).
-    if !matches!(active_range, data::UsageRangePreset::SevenDays) {
-        data_cache.mark_usage_pricing_dirty(&current_app_type, data::UsageRangePreset::SevenDays);
+    let aggregate_queued = data_cache.flush_dirty_usage_pricing(app, usage_pricing_req_tx);
+    let aggregate_will_complete =
+        aggregate_queued || !data_cache.pending_usage_pricing_by_key.is_empty();
+    if matches!(app.route, route::Route::UsageLogs)
+        && matches!(app.usage.pane, app::UsagePane::Recent)
+        && app.usage.log_pager.current_page() > 0
+        && aggregate_will_complete
+    {
+        app.usage.request_log_page_refresh_after_aggregate();
     }
-    data_cache.flush_dirty_usage_pricing(app, usage_pricing_req_tx);
     data_cache.remember_current(&app.app_type, data);
 }
 
@@ -1674,6 +1785,7 @@ fn cache_invalidation_for_action(action: &Action) -> CacheInvalidation {
         | Action::ProviderQuotaRefresh { .. }
         | Action::ProviderModelFetch { .. }
         | Action::UsageCustomRange { .. }
+        | Action::UsageRefresh
         | Action::UsageLogDetailRefresh { .. }
         | Action::ManagedAuthRefresh { .. }
         | Action::ManagedAuthStartLogin { .. }
@@ -1947,6 +2059,7 @@ fn handle_tui_action(
     managed_auth_req_tx: Option<&mpsc::Sender<ManagedAuthReq>>,
     quota_req_tx: Option<&mpsc::Sender<QuotaReq>>,
     usage_pricing_req_tx: Option<&mpsc::Sender<UsagePricingReq>>,
+    session_usage_sync: Option<(&mpsc::Sender<SessionUsageSyncReq>, &mut RequestTracker)>,
     action: Action,
 ) -> Result<(), AppError> {
     if app.sessions.take_message_cancel_pending() {
@@ -2022,6 +2135,46 @@ fn handle_tui_action(
                 data::UsageRangePreset::Custom(range),
             );
             data_cache.remember_current(&app.app_type, data);
+            Ok(())
+        }
+        Action::UsageRefresh => {
+            let current_app_type = app.app_type.clone();
+            let is_usage_route = matches!(
+                app.route,
+                route::Route::Usage | route::Route::UsageLogs | route::Route::UsageLogDetail { .. }
+            );
+            let range = if matches!(app.route, route::Route::Pricing)
+                && matches!(app.usage.range, data::UsageRangePreset::Custom(_))
+            {
+                data::UsageRangePreset::SevenDays
+            } else {
+                app.usage.range
+            };
+
+            // Match upstream's manual flow: import session logs first, then
+            // invalidate/requery Usage. Repeated `r` shares the active import;
+            // if either worker is unavailable, fall back to the async DB query.
+            let sync_queued = is_usage_route
+                && usage_pricing_req_tx.is_some()
+                && session_usage_sync
+                    .map(|(tx, tracker)| queue_background_session_usage_sync(Some(tx), tracker))
+                    .unwrap_or(false);
+            if sync_queued {
+                app.usage.start_manual_session_refresh();
+            } else {
+                data_cache.queue_usage_pricing_load(
+                    app,
+                    usage_pricing_req_tx,
+                    &current_app_type,
+                    range,
+                );
+                if matches!(app.route, route::Route::UsageLogs)
+                    && matches!(app.usage.pane, app::UsagePane::Recent)
+                    && app.usage.log_pager.current_page() > 0
+                {
+                    app.usage.request_log_page_refresh_after_aggregate();
+                }
+            }
             Ok(())
         }
         Action::UsageLogDetailRefresh { rowid } => {
@@ -2331,8 +2484,6 @@ pub fn run(app_override: Option<AppType>) -> Result<(), AppError> {
 
     let tick_rate = TUI_TICK_RATE;
     let mut last_tick = Instant::now();
-    // 后台会话用量导入进行时，Usage 页数字的周期性刷新节流
-    let mut last_usage_sync_data_refresh = Instant::now();
     let mut last_frame = Instant::now();
     let mut frame_scheduler = FrameScheduler::new();
     let mut proxy_open_flash = ProxyOpenFlash::default();
@@ -2800,9 +2951,11 @@ pub fn run(app_override: Option<AppType>) -> Result<(), AppError> {
         if let Some(usage_pricing) = usage_pricing.as_ref() {
             while let Ok(msg) = usage_pricing.result_rx.try_recv() {
                 frame_scheduler.mark_dirty();
-                if handle_usage_pricing_msg(&mut app, &mut data, &mut data_cache, msg) {
-                    // Import progress only marks an in-flight aggregate dirty.
-                    // Once that aggregate finishes, launch one fresh follow-up
+                if handle_usage_pricing_msg(&mut app, &mut data, &mut data_cache, msg)
+                    && session_usage_sync.active.is_none()
+                {
+                    // A completed session sync can mark an in-flight aggregate
+                    // dirty. Once it finishes, launch one fresh follow-up
                     // without disturbing log page/detail snapshot tokens.
                     data_cache.flush_dirty_usage_pricing(&mut app, Some(&usage_pricing.req_tx));
                 }
@@ -2945,6 +3098,9 @@ pub fn run(app_override: Option<AppType>) -> Result<(), AppError> {
                         managed_auth.as_ref().map(|s| &s.req_tx),
                         quota.as_ref().map(|s| &s.req_tx),
                         usage_pricing.as_ref().map(|s| &s.req_tx),
+                        session_usage
+                            .as_ref()
+                            .map(|s| (&s.req_tx, &mut session_usage_sync)),
                         action,
                     );
                     let action_succeeded = action_result.is_ok();
@@ -2993,6 +3149,9 @@ pub fn run(app_override: Option<AppType>) -> Result<(), AppError> {
                         managed_auth.as_ref().map(|s| &s.req_tx),
                         quota.as_ref().map(|s| &s.req_tx),
                         usage_pricing.as_ref().map(|s| &s.req_tx),
+                        session_usage
+                            .as_ref()
+                            .map(|s| (&s.req_tx, &mut session_usage_sync)),
                         action,
                     );
                     let action_succeeded = action_result.is_ok();
@@ -3035,6 +3194,11 @@ pub fn run(app_override: Option<AppType>) -> Result<(), AppError> {
             &mut data_cache,
             usage_pricing.as_ref().map(|s| &s.req_tx),
         );
+        maybe_queue_usage_log_page_refresh_after_aggregate(
+            &mut app,
+            &mut data_cache,
+            usage_pricing.as_ref().map(|s| &s.req_tx),
+        );
         maybe_queue_usage_log_prefetch(
             &mut app,
             &data,
@@ -3056,31 +3220,6 @@ pub fn run(app_override: Option<AppType>) -> Result<(), AppError> {
                 &mut data,
                 quota.as_ref().map(|s| &s.req_tx),
             );
-            // 后台会话用量导入进行时：每 ~2.5s 标记当前区间需要刷新，让
-            // Usage 页数字随导入进度增长。若聚合仍在运行，只记录一次
-            // follow-up，不取消重启长查询，也不改动 log page/detail token。
-            if session_usage_sync.active.is_some()
-                && matches!(
-                    app.route,
-                    route::Route::Usage
-                        | route::Route::UsageLogs
-                        | route::Route::UsageLogDetail { .. }
-                )
-                && last_usage_sync_data_refresh.elapsed() >= Duration::from_millis(2500)
-            {
-                let usage_pricing_tx = usage_pricing.as_ref().map(|s| &s.req_tx);
-                if usage_pricing_tx.is_some() {
-                    let range = app.usage.range;
-                    let app_type = app.app_type.clone();
-                    data_cache.request_usage_pricing_refresh_after_external_usage_sync(
-                        &mut app,
-                        usage_pricing_tx,
-                        &app_type,
-                        range,
-                    );
-                }
-                last_usage_sync_data_refresh = Instant::now();
-            }
             last_tick = Instant::now();
             frame_scheduler.mark_dirty();
         }

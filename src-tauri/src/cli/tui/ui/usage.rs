@@ -1411,9 +1411,10 @@ fn usage_summary_line(app: &App, data: &UiData) -> String {
     }
 
     let summary = data.usage.summary_for(app.usage.range);
+    let refresh_prefix = usage_refresh_prefix(app);
     if i18n::is_chinese() {
         format!(
-            "{} · {} 请求 · {} tokens · {} · 平均延迟 {}{sync_suffix}",
+            "{refresh_prefix}{} · {} 请求 · {} tokens · {} · 平均延迟 {}{sync_suffix}",
             app.usage.range.label(),
             summary.total_requests,
             format_token_compact(summary.total_tokens()),
@@ -1422,7 +1423,7 @@ fn usage_summary_line(app: &App, data: &UiData) -> String {
         )
     } else {
         format!(
-            "{} · {} requests · {} tokens · {} · {} avg latency{sync_suffix}",
+            "{refresh_prefix}{} · {} requests · {} tokens · {} · {} avg latency{sync_suffix}",
             app.usage.range.label(),
             summary.total_requests,
             format_token_compact(summary.total_tokens()),
@@ -1438,7 +1439,7 @@ fn current_usage_is_loading(app: &App, data: &UiData) -> bool {
 }
 
 fn usage_detail_summary_line(app: &App, data: &UiData) -> String {
-    match app.usage.pane {
+    let mut line = match app.usage.pane {
         UsagePane::Models => {
             let count = data.usage.top_models_for(app.usage.range).len();
             if i18n::is_chinese() {
@@ -1481,6 +1482,27 @@ fn usage_detail_summary_line(app: &App, data: &UiData) -> String {
                 )
             }
         }
+    };
+    line.insert_str(0, &usage_refresh_prefix(app));
+    line.push_str(&usage_sync_progress_suffix());
+    line
+}
+
+fn usage_refresh_prefix(app: &App) -> String {
+    if app.usage.manual_session_refreshing()
+        || app.usage.is_loading_for(&app.app_type, app.usage.range)
+        || app.usage.log_page_refresh_after_aggregate_requested()
+        || app.usage.log_pager.has_refresh_pending()
+    {
+        let spinner = match app.tick % 4 {
+            0 => "⠋",
+            1 => "⠙",
+            2 => "⠹",
+            _ => "⠸",
+        };
+        format!("{spinner} {} · ", usage_text("Refreshing", "正在刷新"))
+    } else {
+        String::new()
     }
 }
 

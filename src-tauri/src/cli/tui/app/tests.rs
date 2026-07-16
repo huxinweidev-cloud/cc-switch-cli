@@ -16378,6 +16378,25 @@ mod tests {
     }
 
     #[test]
+    fn usage_refresh_shortcut_uses_the_usage_worker_on_usage_and_pricing_routes() {
+        let mut app = App::new(Some(AppType::Claude));
+        app.route = Route::Usage;
+        app.focus = Focus::Content;
+        let data = UiData::default();
+
+        let action = app.on_key(key(KeyCode::Char('r')), &data);
+        assert!(matches!(action, Action::UsageRefresh));
+
+        app.route = Route::UsageLogs;
+        let action = app.on_key(key(KeyCode::Char('r')), &data);
+        assert!(matches!(action, Action::UsageRefresh));
+
+        app.route = Route::Pricing;
+        let action = app.on_key(key(KeyCode::Char('r')), &data);
+        assert!(matches!(action, Action::UsageRefresh));
+    }
+
+    #[test]
     fn usage_custom_range_shortcut_opens_text_input() {
         let mut app = App::new(Some(AppType::Claude));
         app.route = Route::Usage;
@@ -17023,6 +17042,153 @@ mod tests {
         ));
         assert_eq!(pager.gate.len(), 220);
         assert_eq!(pager.gate.page_count(), 3);
+    }
+
+    #[test]
+    fn usage_log_pager_refreshes_the_current_eviction_safe_anchor_in_place() {
+        let mut pager = UsageLogPager::default();
+        let rows_for_page = |page: usize, label: &str| {
+            (0..100)
+                .map(|index| {
+                    let ordinal = page.saturating_mul(100).saturating_add(index);
+                    data::UsageLogRow {
+                        request_id: format!("{label}-{index}"),
+                        created_at: 10_000 - ordinal as i64,
+                        cursor_rowid: ordinal as i64 + 1,
+                        ..data::UsageLogRow::default()
+                    }
+                })
+                .collect::<Vec<_>>()
+        };
+        let first_page = rows_for_page(0, "p0");
+        pager.sync_source(
+            &AppType::Claude,
+            data::UsageRangePreset::SevenDays,
+            &first_page,
+            500,
+        );
+
+        for page in 1..=3 {
+            let load = pager.page_request(page).expect("adjacent page request");
+            assert!(pager.start_load_request(page, page as u64, load));
+            let rows = rows_for_page(page, &format!("p{page}"));
+            assert!(pager.finish_request(
+                page,
+                page as u64,
+                load.direction,
+                data::UsageLogPage {
+                    next_cursor: rows.last().map(data::UsageLogCursor::from_row),
+                    rows,
+                    has_more: true,
+                },
+            ));
+            if page < 3 {
+                pager.gate.select(page.saturating_mul(100));
+            }
+        }
+
+        // Loading page 3 evicts page 1 from the two-page cache. Page 2 can
+        // still be refreshed because it retained its own original keyset anchor.
+        pager.gate.select(200);
+        let refresh = pager
+            .current_page_refresh_request()
+            .expect("current page should retain its load anchor");
+        let old_request_id = pager.current_rows(&first_page)[0].request_id.clone();
+        assert_eq!(old_request_id, "p2-0");
+        assert!(pager.start_load_request(2, 40, refresh));
+        assert!(!pager.start_load_request(2, 41, refresh));
+        assert_eq!(pager.current_rows(&first_page)[0].request_id, "p2-0");
+
+        let refreshed_rows = rows_for_page(2, "refreshed");
+        assert!(pager.finish_request(
+            2,
+            40,
+            refresh.direction,
+            data::UsageLogPage {
+                next_cursor: refreshed_rows.last().map(data::UsageLogCursor::from_row),
+                rows: refreshed_rows,
+                has_more: true,
+            },
+        ));
+        assert_eq!(pager.current_page(), 2);
+        assert_eq!(pager.gate.selected_index(), Some(200));
+        assert!(!pager.page_is_available(3));
+        assert_eq!(pager.current_rows(&first_page)[0].request_id, "refreshed-0");
+    }
+
+    #[test]
+    fn usage_log_pager_discards_a_refresh_result_after_cached_page_navigation() {
+        let rows_for_page = |page: usize| {
+            (0..100)
+                .map(|index| {
+                    let ordinal = page.saturating_mul(100).saturating_add(index);
+                    data::UsageLogRow {
+                        request_id: format!("p{page}-{index}"),
+                        created_at: 10_000 - ordinal as i64,
+                        cursor_rowid: ordinal as i64 + 1,
+                        ..data::UsageLogRow::default()
+                    }
+                })
+                .collect::<Vec<_>>()
+        };
+        let first_page = rows_for_page(0);
+        let mut pager = UsageLogPager::default();
+        pager.sync_source(
+            &AppType::Claude,
+            data::UsageRangePreset::SevenDays,
+            &first_page,
+            300,
+        );
+
+        for page in 1..=2 {
+            let load = pager.page_request(page).expect("adjacent page request");
+            assert!(pager.start_load_request(page, page as u64, load));
+            let rows = rows_for_page(page);
+            assert!(pager.finish_request(
+                page,
+                page as u64,
+                load.direction,
+                data::UsageLogPage {
+                    next_cursor: rows.last().map(data::UsageLogCursor::from_row),
+                    rows,
+                    has_more: page < 2,
+                },
+            ));
+            pager.gate.select(page.saturating_mul(100));
+        }
+
+        let refresh = pager
+            .current_page_refresh_request()
+            .expect("current page should be refreshable");
+        assert!(pager.start_load_request(2, 50, refresh));
+        assert!(pager.has_refresh_pending());
+
+        // Page 1 is still cached and remains interactive while the page 2
+        // query runs. Its snapshot must survive the late page 2 result.
+        pager.gate.select(100);
+        let refreshed_rows = (0..20)
+            .map(|index| data::UsageLogRow {
+                request_id: format!("new-p2-{index}"),
+                ..data::UsageLogRow::default()
+            })
+            .collect();
+        assert!(pager.finish_request(
+            2,
+            50,
+            refresh.direction,
+            data::UsageLogPage {
+                rows: refreshed_rows,
+                has_more: false,
+                ..data::UsageLogPage::default()
+            },
+        ));
+
+        assert!(!pager.has_refresh_pending());
+        assert_eq!(pager.current_page(), 1);
+        assert_eq!(pager.current_rows(&first_page)[0].request_id, "p1-0");
+        assert!(pager.page_is_available(2));
+        pager.gate.select(200);
+        assert_eq!(pager.current_rows(&first_page)[0].request_id, "p2-0");
     }
 
     #[test]

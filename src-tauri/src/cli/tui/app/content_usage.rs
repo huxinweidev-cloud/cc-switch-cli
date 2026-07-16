@@ -118,7 +118,7 @@ impl App {
                 };
                 self.push_route_and_switch(Route::Pricing)
             }
-            Intent::Reload => Action::ReloadData,
+            Intent::Reload => Action::UsageRefresh,
         }
     }
 
@@ -199,7 +199,7 @@ impl App {
                     self.open_usage_log_detail_from_logs(data)
                 }
             }
-            KeyCode::Char('r') => Action::ReloadData,
+            KeyCode::Char('r') => Action::UsageRefresh,
             _ => Action::None,
         }
     }

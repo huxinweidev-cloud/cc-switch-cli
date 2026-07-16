@@ -1198,6 +1198,35 @@ fn tui_usage_narrow_width_renders_without_losing_primary_sections() {
 }
 
 #[test]
+fn tui_manual_usage_refresh_status_stays_visible_at_eighty_columns() {
+    let _lang = use_test_language(Language::English);
+    let mut app = App::new(Some(AppType::Claude));
+    app.focus = Focus::Content;
+    app.usage
+        .start_loading(AppType::Claude, UsageRangePreset::SevenDays);
+    let mut data = minimal_data(&app.app_type);
+    data.usage.summary_7d.total_requests = 42;
+    data.pricing.rows.push(ModelPricingRow {
+        model_id: "gpt-5.4".to_string(),
+        display_name: "GPT 5.4".to_string(),
+        recent_request_count: 1,
+        ..ModelPricingRow::default()
+    });
+
+    app.route = Route::Usage;
+    let usage = all_text(&render_with_size(&app, &data, 80, 28));
+    assert!(usage.contains("Refreshing"), "{usage}");
+
+    app.route = Route::UsageLogs;
+    let logs = all_text(&render_with_size(&app, &data, 80, 28));
+    assert!(logs.contains("Refreshing"), "{logs}");
+
+    app.route = Route::Pricing;
+    let pricing = all_text(&render_with_size(&app, &data, 80, 28));
+    assert!(pricing.contains("Refreshing"), "{pricing}");
+}
+
+#[test]
 fn tui_pricing_renders_catalog_and_recent_usage_context() {
     let _lang = use_test_language(Language::English);
 
