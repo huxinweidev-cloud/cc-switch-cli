@@ -150,6 +150,8 @@ fn usage_log_rows_fingerprint(rows: &[crate::cli::tui::data::UsageLogRow]) -> u6
 struct PendingUsageLogPage {
     request_id: u64,
     direction: crate::cli::tui::data::UsageLogPageDirection,
+    load: Option<UsageLogPageRequest>,
+    refresh: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -164,6 +166,7 @@ pub(crate) struct UsageLogPager {
     first_page: Vec<crate::cli::tui::data::UsageLogRow>,
     pub(crate) gate: super::paged_list::PagedListState,
     pages: HashMap<usize, crate::cli::tui::data::UsageLogPage>,
+    page_loads: HashMap<usize, UsageLogPageRequest>,
     lru: std::collections::VecDeque<usize>,
     pending: HashMap<usize, PendingUsageLogPage>,
     errors: HashMap<usize, String>,
@@ -180,6 +183,7 @@ impl Default for UsageLogPager {
                 0,
             ),
             pages: HashMap::new(),
+            page_loads: HashMap::new(),
             lru: std::collections::VecDeque::new(),
             pending: HashMap::new(),
             errors: HashMap::new(),
@@ -241,6 +245,7 @@ impl UsageLogPager {
         self.source = Some(source);
         self.first_page = first_page.to_vec();
         self.pages.clear();
+        self.page_loads.clear();
         self.lru.clear();
         self.pending.clear();
         self.errors.clear();
@@ -254,6 +259,7 @@ impl UsageLogPager {
         self.source = None;
         self.first_page.clear();
         self.pages.clear();
+        self.page_loads.clear();
         self.lru.clear();
         self.pending.clear();
         self.errors.clear();
@@ -300,6 +306,10 @@ impl UsageLogPager {
 
     pub(crate) fn page_is_pending(&self, page: usize) -> bool {
         self.pending.contains_key(&page)
+    }
+
+    pub(crate) fn has_refresh_pending(&self) -> bool {
+        self.pending.values().any(|pending| pending.refresh)
     }
 
     pub(crate) fn page_error(&self, page: usize) -> Option<&str> {
@@ -385,24 +395,69 @@ impl UsageLogPager {
             .filter(|page| self.page_request(*page).is_some())
     }
 
+    #[cfg(test)]
     pub(crate) fn start_request(
         &mut self,
         page: usize,
         request_id: u64,
         direction: crate::cli::tui::data::UsageLogPageDirection,
     ) -> bool {
-        if !self.pending.contains_key(&page) && self.pending.len() >= USAGE_LOG_MAX_PENDING_PAGES {
+        self.start_request_inner(page, request_id, direction, None)
+    }
+
+    pub(crate) fn start_load_request(
+        &mut self,
+        page: usize,
+        request_id: u64,
+        load: UsageLogPageRequest,
+    ) -> bool {
+        self.start_request_inner(page, request_id, load.direction, Some(load))
+    }
+
+    fn start_request_inner(
+        &mut self,
+        page: usize,
+        request_id: u64,
+        direction: crate::cli::tui::data::UsageLogPageDirection,
+        load: Option<UsageLogPageRequest>,
+    ) -> bool {
+        if self.pending.contains_key(&page) || self.pending.len() >= USAGE_LOG_MAX_PENDING_PAGES {
             return false;
         }
+        let refresh = self.pages.contains_key(&page);
         self.errors.remove(&page);
         self.pending.insert(
             page,
             PendingUsageLogPage {
                 request_id,
                 direction,
+                load,
+                refresh,
             },
         );
         true
+    }
+
+    /// Re-run the exact keyset query that originally populated the visible
+    /// page. Keeping the original anchor avoids mixing a refreshed head with
+    /// old page cursors, and still works when the preceding page was evicted.
+    pub(crate) fn current_page_refresh_request(&self) -> Option<UsageLogPageRequest> {
+        let page = self.current_page();
+        if page == 0 || self.page_is_pending(page) || !self.pages.contains_key(&page) {
+            return None;
+        }
+        self.page_loads.get(&page).copied()
+    }
+
+    pub(crate) fn request_is_refresh(
+        &self,
+        page: usize,
+        request_id: u64,
+        direction: crate::cli::tui::data::UsageLogPageDirection,
+    ) -> bool {
+        self.pending.get(&page).is_some_and(|pending| {
+            pending.request_id == request_id && pending.direction == direction && pending.refresh
+        })
     }
 
     pub(crate) fn fail_request(
@@ -447,8 +502,22 @@ impl UsageLogPager {
         if !self.request_matches(page, request_id, direction) {
             return false;
         }
-        self.pending.remove(&page);
+        let pending = self
+            .pending
+            .remove(&page)
+            .expect("matching usage log request must still be pending");
+        let load = pending.load;
         self.errors.remove(&page);
+
+        // The user can navigate to an already-cached neighbour while a manual
+        // refresh is in flight. That result belongs to the page that was
+        // visible when `r` was pressed; applying it after navigation would
+        // discard the new current page's cache. Keep the coherent old snapshot
+        // instead and let a later refresh target the page now on screen.
+        if pending.refresh && self.current_page() != page {
+            return true;
+        }
+
         if loaded.rows.len() > self.gate.page_size() {
             loaded.rows.truncate(self.gate.page_size());
             loaded.has_more = true;
@@ -485,7 +554,25 @@ impl UsageLogPager {
             }
         }
 
+        // A refreshed page can have a different tail cursor. Drop neighbouring
+        // cached pages so the next navigation rebuilds them from this page,
+        // rather than mixing two keyset snapshots and creating gaps/duplicates.
+        if pending.refresh {
+            self.pages.retain(|cached_page, _| *cached_page == page);
+            self.page_loads
+                .retain(|cached_page, _| *cached_page == page);
+            self.lru.retain(|cached_page| *cached_page == page);
+            self.pending.clear();
+            self.errors.clear();
+            self.blocked_boundary_gesture = None;
+        }
+
         self.pages.insert(page, loaded);
+        if let Some(load) = load {
+            self.page_loads.insert(page, load);
+        } else {
+            self.page_loads.remove(&page);
+        }
         self.touch(page);
         self.evict_rows();
         true
@@ -497,11 +584,9 @@ impl UsageLogPager {
         request_id: u64,
         direction: crate::cli::tui::data::UsageLogPageDirection,
     ) -> bool {
-        self.pending.get(&page).copied()
-            == Some(PendingUsageLogPage {
-                request_id,
-                direction,
-            })
+        self.pending.get(&page).is_some_and(|pending| {
+            pending.request_id == request_id && pending.direction == direction
+        })
     }
 
     fn prune_errors(&mut self) {
@@ -552,6 +637,7 @@ impl UsageLogPager {
                 break;
             };
             self.pages.remove(&page);
+            self.page_loads.remove(&page);
             self.lru.retain(|cached| *cached != page);
         }
     }
@@ -621,6 +707,8 @@ pub struct UsageState {
     pub(crate) log_pager: UsageLogPager,
     pub(crate) log_detail_snapshot: Option<UsageLogDetailSnapshot>,
     log_detail_pending: Option<u64>,
+    refresh_log_page_after_aggregate: bool,
+    manual_session_refreshing: bool,
     loading_ranges: HashSet<(AppType, crate::cli::tui::data::UsageRangePreset)>,
 }
 
@@ -635,6 +723,8 @@ impl Default for UsageState {
             log_pager: UsageLogPager::default(),
             log_detail_snapshot: None,
             log_detail_pending: None,
+            refresh_log_page_after_aggregate: false,
+            manual_session_refreshing: false,
             loading_ranges: HashSet::new(),
         }
     }
@@ -677,7 +767,53 @@ impl UsageState {
         self.log_pager.invalidate_source();
         self.log_detail_snapshot = None;
         self.log_detail_pending = None;
+        self.refresh_log_page_after_aggregate = false;
         self.logs_idx = 0;
+    }
+
+    pub(crate) fn request_log_page_refresh_after_aggregate(&mut self) {
+        self.refresh_log_page_after_aggregate = true;
+    }
+
+    pub(crate) fn log_page_refresh_after_aggregate_requested(&self) -> bool {
+        self.refresh_log_page_after_aggregate
+    }
+
+    pub(crate) fn finish_log_page_refresh_after_aggregate(&mut self) {
+        self.refresh_log_page_after_aggregate = false;
+    }
+
+    pub(crate) fn start_manual_session_refresh(&mut self) {
+        self.manual_session_refreshing = true;
+    }
+
+    pub(crate) fn finish_manual_session_refresh(&mut self) {
+        self.manual_session_refreshing = false;
+    }
+
+    pub(crate) fn manual_session_refreshing(&self) -> bool {
+        self.manual_session_refreshing
+    }
+
+    pub(crate) fn sync_current_log_selection(
+        &mut self,
+        first_page: &[crate::cli::tui::data::UsageLogRow],
+    ) {
+        let current_len = self.log_pager.current_rows(first_page).len();
+        if current_len == 0 {
+            self.logs_idx = 0;
+            return;
+        }
+
+        let selected = self.log_pager.gate.selected_index().unwrap_or(0);
+        self.logs_idx = (selected % self.log_pager.gate.page_size()).min(current_len - 1);
+        let page_start = self
+            .log_pager
+            .current_page()
+            .saturating_mul(self.log_pager.gate.page_size());
+        self.log_pager
+            .gate
+            .select(page_start.saturating_add(self.logs_idx));
     }
 
     pub(crate) fn remember_log_detail(

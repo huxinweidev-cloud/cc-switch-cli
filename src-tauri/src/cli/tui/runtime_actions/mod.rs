@@ -479,8 +479,8 @@ pub(crate) fn handle_action(
             Ok(())
         }
         // The top-level TUI dispatcher owns the usage worker channel. Keeping
-        // this arm harmless also makes direct runtime-action tests exhaustive.
-        Action::UsageLogDetailRefresh { .. } => Ok(()),
+        // these arms harmless also makes direct runtime-action tests exhaustive.
+        Action::UsageRefresh | Action::UsageLogDetailRefresh { .. } => Ok(()),
         Action::SetAppType(next) => {
             ctx.app.sessions.clear_detail();
             let _ = ctx.app.sessions.take_message_cancel_pending();

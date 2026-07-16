@@ -1011,6 +1011,7 @@ fn no_op_reload_candidate_preserves_pending_app_data_load() {
         None,
         None,
         None,
+        None,
         Action::EditorSubmit {
             submit: EditorSubmit::ProviderAdd,
             content: "{".to_string(),
@@ -1057,6 +1058,7 @@ fn switch_to_sessions_queues_scan_without_waiting_for_next_tick() {
         None,
         None,
         None,
+        None,
         Action::SwitchRoute(route::Route::Sessions),
     )
     .expect("switching to sessions should queue a scan");
@@ -1094,6 +1096,7 @@ fn switch_to_sessions_queues_scan_without_waiting_for_next_tick() {
         &mut webdav_loading,
         None,
         &mut update_check,
+        None,
         None,
         None,
         None,
@@ -1311,6 +1314,7 @@ fn switching_app_on_sessions_route_queues_scan_for_next_app() {
         &mut webdav_loading,
         None,
         &mut update_check,
+        None,
         None,
         None,
         None,
@@ -2079,6 +2083,169 @@ fn background_session_usage_sync_queues_once() {
 }
 
 #[test]
+fn manual_usage_refresh_syncs_sessions_before_requerying() {
+    let mut terminal = TuiTerminal::new_for_test().expect("create terminal");
+    let mut app = App::new(Some(AppType::Claude));
+    app.route = route::Route::Usage;
+    let mut data = UiData::default();
+    data.usage.summary_7d.total_requests = 42;
+    let mut cache = UiDataByAppCache::default();
+    let mut proxy_loading = RequestTracker::default();
+    let mut webdav_loading = RequestTracker::default();
+    let mut update_check = RequestTracker::default();
+    let mut session_usage_sync = RequestTracker::default();
+    let (usage_tx, usage_rx) = mpsc::channel();
+    let (sync_tx, sync_rx) = mpsc::channel();
+
+    handle_tui_action(
+        &mut terminal,
+        &mut app,
+        &mut data,
+        &mut cache,
+        None,
+        None,
+        None,
+        None,
+        None,
+        &mut proxy_loading,
+        None,
+        None,
+        None,
+        &mut webdav_loading,
+        None,
+        &mut update_check,
+        None,
+        None,
+        None,
+        Some(&usage_tx),
+        Some((&sync_tx, &mut session_usage_sync)),
+        Action::UsageRefresh,
+    )
+    .expect("manual usage refresh should queue session sync");
+
+    assert!(matches!(
+        sync_rx.recv().expect("session sync should be queued first"),
+        SessionUsageSyncReq::Run { request_id: 1 }
+    ));
+    assert!(usage_rx.try_recv().is_err());
+    assert_eq!(data.usage.summary_7d.total_requests, 42);
+    assert!(app.usage.manual_session_refreshing());
+
+    handle_tui_action(
+        &mut terminal,
+        &mut app,
+        &mut data,
+        &mut cache,
+        None,
+        None,
+        None,
+        None,
+        None,
+        &mut proxy_loading,
+        None,
+        None,
+        None,
+        &mut webdav_loading,
+        None,
+        &mut update_check,
+        None,
+        None,
+        None,
+        Some(&usage_tx),
+        Some((&sync_tx, &mut session_usage_sync)),
+        Action::UsageRefresh,
+    )
+    .expect("duplicate manual refresh should reuse session sync");
+    assert!(sync_rx.try_recv().is_err());
+    assert!(usage_rx.try_recv().is_err());
+
+    handle_session_usage_sync_msg(
+        &mut app,
+        &mut data,
+        &mut cache,
+        &mut session_usage_sync,
+        Some(&usage_tx),
+        SessionUsageSyncMsg::Finished {
+            request_id: 1,
+            result: Ok(()),
+        },
+    );
+
+    assert!(!app.usage.manual_session_refreshing());
+
+    assert!(matches!(
+        usage_rx
+            .recv()
+            .expect("usage query should follow completed session sync"),
+        UsagePricingReq::Load {
+            request_id: 1,
+            app_type: AppType::Claude,
+            range: data::UsageRangePreset::SevenDays,
+            ..
+        }
+    ));
+    assert!(usage_rx.try_recv().is_err());
+    assert_eq!(data.usage.summary_7d.total_requests, 42);
+}
+
+#[test]
+fn pricing_manual_refresh_uses_fixed_async_query_without_session_sync() {
+    let mut terminal = TuiTerminal::new_for_test().expect("create terminal");
+    let mut app = App::new(Some(AppType::Claude));
+    app.route = route::Route::Pricing;
+    app.usage.range = data::UsageRangePreset::Custom(
+        data::parse_usage_custom_range("2026-06-01..2026-06-05").expect("valid custom range"),
+    );
+    let mut data = UiData::default();
+    let mut cache = UiDataByAppCache::default();
+    let mut proxy_loading = RequestTracker::default();
+    let mut webdav_loading = RequestTracker::default();
+    let mut update_check = RequestTracker::default();
+    let mut session_usage_sync = RequestTracker::default();
+    let (usage_tx, usage_rx) = mpsc::channel();
+    let (sync_tx, sync_rx) = mpsc::channel();
+
+    handle_tui_action(
+        &mut terminal,
+        &mut app,
+        &mut data,
+        &mut cache,
+        None,
+        None,
+        None,
+        None,
+        None,
+        &mut proxy_loading,
+        None,
+        None,
+        None,
+        &mut webdav_loading,
+        None,
+        &mut update_check,
+        None,
+        None,
+        None,
+        Some(&usage_tx),
+        Some((&sync_tx, &mut session_usage_sync)),
+        Action::UsageRefresh,
+    )
+    .expect("pricing refresh should use the usage worker");
+
+    assert!(sync_rx.try_recv().is_err());
+    assert_eq!(session_usage_sync.active, None);
+    assert!(matches!(
+        usage_rx
+            .recv()
+            .expect("fixed pricing query should be queued"),
+        UsagePricingReq::Load {
+            app_type: AppType::Claude,
+            range: data::UsageRangePreset::SevenDays,
+            ..
+        }
+    ));
+}
+
+#[test]
 fn background_session_usage_sync_queues_final_refresh_without_new_epoch() {
     let mut app = App::new(Some(AppType::Claude));
     let mut data = UiData::default();
@@ -2139,7 +2306,45 @@ fn background_session_usage_sync_queues_final_refresh_without_new_epoch() {
 }
 
 #[test]
-fn usage_sync_progress_waits_for_running_aggregate_then_queues_one_follow_up() {
+fn completed_session_sync_requeries_only_the_active_custom_range() {
+    let mut app = App::new(Some(AppType::Claude));
+    app.route = route::Route::Usage;
+    let range =
+        data::parse_usage_custom_range("2026-06-01..2026-06-05").expect("valid custom range");
+    app.usage.range = data::UsageRangePreset::Custom(range);
+    let mut data = UiData::default();
+    data.usage.begin_custom_range(range);
+    let mut cache = UiDataByAppCache::default();
+    let mut tracker = RequestTracker::default();
+    let request_id = tracker.start();
+    let (tx, rx) = mpsc::channel();
+
+    handle_session_usage_sync_msg(
+        &mut app,
+        &mut data,
+        &mut cache,
+        &mut tracker,
+        Some(&tx),
+        SessionUsageSyncMsg::Finished {
+            request_id,
+            result: Ok(()),
+        },
+    );
+
+    assert!(matches!(
+        rx.recv().expect("active custom query should be queued"),
+        UsagePricingReq::Load {
+            app_type: AppType::Claude,
+            range: data::UsageRangePreset::Custom(queued),
+            ..
+        } if queued == range
+    ));
+    assert!(rx.try_recv().is_err(), "fixed range should not be warmed");
+    assert!(cache.usage_pricing_dirty_by_key.is_empty());
+}
+
+#[test]
+fn usage_dirty_refresh_waits_for_running_aggregate_then_queues_one_follow_up() {
     let mut app = App::new(Some(AppType::Claude));
     let mut data = UiData::default();
     let mut cache = UiDataByAppCache::default();
@@ -2152,25 +2357,12 @@ fn usage_sync_progress_waits_for_running_aggregate_then_queues_one_follow_up() {
         UsagePricingReq::Load { request_id: 1, .. }
     ));
 
-    // Multiple progress ticks while request 1 is running only set one dirty
-    // bit. They must not clear its token or enqueue a newer request that would
-    // interrupt the long-running SQLite query.
-    assert!(
-        !cache.request_usage_pricing_refresh_after_external_usage_sync(
-            &mut app,
-            Some(&tx),
-            &AppType::Claude,
-            range,
-        )
-    );
-    assert!(
-        !cache.request_usage_pricing_refresh_after_external_usage_sync(
-            &mut app,
-            Some(&tx),
-            &AppType::Claude,
-            range,
-        )
-    );
+    // Repeated dirty signals while request 1 is running collapse to one bit.
+    // They must not clear its token or interrupt the long SQLite query.
+    cache.mark_usage_pricing_dirty(&AppType::Claude, range);
+    assert!(!cache.flush_dirty_usage_pricing(&mut app, Some(&tx)));
+    cache.mark_usage_pricing_dirty(&AppType::Claude, range);
+    assert!(!cache.flush_dirty_usage_pricing(&mut app, Some(&tx)));
     assert!(rx.try_recv().is_err());
     assert_eq!(cache.data_generation, 0);
     assert_eq!(cache.app_state_epoch, 0);
@@ -2258,7 +2450,7 @@ fn usage_sync_finish_does_not_cancel_running_aggregate_and_forces_final_follow_u
 }
 
 #[test]
-fn usage_sync_progress_keeps_log_page_and_detail_tokens_valid() {
+fn usage_dirty_refresh_keeps_log_page_and_detail_tokens_valid() {
     let mut app = App::new(Some(AppType::Claude));
     let mut data = UiData::default();
     let mut cache = UiDataByAppCache {
@@ -2274,12 +2466,8 @@ fn usage_sync_progress_keeps_log_page_and_detail_tokens_valid() {
         .log_pager
         .start_request(1, 41, data::UsageLogPageDirection::Older,));
     app.usage.start_log_detail_refresh(42);
-    cache.request_usage_pricing_refresh_after_external_usage_sync(
-        &mut app,
-        Some(&tx),
-        &AppType::Claude,
-        range,
-    );
+    cache.mark_usage_pricing_dirty(&AppType::Claude, range);
+    cache.flush_dirty_usage_pricing(&mut app, Some(&tx));
     assert_eq!(cache.data_generation, 7);
     assert_eq!(cache.app_state_epoch, 3);
 
@@ -2366,7 +2554,7 @@ fn cancelled_usage_log_page_clears_pending_without_recording_an_error() {
 }
 
 #[test]
-fn background_session_usage_sync_error_does_not_refresh_usage() {
+fn background_session_usage_sync_error_still_requeries_existing_usage() {
     let mut app = App::new(Some(AppType::Claude));
     let mut data = UiData::default();
     data.usage.summary_7d.total_cost_usd = 3.0;
@@ -2390,10 +2578,18 @@ fn background_session_usage_sync_error_does_not_refresh_usage() {
     assert_eq!(tracker.active, None);
     assert_eq!(cache.app_state_epoch, 0);
     assert_eq!(data.usage.summary_7d.total_cost_usd, 3.0);
-    assert!(!app
+    assert!(app
         .usage
         .is_loading_for(&AppType::Claude, data::UsageRangePreset::SevenDays));
-    assert!(rx.try_recv().is_err());
+    assert!(matches!(
+        rx.recv()
+            .expect("existing usage should still be refreshed after sync failure"),
+        UsagePricingReq::Load {
+            app_type: AppType::Claude,
+            range: data::UsageRangePreset::SevenDays,
+            ..
+        }
+    ));
 }
 
 #[test]
@@ -2440,6 +2636,7 @@ fn usage_custom_range_action_queues_range_specific_load() {
         None,
         None,
         Some(&tx),
+        None,
         Action::UsageCustomRange { range },
     )
     .expect("custom range action should be handled");
@@ -2622,10 +2819,12 @@ fn background_usage_refresh_preserves_a_later_page_browsing_snapshot() {
         })
         .collect::<Vec<_>>();
     let next_cursor = page_rows.last().map(data::UsageLogCursor::from_row);
-    assert!(app
+    let page_load = app
         .usage
         .log_pager
-        .start_request(1, 9, data::UsageLogPageDirection::Older,));
+        .page_request(1)
+        .expect("second-page anchor");
+    assert!(app.usage.log_pager.start_load_request(1, 9, page_load));
     assert!(app.usage.log_pager.finish_request(
         1,
         9,
@@ -2715,6 +2914,154 @@ fn background_usage_refresh_preserves_a_later_page_browsing_snapshot() {
         app.usage.log_pager.current_rows(&data.usage.recent_logs)[0].request_id,
         "old-p1-0"
     );
+
+    app.usage.request_log_page_refresh_after_aggregate();
+    let (tx, rx) = mpsc::channel();
+    maybe_queue_usage_log_page_refresh_after_aggregate(&mut app, &mut cache, Some(&tx));
+    let request_id = match rx.recv().expect("current page refresh should be queued") {
+        UsagePricingReq::LoadLogPage {
+            request_id,
+            page,
+            cursor,
+            direction,
+            ..
+        } => {
+            assert_eq!(page, 1);
+            assert_eq!(cursor, page_load.cursor);
+            assert_eq!(direction, page_load.direction);
+            request_id
+        }
+        other => panic!("unexpected current-page refresh: {other:?}"),
+    };
+    maybe_queue_usage_log_page_refresh_after_aggregate(&mut app, &mut cache, Some(&tx));
+    assert!(rx.try_recv().is_err());
+    assert_eq!(
+        app.usage.log_pager.current_rows(&data.usage.recent_logs)[0].request_id,
+        "old-p1-0"
+    );
+
+    app.usage.log_pager.gate.select(199);
+    app.usage.logs_idx = 99;
+    let refreshed_page = (0..20)
+        .map(|index| data::UsageLogRow {
+            request_id: format!("refreshed-p1-{index}"),
+            created_at: 899 - index,
+            cursor_rowid: 10_000 + index,
+            ..data::UsageLogRow::default()
+        })
+        .collect::<Vec<_>>();
+    handle_usage_pricing_msg(
+        &mut app,
+        &mut data,
+        &mut cache,
+        UsagePricingMsg::LogPageLoaded {
+            request_id,
+            generation: 0,
+            app_state_epoch: 0,
+            app_type: AppType::Claude,
+            range: data::UsageRangePreset::SevenDays,
+            page: 1,
+            direction: page_load.direction,
+            result: Ok(data::UsageLogPage {
+                next_cursor: refreshed_page.last().map(data::UsageLogCursor::from_row),
+                rows: refreshed_page,
+                has_more: false,
+            }),
+        },
+    );
+    assert_eq!(app.usage.log_pager.current_page(), 1);
+    assert_eq!(app.usage.log_pager.gate.selected_index(), Some(119));
+    assert_eq!(app.usage.logs_idx, 19);
+    assert_eq!(
+        app.usage.log_pager.current_rows(&data.usage.recent_logs)[19].request_id,
+        "refreshed-p1-19"
+    );
+    assert!(matches!(
+        app.on_usage_logs_key(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            &data,
+        ),
+        Action::SwitchRoute(route::Route::UsageLogDetail { rowid }) if rowid == 10_019
+    ));
+}
+
+#[test]
+fn current_usage_log_page_refresh_failure_keeps_data_and_warns() {
+    let mut app = App::new(Some(AppType::Claude));
+    app.route = route::Route::UsageLogs;
+    app.usage.pane = app::UsagePane::Recent;
+    let mut data = UiData::default();
+    data.usage.logs_total = 200;
+    data.usage.recent_logs = (0..100)
+        .map(|index| data::UsageLogRow {
+            request_id: format!("p0-{index}"),
+            created_at: 1_000 - index,
+            cursor_rowid: index + 1,
+            ..data::UsageLogRow::default()
+        })
+        .collect();
+    app.usage.sync_log_pager(
+        &AppType::Claude,
+        data::UsageRangePreset::SevenDays,
+        &data.usage.recent_logs,
+        data.usage.logs_total,
+    );
+    let load = app
+        .usage
+        .log_pager
+        .page_request(1)
+        .expect("second page anchor");
+    assert!(app.usage.log_pager.start_load_request(1, 70, load));
+    let page_rows = (0..100)
+        .map(|index| data::UsageLogRow {
+            request_id: format!("old-p1-{index}"),
+            created_at: 899 - index,
+            cursor_rowid: 101 + index,
+            ..data::UsageLogRow::default()
+        })
+        .collect::<Vec<_>>();
+    assert!(app.usage.log_pager.finish_request(
+        1,
+        70,
+        load.direction,
+        data::UsageLogPage {
+            next_cursor: page_rows.last().map(data::UsageLogCursor::from_row),
+            rows: page_rows,
+            has_more: false,
+        },
+    ));
+    app.usage.log_pager.gate.select(100);
+    let refresh = app
+        .usage
+        .log_pager
+        .current_page_refresh_request()
+        .expect("current page refresh anchor");
+    assert!(app.usage.log_pager.start_load_request(1, 71, refresh));
+
+    let mut cache = UiDataByAppCache::default();
+    handle_usage_pricing_msg(
+        &mut app,
+        &mut data,
+        &mut cache,
+        UsagePricingMsg::LogPageLoaded {
+            request_id: 71,
+            generation: 0,
+            app_state_epoch: 0,
+            app_type: AppType::Claude,
+            range: data::UsageRangePreset::SevenDays,
+            page: 1,
+            direction: refresh.direction,
+            result: Err(UsageLogLoadError::Failed("database busy".to_string())),
+        },
+    );
+
+    assert_eq!(
+        app.usage.log_pager.current_rows(&data.usage.recent_logs)[0].request_id,
+        "old-p1-0"
+    );
+    let toast = app.toast.as_ref().expect("refresh failure should warn");
+    assert_eq!(toast.kind, ToastKind::Warning);
+    assert!(toast.message.contains("database busy"), "{}", toast.message);
 }
 
 #[test]
@@ -2834,12 +3181,10 @@ fn switching_apps_clears_usage_log_detail_context() {
 }
 
 #[test]
-#[serial]
-fn usage_custom_range_reload_requeues_active_custom_range() {
-    let temp_home = TempDir::new().expect("create temp home");
-    let _env = EnvGuard::set_home(temp_home.path());
+fn usage_custom_range_manual_refresh_is_async_preserves_data_and_deduplicates() {
     let mut terminal = TuiTerminal::new_for_test().expect("create terminal");
     let mut app = App::new(Some(AppType::Claude));
+    app.route = route::Route::Usage;
     let mut data = UiData::default();
     let mut cache = UiDataByAppCache::default();
     let mut proxy_loading = RequestTracker::default();
@@ -2874,12 +3219,16 @@ fn usage_custom_range_reload_requeues_active_custom_range() {
         None,
         None,
         Some(&tx),
-        Action::ReloadData,
+        None,
+        Action::UsageRefresh,
     )
-    .expect("reload data should be handled");
+    .expect("usage refresh should be handled");
 
     assert_eq!(data.usage.custom_range, Some(range));
-    assert_eq!(data.usage.summary_custom.total_requests, 0);
+    assert_eq!(data.usage.summary_custom.total_requests, 42);
+    assert!(app
+        .usage
+        .is_loading_for(&AppType::Claude, data::UsageRangePreset::Custom(range)));
     assert!(matches!(
         rx.recv().expect("custom usage/pricing reload should be queued"),
         UsagePricingReq::Load {
@@ -2889,6 +3238,35 @@ fn usage_custom_range_reload_requeues_active_custom_range() {
             ..
         } if queued_range == range
     ));
+
+    handle_tui_action(
+        &mut terminal,
+        &mut app,
+        &mut data,
+        &mut cache,
+        None,
+        None,
+        None,
+        None,
+        None,
+        &mut proxy_loading,
+        None,
+        None,
+        None,
+        &mut webdav_loading,
+        None,
+        &mut update_check,
+        None,
+        None,
+        None,
+        Some(&tx),
+        None,
+        Action::UsageRefresh,
+    )
+    .expect("duplicate usage refresh should be handled");
+
+    assert!(rx.try_recv().is_err(), "in-flight refresh should be reused");
+    assert_eq!(data.usage.summary_custom.total_requests, 42);
 }
 
 #[test]
