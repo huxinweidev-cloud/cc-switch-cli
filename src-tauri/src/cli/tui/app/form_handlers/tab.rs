@@ -176,6 +176,8 @@ impl App {
                     FormFocus::Templates | FormFocus::JsonPreview => FormFocus::Fields,
                 };
             }
+            FormState::S3Sync(_) => return false,
+            FormState::WebDavSync(_) => return false,
         }
 
         true

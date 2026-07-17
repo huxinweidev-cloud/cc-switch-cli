@@ -9,7 +9,7 @@ use std::sync::{
 use crate::app_config::AppType;
 use crate::cli::i18n::texts;
 use crate::error::AppError;
-use crate::services::{SkillService, StreamCheckService, WebDavSyncService};
+use crate::services::{S3SyncService, SkillService, StreamCheckService, WebDavSyncService};
 use crate::settings::{set_webdav_sync_settings, webdav_jianguoyun_preset};
 
 use super::super::data::{
@@ -266,7 +266,10 @@ fn webdav_worker_loop(rx: mpsc::Receiver<WebDavReq>, tx: mpsc::Sender<WebDavMsg>
                 })
                 .map_err(|e| WebDavErr::Generic(e.to_string())),
             WebDavReqKind::JianguoyunQuickSetup { username, password } => {
-                let cfg = webdav_jianguoyun_preset(&username, &password);
+                let mut cfg = webdav_jianguoyun_preset(&username, &password);
+                // Saving credentials is not consent to switch the active sync backend.
+                cfg.enabled = false;
+                cfg.auto_sync = false;
                 if let Err(err) = set_webdav_sync_settings(Some(cfg)) {
                     Err(WebDavErr::QuickSetupSave(err.to_string()))
                 } else if let Err(err) = WebDavSyncService::check_connection() {
@@ -275,6 +278,24 @@ fn webdav_worker_loop(rx: mpsc::Receiver<WebDavReq>, tx: mpsc::Sender<WebDavMsg>
                     Ok(WebDavDone::JianguoyunConfigured)
                 }
             }
+            WebDavReqKind::S3CheckConnection => S3SyncService::check_connection()
+                .map(|_| WebDavDone::S3ConnectionChecked)
+                .map_err(|e| WebDavErr::Generic(e.to_string())),
+            WebDavReqKind::S3FetchRemoteInfo { intent } => S3SyncService::fetch_remote_info()
+                .map(|info| WebDavDone::S3RemoteInfoFetched { intent, info })
+                .map_err(|e| WebDavErr::Generic(e.to_string())),
+            WebDavReqKind::S3Upload => S3SyncService::upload()
+                .map(|summary| WebDavDone::S3Uploaded {
+                    decision: summary.decision,
+                    message: summary.message,
+                })
+                .map_err(|e| WebDavErr::Generic(e.to_string())),
+            WebDavReqKind::S3Download => S3SyncService::download()
+                .map(|summary| WebDavDone::S3Downloaded {
+                    decision: summary.decision,
+                    message: summary.message,
+                })
+                .map_err(|e| WebDavErr::Generic(e.to_string())),
         };
 
         let _ = tx.send(WebDavMsg::Finished {

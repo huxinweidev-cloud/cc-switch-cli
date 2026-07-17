@@ -20,8 +20,8 @@ use serde_json::Value;
 use super::{
     app,
     app::{
-        App, ConfigItem, ConfirmAction, Focus, LoadingKind, Overlay, SessionsPane, ToastKind,
-        WebDavConfigItem,
+        App, CloudSyncBackend, ConfigItem, ConfirmAction, Focus, LoadingKind, Overlay,
+        S3ConfigItem, SessionsPane, ToastKind, WebDavConfigItem,
     },
     data::{McpRow, ProviderRow, UiData},
     form::{
@@ -183,7 +183,9 @@ fn render_content(
                 render_config(frame, app, data, content_area, theme)
             }
         }
+        Route::ConfigCloudSync => render_config_cloud_sync(frame, app, data, content_area, theme),
         Route::ConfigWebDav => render_config_webdav(frame, app, data, content_area, theme),
+        Route::ConfigS3 => render_config_s3(frame, app, data, content_area, theme),
         Route::Skills => render_skills_installed(frame, app, data, content_area, theme),
         Route::SkillsDiscover => render_skills_discover(frame, app, data, content_area, theme),
         Route::SkillsRepos => render_skills_repos(frame, app, data, content_area, theme),

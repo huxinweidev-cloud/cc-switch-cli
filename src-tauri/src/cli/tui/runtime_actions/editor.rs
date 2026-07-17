@@ -12,7 +12,6 @@ use crate::openclaw_config::{
 };
 use crate::provider::Provider;
 use crate::services::{McpService, PromptService, ProviderService};
-use crate::settings::{set_webdav_sync_settings, WebDavSyncSettings};
 
 use super::super::app::{CommonSnippetViewSource, EditorSubmit, ToastKind};
 use super::super::data::{load_state, UiData};
@@ -283,7 +282,6 @@ pub(super) fn submit(
         EditorSubmit::ConfigOpenClawEnv => submit_openclaw_env(ctx, content),
         EditorSubmit::ConfigOpenClawTools => submit_openclaw_tools(ctx, content),
         EditorSubmit::ConfigOpenClawAgents => submit_openclaw_agents(ctx, content),
-        EditorSubmit::ConfigWebDavSettings => submit_webdav_settings(ctx, content),
     }
 }
 
@@ -1123,33 +1121,6 @@ fn submit_config_common_snippet(
     if matches!(source, CommonSnippetViewSource::Global) {
         ctx.app.overlay = crate::cli::tui::app::Overlay::None;
     }
-    Ok(())
-}
-
-fn submit_webdav_settings(
-    ctx: &mut RuntimeActionContext<'_>,
-    content: String,
-) -> Result<(), AppError> {
-    let edited = content.trim();
-    if edited.is_empty() {
-        set_webdav_sync_settings(None)?;
-        ctx.app.editor = None;
-        ctx.app.push_toast(
-            texts::tui_toast_webdav_settings_cleared(),
-            ToastKind::Success,
-        );
-        *ctx.data = UiData::load(&ctx.app.app_type)?;
-        return Ok(());
-    }
-
-    let cfg: WebDavSyncSettings = serde_json::from_str(edited)
-        .map_err(|e| AppError::Message(texts::tui_toast_invalid_json(&e.to_string())))?;
-    set_webdav_sync_settings(Some(cfg))?;
-
-    ctx.app.editor = None;
-    ctx.app
-        .push_toast(texts::tui_toast_webdav_settings_saved(), ToastKind::Success);
-    *ctx.data = UiData::load(&ctx.app.app_type)?;
     Ok(())
 }
 

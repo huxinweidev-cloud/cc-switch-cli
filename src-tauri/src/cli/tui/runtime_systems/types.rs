@@ -437,7 +437,16 @@ pub(crate) enum WebDavReqKind {
     Upload,
     Download,
     MigrateV1ToV2,
-    JianguoyunQuickSetup { username: String, password: String },
+    JianguoyunQuickSetup {
+        username: String,
+        password: String,
+    },
+    S3CheckConnection,
+    S3FetchRemoteInfo {
+        intent: crate::cli::tui::app::CloudSyncTransferIntent,
+    },
+    S3Upload,
+    S3Download,
 }
 
 #[derive(Debug, Clone)]
@@ -462,6 +471,19 @@ pub(crate) enum WebDavDone {
         message: String,
     },
     JianguoyunConfigured,
+    S3ConnectionChecked,
+    S3RemoteInfoFetched {
+        intent: crate::cli::tui::app::CloudSyncTransferIntent,
+        info: Option<crate::services::S3RemoteInfo>,
+    },
+    S3Uploaded {
+        decision: SyncDecision,
+        message: String,
+    },
+    S3Downloaded {
+        decision: SyncDecision,
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone)]

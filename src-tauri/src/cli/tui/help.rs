@@ -6,8 +6,8 @@ use super::app::{App, Overlay};
 use super::data::UiData;
 use super::form::{
     CodexLocalRoutingField, CodexModelCatalogField, CodexPreviewSection, FormFocus, FormMode,
-    FormState, LocalProxySettingsField, ProviderAddField, ProviderFormPage, UsageQueryField,
-    UsageQueryTemplate,
+    FormState, LocalProxySettingsField, ProviderAddField, ProviderFormPage, S3SyncField,
+    UsageQueryField, UsageQueryTemplate, WebDavSyncField,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -76,6 +76,12 @@ enum HelpTarget {
         template: UsageQueryTemplate,
     },
     UsageQueryInstructions,
+    S3Field {
+        field: S3SyncField,
+    },
+    WebDavField {
+        field: WebDavSyncField,
+    },
     Empty,
 }
 
@@ -106,6 +112,9 @@ fn current_help_target(app: &App) -> HelpTarget {
                 provider_field_overlay_target(app, ProviderAddField::CodexOAuthAccount)
             }
             Overlay::SessionProjectPicker(_) => HelpTarget::Sessions,
+            Overlay::S3PresetPicker { .. } => HelpTarget::S3Field {
+                field: S3SyncField::Preset,
+            },
             _ => HelpTarget::Global,
         };
     }
@@ -116,6 +125,18 @@ fn current_help_target(app: &App) -> HelpTarget {
 
     if matches!(app.route, super::route::Route::Sessions) {
         return HelpTarget::Sessions;
+    }
+
+    if let Some(FormState::S3Sync(form)) = app.form.as_ref() {
+        return HelpTarget::S3Field {
+            field: form.selected_field(),
+        };
+    }
+
+    if let Some(FormState::WebDavSync(form)) = app.form.as_ref() {
+        return HelpTarget::WebDavField {
+            field: form.selected_field(),
+        };
     }
 
     let Some(FormState::ProviderAdd(provider)) = app.form.as_ref() else {
@@ -257,7 +278,110 @@ fn help_for_target(target: HelpTarget, app: &App, data: &UiData) -> HelpContent 
             texts::tui_usage_query_script_help_title(),
             super::form::ProviderAddFormState::usage_query_script_help_lines(),
         ),
+        HelpTarget::S3Field { field } => s3_field_help(field),
+        HelpTarget::WebDavField { field } => webdav_field_help(field),
         HelpTarget::Empty => HelpContent::empty(),
+    }
+}
+
+fn s3_field_help(field: S3SyncField) -> HelpContent {
+    match field {
+        S3SyncField::Preset => HelpContent::new(
+            texts::tui_s3_service_preset(),
+            help_lines(
+                "预设只提供适合该服务的 Region 默认值和字段说明，不会覆盖已经填写的值。当前公开 AWS S3、MinIO、Cloudflare R2 和 Custom；OSS/COS/OBS 要等待上游确定 URL Style 后再开放。",
+                "A preset supplies a suitable Region default and contextual guidance; it never overwrites a value you already entered. AWS S3, MinIO, Cloudflare R2, and Custom are currently available. OSS/COS/OBS remain hidden until upstream settles URL-style handling.",
+            ),
+        ),
+        S3SyncField::Region => HelpContent::new(
+            texts::tui_s3_region(),
+            help_lines(
+                "用于 AWS Signature V4 签名的区域。AWS 请填写存储桶所在区域；Cloudflare R2 通常使用 `auto`；MinIO 常用 `us-east-1`，除非服务端另有配置。",
+                "Region used for AWS Signature V4. Use the bucket's region for AWS, usually `auto` for Cloudflare R2, and commonly `us-east-1` for MinIO unless the server says otherwise.",
+            ),
+        ),
+        S3SyncField::Bucket => HelpContent::new(
+            texts::tui_s3_bucket(),
+            help_lines(
+                "用于保存 cc-switch 快照的现有存储桶名称。程序不会自动创建存储桶；凭据需要读取、写入和查询对象的权限。",
+                "Name of an existing bucket used for cc-switch snapshots. The app does not create buckets; the credentials need permission to read, write, and inspect objects.",
+            ),
+        ),
+        S3SyncField::AccessKeyId => HelpContent::new(
+            texts::tui_s3_access_key_id(),
+            help_lines(
+                "S3 兼容服务颁发的 Access Key ID。它保存在本机 settings.json 中，并按本项目约定在编辑表单里明文显示。",
+                "Access Key ID issued by the S3-compatible service. It is stored in the local settings.json and shown as plain text in this editor, following this project's credential-display convention.",
+            ),
+        ),
+        S3SyncField::SecretAccessKey => HelpContent::new(
+            texts::tui_s3_secret_access_key(),
+            help_lines(
+                "与 Access Key ID 配套的 Secret Access Key。此 TUI 按项目约定明文显示且不会写入日志；共享屏幕或录屏时请注意终端内容。未修改该字段时会保留原凭据。",
+                "Secret Access Key paired with the Access Key ID. This TUI shows it as plain text by project convention and does not log it; take care when sharing or recording the terminal. Leaving it untouched preserves the saved credential.",
+            ),
+        ),
+        S3SyncField::Endpoint => HelpContent::new(
+            texts::tui_s3_endpoint(),
+            help_lines(
+                "AWS S3 可留空。R2、MinIO 和其他兼容服务请填写完整的 http/https Endpoint，不要追加存储桶或对象路径。HTTP 可用于本机 MinIO，但远程服务建议使用 HTTPS。",
+                "Leave this empty for AWS S3. For R2, MinIO, and other compatible services, enter the complete HTTP/HTTPS endpoint without a bucket or object path. HTTP is suitable for local MinIO; use HTTPS for remote services.",
+            ),
+        ),
+        S3SyncField::RemoteRoot => HelpContent::new(
+            texts::tui_s3_remote_root(),
+            help_lines(
+                "远端对象的根前缀，默认 `cc-switch-sync`。不同产品或环境需要完全隔离时可更改；留空保存时会恢复默认值。",
+                "Root prefix for remote objects, defaulting to `cc-switch-sync`. Change it to isolate products or environments completely; an empty value is normalized back to the default when saved.",
+            ),
+        ),
+        S3SyncField::Profile => HelpContent::new(
+            texts::tui_s3_profile(),
+            help_lines(
+                "同一远端根目录下的快照命名空间，默认 `default`。不同设备想共享同一份配置时应使用相同 Profile；想彼此隔离则使用不同值。",
+                "Snapshot namespace under the same remote root, defaulting to `default`. Devices that share one configuration should use the same profile; use different values to isolate them.",
+            ),
+        ),
+    }
+}
+
+fn webdav_field_help(field: WebDavSyncField) -> HelpContent {
+    match field {
+        WebDavSyncField::BaseUrl => HelpContent::new(
+            texts::tui_webdav_base_url(),
+            help_lines(
+                "用于存放快照的 WebDAV 目录地址，必须是 http/https URL。请使用专用目录；坚果云通常需要指向 `/dav/...` 下的目录。",
+                "HTTP/HTTPS URL of the WebDAV directory used for snapshots. Use a dedicated directory; Jianguoyun URLs normally point to a directory below `/dav/...`.",
+            ),
+        ),
+        WebDavSyncField::Username => HelpContent::new(
+            texts::tui_webdav_username(),
+            help_lines(
+                "WebDAV 用户名。支持匿名访问的服务可以留空。",
+                "WebDAV username. Leave it empty for a service that permits anonymous access.",
+            ),
+        ),
+        WebDavSyncField::Password => HelpContent::new(
+            texts::tui_webdav_password(),
+            help_lines(
+                "WebDAV 密码或应用专用密码。表单按项目约定明文显示且不会写入日志；未修改时保留原凭据。",
+                "WebDAV password or app-specific password. It is shown as plain text by project convention and is not logged; leaving it untouched preserves the saved credential.",
+            ),
+        ),
+        WebDavSyncField::RemoteRoot => HelpContent::new(
+            texts::tui_s3_remote_root(),
+            help_lines(
+                "WebDAV 目录内的同步根目录，默认 `cc-switch-sync`。留空保存时恢复默认值。",
+                "Sync root inside the WebDAV directory, defaulting to `cc-switch-sync`. An empty value is normalized back to the default when saved.",
+            ),
+        ),
+        WebDavSyncField::Profile => HelpContent::new(
+            texts::tui_s3_profile(),
+            help_lines(
+                "快照命名空间，默认 `default`。需要共享配置的设备应使用相同 Profile。",
+                "Snapshot namespace, defaulting to `default`. Devices sharing one configuration should use the same profile.",
+            ),
+        ),
     }
 }
 
@@ -715,11 +839,18 @@ fn provider_preview_help(app_type: AppType, section: Option<CodexPreviewSection>
                 "This previews the Codex config.toml to be saved.\nAdvanced settings such as local routing, reasoning capability, model catalog, Goal mode, and remote compaction are reflected here. Presets are usually configured automatically; custom providers are inferred from name and URL, so manual edits are needed only when detection is wrong.",
             ),
         ),
-        _ => HelpContent::new(
-            texts::tui_form_json_title(),
+        (AppType::Claude, _) => HelpContent::new(
+            texts::tui_provider_config_title(),
             help_lines(
-                "右侧预览展示保存后的配置形状。按 Enter 可打开编辑器进行高级修改。",
-                "The right preview shows the saved config shape. Press Enter to open the editor for advanced edits.",
+                "这里预览将保存的供应商配置。Proxy 开启时，Claude 实际读取的 settings.json 会由代理临时接管，因此会显示本地代理地址、占位凭据和模型映射，而不是这里的真实上游配置。按 Enter 可打开编辑器进行高级修改。",
+                "This previews the stored provider config. While Proxy is on, Claude's live settings.json is temporarily managed by the proxy, so it contains the local proxy URL, placeholder credentials, and model mappings instead of the real upstream config shown here. Press Enter to open the advanced editor.",
+            ),
+        ),
+        _ => HelpContent::new(
+            texts::tui_provider_config_title(),
+            help_lines(
+                "右侧预览展示将保存的供应商配置。按 Enter 可打开编辑器进行高级修改。",
+                "The right preview shows the provider config to be saved. Press Enter to open the advanced editor.",
             ),
         ),
     }

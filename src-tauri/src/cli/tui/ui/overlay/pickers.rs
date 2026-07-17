@@ -1,6 +1,7 @@
 use super::super::theme;
 use super::super::*;
 use super::frame::{overlay_frame, overlay_frame_at, OverlaySize};
+use crate::cli::tui::form;
 use crate::cli::tui::form::{HermesModelField, ProviderAddFormState};
 use crate::cli::tui::text_edit::TextInput;
 
@@ -20,11 +21,11 @@ pub(super) fn render_claude_model_picker_overlay(
     column: ClaudeModelPickerColumn,
     editing: bool,
 ) {
-    // Keep the percentage-based width, but cap the height to the four role rows
+    // Keep the percentage-based width, but cap the height to the three role rows
     // rather than filling 62% of the screen (which left a large empty table).
-    // Height = outer borders(2) + key bar(1) + top gap(1) + table[border(2)+header(1)+4 rows] + hint(3).
+    // Height = outer borders(2) + key bar(1) + top gap(1) + table[border(2)+header(1)+3 rows] + hint(3).
     let wide = centered_rect(OVERLAY_MD.0, OVERLAY_MD.1, content_area);
-    let desired_h = 14u16.min(content_area.height);
+    let desired_h = 13u16.min(content_area.height);
     let area = Rect {
         x: wide.x,
         width: wide.width,
@@ -73,7 +74,6 @@ pub(super) fn render_claude_model_picker_overlay(
 
     if let Some(FormState::ProviderAdd(provider)) = app.form.as_ref() {
         let labels = [
-            texts::tui_claude_reasoning_model_label(),
             texts::tui_claude_default_haiku_model_label(),
             texts::tui_claude_default_sonnet_model_label(),
             texts::tui_claude_default_opus_model_label(),
@@ -384,6 +384,52 @@ pub(super) fn render_usage_query_template_picker_overlay(
 
     let mut state = ListState::default();
     state.select(Some(selected.min(options.len().saturating_sub(1))));
+    frame.render_stateful_widget(list, body_area, &mut state);
+}
+
+pub(super) fn render_s3_preset_picker_overlay(
+    frame: &mut Frame<'_>,
+    app: &App,
+    content_area: Rect,
+    theme: &theme::Theme,
+    selected: usize,
+) {
+    let body_area = overlay_frame(
+        frame,
+        content_area,
+        theme,
+        texts::tui_s3_service_preset(),
+        &[
+            ("↑↓", texts::tui_key_select()),
+            ("Enter", texts::tui_key_apply()),
+            ("Esc", texts::tui_key_close()),
+        ],
+        OverlaySize::FitRows {
+            width: 44,
+            body_rows: form::S3Preset::ALL.len() as u16,
+        },
+        overlay_border_style(theme, false),
+    );
+
+    let current = match app.form.as_ref() {
+        Some(FormState::S3Sync(form)) => form.preset,
+        _ => return,
+    };
+    let items = form::S3Preset::ALL.iter().copied().map(|preset| {
+        let marker = if preset == current {
+            texts::tui_marker_active()
+        } else {
+            texts::tui_marker_inactive()
+        };
+        ListItem::new(Line::raw(format!("{marker}  {}", preset.label())))
+    });
+    let list = List::new(items)
+        .highlight_style(selection_style(theme))
+        .highlight_symbol(highlight_symbol(theme));
+    let mut state = ListState::default();
+    state.select(Some(
+        selected.min(form::S3Preset::ALL.len().saturating_sub(1)),
+    ));
     frame.render_stateful_widget(list, body_area, &mut state);
 }
 

@@ -109,6 +109,8 @@ impl App {
             openclaw_daily_memory_search_query: String::new(),
             openclaw_daily_memory_search_results: Vec::new(),
             config_webdav_idx: 0,
+            config_cloud_sync_idx: 0,
+            config_s3_idx: 0,
             webdav_quick_setup_username: None,
             language_idx: 0,
             settings_idx: 0,
@@ -198,7 +200,7 @@ impl App {
                     NavItem::Config
                 }
             }
-            Route::ConfigWebDav => NavItem::Config,
+            Route::ConfigCloudSync | Route::ConfigWebDav | Route::ConfigS3 => NavItem::Config,
             Route::Skills
             | Route::SkillsDiscover
             | Route::SkillsRepos
@@ -947,7 +949,9 @@ impl App {
             Route::ConfigOpenClawEnv => self.on_config_openclaw_env_key(key, data),
             Route::ConfigOpenClawTools => self.on_config_openclaw_tools_key(key, data),
             Route::ConfigOpenClawAgents => self.on_config_openclaw_agents_key(key, data),
+            Route::ConfigCloudSync => self.on_config_cloud_sync_key(key),
             Route::ConfigWebDav => self.on_config_webdav_key(key, data),
+            Route::ConfigS3 => self.on_config_s3_key(key, data),
             Route::Skills => self.on_skills_installed_key(key, data),
             Route::SkillsDiscover => self.on_skills_discover_key(key),
             Route::SkillsRepos => self.on_skills_repos_key(key, data),
@@ -1159,5 +1163,10 @@ impl App {
         } else {
             self.config_webdav_idx = self.config_webdav_idx.min(config_webdav_len - 1);
         }
+
+        self.config_cloud_sync_idx = self
+            .config_cloud_sync_idx
+            .min(CloudSyncBackend::ALL.len().saturating_sub(1));
+        self.clamp_s3_config_selection(data);
     }
 }

@@ -1810,6 +1810,9 @@ fn cache_invalidation_for_action(action: &Action) -> CacheInvalidation {
         | Action::ConfigWebDavCheckConnection
         | Action::ConfigWebDavUpload
         | Action::ConfigWebDavJianguoyunQuickSetup { .. }
+        | Action::ConfigS3CheckConnection
+        | Action::ConfigS3FetchRemoteInfo { .. }
+        | Action::ConfigS3Upload
         | Action::OpenClawWorkspaceOpenFile { .. }
         | Action::OpenClawDailyMemoryOpenFile { .. }
         | Action::OpenClawDailyMemorySearch { .. }
@@ -1829,7 +1832,8 @@ fn cache_invalidation_for_action(action: &Action) -> CacheInvalidation {
         | Action::ConfigRestoreBackup { .. }
         | Action::ConfigReset
         | Action::ConfigWebDavDownload
-        | Action::ConfigWebDavMigrateV1ToV2 => CacheInvalidation::AppStateRecreated,
+        | Action::ConfigWebDavMigrateV1ToV2
+        | Action::ConfigS3Download => CacheInvalidation::AppStateRecreated,
 
         Action::ProviderSwitch { .. }
         | Action::ProviderRemoveFromConfig { .. }
@@ -1869,6 +1873,11 @@ fn cache_invalidation_for_action(action: &Action) -> CacheInvalidation {
         | Action::PromptDelete { .. }
         | Action::ConfigBackup { .. }
         | Action::ConfigWebDavReset
+        | Action::ConfigWebDavSave { .. }
+        | Action::ConfigWebDavSetEnabled { .. }
+        | Action::ConfigS3Save { .. }
+        | Action::ConfigS3SetEnabled { .. }
+        | Action::ConfigS3Reset
         | Action::OpenClawDailyMemoryDelete { .. }
         | Action::HermesMemorySetEnabled { .. }
         | Action::HermesOpenMemoryDirectory

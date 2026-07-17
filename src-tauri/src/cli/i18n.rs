@@ -3302,6 +3302,14 @@ pub mod texts {
         "JSON"
     }
 
+    pub fn tui_provider_config_title() -> &'static str {
+        if is_chinese() {
+            "供应商配置"
+        } else {
+            "Provider Config"
+        }
+    }
+
     pub fn tui_codex_auth_json_title() -> &'static str {
         if is_chinese() {
             "auth.json (JSON) *"
@@ -3350,14 +3358,6 @@ pub mod texts {
         }
     }
 
-    pub fn tui_claude_reasoning_model_label() -> &'static str {
-        if is_chinese() {
-            "推理模型 (Thinking)"
-        } else {
-            "Reasoning Model (Thinking)"
-        }
-    }
-
     pub fn tui_claude_default_haiku_model_label() -> &'static str {
         if is_chinese() {
             "默认 Haiku 模型"
@@ -3384,9 +3384,9 @@ pub mod texts {
 
     pub fn tui_claude_model_config_summary(configured_count: usize) -> String {
         if is_chinese() {
-            format!("已配置 {configured_count}/4")
+            format!("已配置 {configured_count}/3")
         } else {
-            format!("Configured {configured_count}/4")
+            format!("Configured {configured_count}/3")
         }
     }
 
@@ -3416,10 +3416,9 @@ pub mod texts {
 
     pub fn tui_claude_model_label_for_index(idx: usize) -> &'static str {
         match idx {
-            0 => tui_claude_reasoning_model_label(),
-            1 => tui_claude_default_haiku_model_label(),
-            2 => tui_claude_default_sonnet_model_label(),
-            3 => tui_claude_default_opus_model_label(),
+            0 => tui_claude_default_haiku_model_label(),
+            1 => tui_claude_default_sonnet_model_label(),
+            2 => tui_claude_default_opus_model_label(),
             _ => "",
         }
     }
@@ -4124,6 +4123,14 @@ pub mod texts {
         }
     }
 
+    pub fn tui_key_confirm() -> &'static str {
+        if is_chinese() {
+            "确认"
+        } else {
+            "Confirm"
+        }
+    }
+
     pub fn tui_key_use_auto() -> &'static str {
         if is_chinese() {
             "使用自动"
@@ -4273,6 +4280,22 @@ pub mod texts {
             "选择"
         } else {
             "select"
+        }
+    }
+
+    pub fn tui_key_manage() -> &'static str {
+        if is_chinese() {
+            "管理"
+        } else {
+            "Manage"
+        }
+    }
+
+    pub fn tui_key_help() -> &'static str {
+        if is_chinese() {
+            "帮助"
+        } else {
+            "Help"
         }
     }
 
@@ -5425,43 +5448,514 @@ pub mod texts {
         }
     }
 
-    pub fn tui_config_item_webdav_sync() -> &'static str {
+    pub fn tui_config_item_cloud_sync() -> &'static str {
         if is_chinese() {
-            "WebDAV 同步"
+            "云同步"
         } else {
-            "WebDAV Sync"
+            "Cloud Sync"
+        }
+    }
+
+    pub fn tui_config_cloud_sync_title() -> &'static str {
+        tui_config_item_cloud_sync()
+    }
+
+    pub fn tui_config_s3_title() -> &'static str {
+        "S3 Compatible"
+    }
+
+    pub fn tui_configure() -> &'static str {
+        if is_chinese() {
+            "配置"
+        } else {
+            "Configure"
+        }
+    }
+
+    pub fn tui_cloud_sync_backend() -> &'static str {
+        if is_chinese() {
+            "同步后端"
+        } else {
+            "Backend"
+        }
+    }
+
+    pub fn tui_cloud_sync_status() -> &'static str {
+        if is_chinese() {
+            "状态"
+        } else {
+            "Status"
+        }
+    }
+
+    pub fn tui_cloud_sync_enabled() -> &'static str {
+        if is_chinese() {
+            "启用"
+        } else {
+            "Enabled"
+        }
+    }
+
+    pub fn tui_cloud_sync_disabled() -> &'static str {
+        if is_chinese() {
+            "禁用"
+        } else {
+            "Disabled"
+        }
+    }
+
+    pub fn tui_cloud_sync_remote_path() -> &'static str {
+        if is_chinese() {
+            "远端路径"
+        } else {
+            "Remote path"
+        }
+    }
+
+    pub fn tui_config_item_s3_configure() -> &'static str {
+        if is_chinese() {
+            "配置"
+        } else {
+            "Configure"
+        }
+    }
+
+    pub fn tui_config_item_s3_check_connection() -> &'static str {
+        if is_chinese() {
+            "检查连接"
+        } else {
+            "Check connection"
+        }
+    }
+
+    pub fn tui_config_item_s3_upload() -> &'static str {
+        if is_chinese() {
+            "上传本地快照"
+        } else {
+            "Upload local snapshot"
+        }
+    }
+
+    pub fn tui_config_item_s3_restore() -> &'static str {
+        if is_chinese() {
+            "从远端恢复"
+        } else {
+            "Restore remote snapshot"
+        }
+    }
+
+    pub fn tui_config_item_s3_enable() -> &'static str {
+        if is_chinese() {
+            "启用"
+        } else {
+            "Enable"
+        }
+    }
+
+    pub fn tui_config_item_s3_disable() -> &'static str {
+        if is_chinese() {
+            "禁用"
+        } else {
+            "Disable"
+        }
+    }
+
+    pub fn tui_config_item_s3_reset() -> &'static str {
+        if is_chinese() {
+            "重置配置"
+        } else {
+            "Reset settings"
+        }
+    }
+
+    pub fn tui_webdav_reset_title() -> &'static str {
+        if is_chinese() {
+            "重置 WebDAV 配置"
+        } else {
+            "Reset WebDAV settings"
+        }
+    }
+
+    pub fn tui_webdav_reset_message() -> &'static str {
+        if is_chinese() {
+            "这会删除本机保存的 WebDAV 地址和访问凭据。远端快照不会被删除。"
+        } else {
+            "This removes the locally saved WebDAV URL and credentials. Remote snapshots are not deleted."
+        }
+    }
+
+    pub fn tui_s3_reset_title() -> &'static str {
+        if is_chinese() {
+            "重置 S3 配置"
+        } else {
+            "Reset S3 settings"
+        }
+    }
+
+    pub fn tui_s3_reset_message() -> &'static str {
+        if is_chinese() {
+            "这会删除本机保存的 S3 Endpoint 和访问凭据。远端快照不会被删除。"
+        } else {
+            "This removes the locally saved S3 endpoint and credentials. Remote snapshots are not deleted."
+        }
+    }
+
+    pub fn tui_s3_service_preset() -> &'static str {
+        if is_chinese() {
+            "服务商"
+        } else {
+            "Service preset"
+        }
+    }
+
+    pub fn tui_s3_region() -> &'static str {
+        "Region"
+    }
+    pub fn tui_s3_bucket() -> &'static str {
+        "Bucket"
+    }
+    pub fn tui_s3_access_key_id() -> &'static str {
+        "Access Key ID"
+    }
+    pub fn tui_s3_secret_access_key() -> &'static str {
+        "Secret Access Key"
+    }
+    pub fn tui_s3_endpoint() -> &'static str {
+        "Endpoint"
+    }
+
+    pub fn tui_s3_remote_root() -> &'static str {
+        if is_chinese() {
+            "远程根目录"
+        } else {
+            "Remote root"
+        }
+    }
+
+    pub fn tui_s3_profile() -> &'static str {
+        "Profile"
+    }
+    pub fn tui_s3_preset_aws() -> &'static str {
+        "AWS S3"
+    }
+    pub fn tui_s3_preset_minio() -> &'static str {
+        "MinIO"
+    }
+    pub fn tui_s3_preset_r2() -> &'static str {
+        "Cloudflare R2"
+    }
+
+    pub fn tui_s3_preset_custom() -> &'static str {
+        if is_chinese() {
+            "自定义"
+        } else {
+            "Custom"
+        }
+    }
+
+    pub fn tui_s3_bucket_required() -> &'static str {
+        if is_chinese() {
+            "S3 存储桶不能为空"
+        } else {
+            "S3 bucket is required."
+        }
+    }
+
+    pub fn tui_s3_region_required() -> &'static str {
+        if is_chinese() {
+            "S3 区域不能为空"
+        } else {
+            "S3 region is required."
+        }
+    }
+
+    pub fn tui_s3_access_key_required() -> &'static str {
+        if is_chinese() {
+            "Access Key ID 不能为空"
+        } else {
+            "Access Key ID is required."
+        }
+    }
+
+    pub fn tui_s3_secret_key_required() -> &'static str {
+        if is_chinese() {
+            "Secret Access Key 不能为空"
+        } else {
+            "Secret Access Key is required."
+        }
+    }
+
+    pub fn tui_webdav_base_url() -> &'static str {
+        "Base URL"
+    }
+
+    pub fn tui_webdav_username() -> &'static str {
+        if is_chinese() {
+            "用户名"
+        } else {
+            "Username"
+        }
+    }
+
+    pub fn tui_webdav_password() -> &'static str {
+        if is_chinese() {
+            "密码"
+        } else {
+            "Password"
+        }
+    }
+
+    pub fn tui_webdav_base_url_required() -> &'static str {
+        if is_chinese() {
+            "WebDAV 地址不能为空"
+        } else {
+            "WebDAV URL is required."
+        }
+    }
+
+    pub fn tui_cloud_sync_backend_state_changed(backend: &str, enabled: bool) -> String {
+        if is_chinese() {
+            format!("{backend} 已{}", if enabled { "启用" } else { "禁用" })
+        } else {
+            format!(
+                "{backend} {}.",
+                if enabled { "enabled" } else { "disabled" }
+            )
+        }
+    }
+
+    pub fn tui_toast_s3_settings_saved() -> &'static str {
+        if is_chinese() {
+            "S3 配置已保存"
+        } else {
+            "S3 settings saved."
+        }
+    }
+
+    pub fn tui_toast_s3_settings_cleared() -> &'static str {
+        if is_chinese() {
+            "S3 配置已清除"
+        } else {
+            "S3 settings cleared."
+        }
+    }
+
+    pub fn tui_s3_loading_title_check_connection() -> &'static str {
+        if is_chinese() {
+            "正在检查 S3 连接"
+        } else {
+            "Checking S3 connection"
+        }
+    }
+
+    pub fn tui_s3_loading_title_prepare_upload() -> &'static str {
+        if is_chinese() {
+            "正在读取远端快照"
+        } else {
+            "Inspecting remote snapshot"
+        }
+    }
+
+    pub fn tui_s3_loading_title_prepare_restore() -> &'static str {
+        tui_s3_loading_title_prepare_upload()
+    }
+
+    pub fn tui_s3_loading_title_upload() -> &'static str {
+        if is_chinese() {
+            "正在上传 S3 快照"
+        } else {
+            "Uploading S3 snapshot"
+        }
+    }
+
+    pub fn tui_s3_loading_title_restore() -> &'static str {
+        if is_chinese() {
+            "正在恢复 S3 快照"
+        } else {
+            "Restoring S3 snapshot"
+        }
+    }
+
+    pub fn tui_s3_loading_message() -> &'static str {
+        if is_chinese() {
+            "网络和快照操作正在后台执行…"
+        } else {
+            "The network and snapshot operation is running in the background…"
+        }
+    }
+
+    pub fn tui_toast_s3_worker_disabled() -> &'static str {
+        if is_chinese() {
+            "S3 后台任务不可用"
+        } else {
+            "The S3 worker is unavailable."
+        }
+    }
+
+    pub fn tui_toast_s3_request_failed(error: &str) -> String {
+        if is_chinese() {
+            format!("无法启动 S3 操作：{error}")
+        } else {
+            format!("Could not start the S3 operation: {error}")
+        }
+    }
+
+    pub fn tui_toast_s3_connection_ok() -> &'static str {
+        if is_chinese() {
+            "S3 连接正常"
+        } else {
+            "S3 connection succeeded."
+        }
+    }
+
+    pub fn tui_toast_s3_remote_empty() -> &'static str {
+        if is_chinese() {
+            "远端没有可恢复的 S3 快照"
+        } else {
+            "No restorable S3 snapshot was found on the remote."
+        }
+    }
+
+    pub fn tui_toast_s3_remote_incompatible() -> &'static str {
+        if is_chinese() {
+            "远端快照与当前数据库版本不兼容，已阻止恢复"
+        } else {
+            "The remote snapshot is incompatible with this database version. Restore was blocked."
+        }
+    }
+
+    pub fn tui_toast_s3_upload_ok() -> &'static str {
+        if is_chinese() {
+            "S3 快照上传完成"
+        } else {
+            "S3 snapshot uploaded."
+        }
+    }
+
+    pub fn tui_toast_s3_restore_ok() -> &'static str {
+        if is_chinese() {
+            "S3 快照恢复完成"
+        } else {
+            "S3 snapshot restored."
+        }
+    }
+
+    pub fn tui_toast_s3_action_failed(action: &str, error: &str) -> String {
+        if is_chinese() {
+            format!("{action}失败：{error}")
+        } else {
+            format!("{action} failed: {error}")
+        }
+    }
+
+    pub fn tui_s3_confirm_upload_title() -> &'static str {
+        if is_chinese() {
+            "确认上传 S3 快照"
+        } else {
+            "Confirm S3 upload"
+        }
+    }
+
+    pub fn tui_s3_confirm_restore_title() -> &'static str {
+        if is_chinese() {
+            "确认恢复 S3 快照"
+        } else {
+            "Confirm S3 restore"
+        }
+    }
+
+    pub fn tui_s3_confirm_upload_message(
+        info: Option<&crate::services::S3RemoteInfo>,
+        target: &str,
+    ) -> String {
+        match (is_chinese(), info) {
+            (true, Some(info)) => format!(
+                "目标：{target}\n现有快照设备：{}\n现有快照时间：{}\n\n继续将覆盖远端快照。按 Enter 确认。",
+                info.device_name, info.created_at
+            ),
+            (false, Some(info)) => format!(
+                "Target: {target}\nExisting device: {}\nExisting snapshot: {}\n\nContinuing will overwrite the remote snapshot. Press Enter to confirm.",
+                info.device_name, info.created_at
+            ),
+            (true, None) => format!(
+                "目标：{target}\n远端尚无快照。\n\n继续将创建新的远端快照。按 Enter 确认。"
+            ),
+            (false, None) => format!(
+                "Target: {target}\nNo remote snapshot exists yet.\n\nContinuing will create a new remote snapshot. Press Enter to confirm."
+            ),
+        }
+    }
+
+    pub fn tui_s3_confirm_restore_message(
+        info: &crate::services::S3RemoteInfo,
+        source: &str,
+    ) -> String {
+        let db_version = info
+            .db_compat_version
+            .map_or_else(|| "—".to_string(), |version| version.to_string());
+        let artifacts = if info.artifacts.is_empty() {
+            "—".to_string()
+        } else {
+            info.artifacts.join(", ")
+        };
+        if is_chinese() {
+            format!(
+                "来源：{source}\n设备：{}\n时间：{}\n数据库兼容版本：{}\n文件：{}\n\n继续将覆盖本地数据库和 Skills。按 Enter 确认。",
+                info.device_name, info.created_at, db_version, artifacts
+            )
+        } else {
+            format!(
+                "Source: {source}\nDevice: {}\nSnapshot: {}\nDatabase compatibility: {}\nArtifacts: {}\n\nContinuing will overwrite the local database and Skills. Press Enter to confirm.",
+                info.device_name, info.created_at, db_version, artifacts
+            )
         }
     }
 
     pub fn tui_config_item_webdav_settings() -> &'static str {
         if is_chinese() {
-            "WebDAV 同步设置（JSON）"
+            "配置"
         } else {
-            "WebDAV Sync Settings (JSON)"
+            "Configure"
         }
     }
 
     pub fn tui_config_item_webdav_check_connection() -> &'static str {
         if is_chinese() {
-            "WebDAV 检查连接"
+            "检查连接"
         } else {
-            "WebDAV Check Connection"
+            "Check connection"
         }
     }
 
     pub fn tui_config_item_webdav_upload() -> &'static str {
         if is_chinese() {
-            "WebDAV 上传到远端"
+            "上传本地快照"
         } else {
-            "WebDAV Upload to Remote"
+            "Upload local snapshot"
         }
     }
 
     pub fn tui_config_item_webdav_download() -> &'static str {
         if is_chinese() {
-            "WebDAV 下载到本地"
+            "从远端恢复"
         } else {
-            "WebDAV Download to Local"
+            "Restore remote snapshot"
+        }
+    }
+
+    pub fn tui_config_item_webdav_enable() -> &'static str {
+        if is_chinese() {
+            "启用"
+        } else {
+            "Enable"
+        }
+    }
+
+    pub fn tui_config_item_webdav_disable() -> &'static str {
+        if is_chinese() {
+            "禁用"
+        } else {
+            "Disable"
         }
     }
 

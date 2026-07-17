@@ -58,7 +58,6 @@ pub enum EditorSubmit {
     ConfigOpenClawEnv,
     ConfigOpenClawTools,
     ConfigOpenClawAgents,
-    ConfigWebDavSettings,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

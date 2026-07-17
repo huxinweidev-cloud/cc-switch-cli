@@ -83,31 +83,50 @@ pub(super) fn render_config(
 pub(super) fn render_config_webdav(
     frame: &mut Frame<'_>,
     app: &App,
-    _data: &UiData,
+    data: &UiData,
     area: Rect,
     theme: &super::theme::Theme,
 ) {
     let items = webdav_config_items_filtered(app);
-    let rows = items
-        .iter()
-        .map(|item| Row::new(vec![Cell::from(webdav_config_item_label(item))]));
+    let configured = data.config.webdav_sync.is_some();
+    let enabled = data
+        .config
+        .webdav_sync
+        .as_ref()
+        .is_some_and(|settings| settings.enabled);
+    let rows = items.iter().map(|item| {
+        let label = match item {
+            WebDavConfigItem::EnableDisable if enabled => texts::tui_config_item_webdav_disable(),
+            _ => webdav_config_item_label(item),
+        };
+        let style = if item.available(configured, enabled) {
+            Style::default()
+        } else {
+            Style::default().fg(theme.dim)
+        };
+        Row::new(vec![Cell::from(label)]).style(style)
+    });
 
-    let mut keys = vec![("Enter", texts::tui_key_select())];
-    if matches!(
-        items.get(app.config_webdav_idx),
-        Some(WebDavConfigItem::Settings)
-    ) {
-        keys.push(("e", texts::tui_key_edit()));
-    }
+    let keys = vec![("Enter", texts::tui_key_select())];
     let body = render_page_frame(
         frame,
         area,
         theme,
         app,
-        &breadcrumb_path(&[texts::tui_config_title(), texts::tui_config_webdav_title()]),
+        &breadcrumb_path(&[
+            texts::tui_config_title(),
+            texts::tui_config_cloud_sync_title(),
+            texts::tui_config_webdav_title(),
+        ]),
         &keys,
         None,
     );
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(4), Constraint::Min(0)])
+        .split(body);
+    render_webdav_sync_summary(frame, data, chunks[0], theme);
 
     let table = Table::new(rows, [Constraint::Min(10)])
         .block(Block::default().borders(Borders::NONE))
@@ -116,7 +135,254 @@ pub(super) fn render_config_webdav(
 
     let mut state = TableState::default();
     state.select(Some(app.config_webdav_idx));
+    frame.render_stateful_widget(table, inset_left(chunks[1], CONTENT_INSET_LEFT), &mut state);
+}
+
+pub(super) fn render_config_cloud_sync(
+    frame: &mut Frame<'_>,
+    app: &App,
+    data: &UiData,
+    area: Rect,
+    theme: &super::theme::Theme,
+) {
+    let body = render_page_frame(
+        frame,
+        area,
+        theme,
+        app,
+        &breadcrumb_path(&[
+            texts::tui_config_title(),
+            texts::tui_config_cloud_sync_title(),
+        ]),
+        &[("Enter", texts::tui_key_manage())],
+        None,
+    );
+
+    let rows = CloudSyncBackend::ALL.iter().copied().map(|backend| {
+        let (status, style) = cloud_backend_status(backend, data, theme);
+        Row::new(vec![
+            Cell::from(backend.label()),
+            Cell::from(status).style(style),
+        ])
+    });
+    let table = Table::new(rows, [Constraint::Length(22), Constraint::Min(10)])
+        .header(
+            Row::new(vec![
+                Cell::from(texts::tui_cloud_sync_backend()),
+                Cell::from(texts::tui_cloud_sync_status()),
+            ])
+            .style(Style::default().fg(theme.dim).add_modifier(Modifier::BOLD)),
+        )
+        .row_highlight_style(selection_style(theme))
+        .highlight_symbol(highlight_symbol(theme));
+    let mut state = TableState::default();
+    state.select(Some(
+        app.config_cloud_sync_idx
+            .min(CloudSyncBackend::ALL.len().saturating_sub(1)),
+    ));
     frame.render_stateful_widget(table, inset_left(body, CONTENT_INSET_LEFT), &mut state);
+}
+
+pub(super) fn render_config_s3(
+    frame: &mut Frame<'_>,
+    app: &App,
+    data: &UiData,
+    area: Rect,
+    theme: &super::theme::Theme,
+) {
+    let body = render_page_frame(
+        frame,
+        area,
+        theme,
+        app,
+        &breadcrumb_path(&[
+            texts::tui_config_title(),
+            texts::tui_config_cloud_sync_title(),
+            texts::tui_config_s3_title(),
+        ]),
+        &[("Enter", texts::tui_key_select())],
+        None,
+    );
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(5), Constraint::Min(0)])
+        .split(body);
+    render_s3_sync_summary(frame, data, chunks[0], theme);
+
+    let configured = data.config.s3_sync.is_some();
+    let enabled = data
+        .config
+        .s3_sync
+        .as_ref()
+        .is_some_and(|settings| settings.enabled);
+    let rows = S3ConfigItem::ALL.iter().copied().map(|item| {
+        let available = item.available(configured, enabled);
+        let style = if available {
+            Style::default()
+        } else {
+            Style::default().fg(theme.dim)
+        };
+        Row::new(vec![Cell::from(item.label(enabled))]).style(style)
+    });
+    let table = Table::new(rows, [Constraint::Min(10)])
+        .row_highlight_style(selection_style(theme))
+        .highlight_symbol(highlight_symbol(theme));
+    let mut state = TableState::default();
+    state.select(Some(
+        app.config_s3_idx
+            .min(S3ConfigItem::ALL.len().saturating_sub(1)),
+    ));
+    frame.render_stateful_widget(table, inset_left(chunks[1], CONTENT_INSET_LEFT), &mut state);
+}
+
+fn cloud_backend_status(
+    backend: CloudSyncBackend,
+    data: &UiData,
+    theme: &super::theme::Theme,
+) -> (String, Style) {
+    let (configured, enabled, has_error) = match backend {
+        CloudSyncBackend::WebDav => data
+            .config
+            .webdav_sync
+            .as_ref()
+            .map_or((false, false, false), |settings| {
+                (true, settings.enabled, settings.status.last_error.is_some())
+            }),
+        CloudSyncBackend::S3Compatible => data
+            .config
+            .s3_sync
+            .as_ref()
+            .map_or((false, false, false), |settings| {
+                (true, settings.enabled, settings.status.last_error.is_some())
+            }),
+    };
+    if !configured {
+        return (
+            texts::tui_webdav_status_not_configured().to_string(),
+            Style::default().fg(theme.dim),
+        );
+    }
+    if !enabled {
+        return (
+            texts::tui_cloud_sync_disabled().to_string(),
+            Style::default().fg(theme.dim),
+        );
+    }
+    if has_error {
+        (
+            texts::tui_webdav_status_error().to_string(),
+            Style::default().fg(theme.warn),
+        )
+    } else {
+        (
+            texts::tui_cloud_sync_enabled().to_string(),
+            Style::default().fg(theme.ok),
+        )
+    }
+}
+
+fn render_webdav_sync_summary(
+    frame: &mut Frame<'_>,
+    data: &UiData,
+    area: Rect,
+    theme: &super::theme::Theme,
+) {
+    let settings = data.config.webdav_sync.as_ref();
+    let state = settings.map_or_else(
+        || texts::tui_webdav_status_not_configured().to_string(),
+        |settings| {
+            if settings.enabled {
+                texts::tui_cloud_sync_enabled().to_string()
+            } else {
+                texts::tui_cloud_sync_disabled().to_string()
+            }
+        },
+    );
+    let last_sync = settings
+        .and_then(|settings| settings.status.last_sync_at)
+        .and_then(format_sync_time_local_to_minute)
+        .unwrap_or_else(|| texts::tui_webdav_status_never_synced().to_string());
+    let remote = settings.map_or_else(
+        || texts::tui_na().to_string(),
+        |settings| format!("{}/v2/db-v6/{}", settings.remote_root, settings.profile),
+    );
+    render_cloud_summary_lines(frame, area, theme, &state, &last_sync, &remote);
+}
+
+fn render_s3_sync_summary(
+    frame: &mut Frame<'_>,
+    data: &UiData,
+    area: Rect,
+    theme: &super::theme::Theme,
+) {
+    let settings = data.config.s3_sync.as_ref();
+    let state = settings.map_or_else(
+        || texts::tui_webdav_status_not_configured().to_string(),
+        |settings| {
+            if settings.enabled {
+                texts::tui_cloud_sync_enabled().to_string()
+            } else {
+                texts::tui_cloud_sync_disabled().to_string()
+            }
+        },
+    );
+    let last_sync = settings
+        .and_then(|settings| settings.status.last_sync_at)
+        .and_then(format_sync_time_local_to_minute)
+        .unwrap_or_else(|| texts::tui_webdav_status_never_synced().to_string());
+    let remote = settings.map_or_else(
+        || texts::tui_na().to_string(),
+        |settings| {
+            format!(
+                "{}/{}/v2/db-v6/{}",
+                settings.bucket, settings.remote_root, settings.profile
+            )
+        },
+    );
+    render_cloud_summary_lines(frame, area, theme, &state, &last_sync, &remote);
+}
+
+fn render_cloud_summary_lines(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    theme: &super::theme::Theme,
+    state: &str,
+    last_sync: &str,
+    remote: &str,
+) {
+    let label_width = usize::from(field_label_column_width(
+        [
+            texts::tui_label_webdav_status(),
+            texts::tui_label_webdav_last_sync(),
+            texts::tui_cloud_sync_remote_path(),
+        ],
+        0,
+    ));
+    let available = area
+        .width
+        .saturating_sub(u16::try_from(label_width).unwrap_or(u16::MAX))
+        .saturating_sub(2);
+    let lines = vec![
+        kv_line(
+            theme,
+            texts::tui_label_webdav_status(),
+            label_width,
+            vec![Span::raw(state.to_string())],
+        ),
+        kv_line(
+            theme,
+            texts::tui_label_webdav_last_sync(),
+            label_width,
+            vec![Span::raw(last_sync.to_string())],
+        ),
+        kv_line(
+            theme,
+            texts::tui_cloud_sync_remote_path(),
+            label_width,
+            vec![Span::raw(truncate_to_display_width(remote, available))],
+        ),
+    ];
+    frame.render_widget(Paragraph::new(lines), inset_left(area, CONTENT_INSET_LEFT));
 }
 
 pub(super) fn render_config_openclaw_route(

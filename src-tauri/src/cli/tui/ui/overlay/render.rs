@@ -97,6 +97,13 @@ pub(crate) fn render_overlay(
                 *selected,
             )
         }
+        Overlay::S3PresetPicker { selected } => super::pickers::render_s3_preset_picker_overlay(
+            frame,
+            app,
+            content_area,
+            theme,
+            *selected,
+        ),
         Overlay::ManagedAccountPicker {
             selected,
             binding,

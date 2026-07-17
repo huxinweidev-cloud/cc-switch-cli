@@ -700,7 +700,9 @@ pub(crate) fn route_has_content_list(route: &Route) -> bool {
             | Route::ConfigOpenClawEnv
             | Route::ConfigOpenClawTools
             | Route::ConfigOpenClawAgents
+            | Route::ConfigCloudSync
             | Route::ConfigWebDav
+            | Route::ConfigS3
             | Route::Skills
             | Route::SkillsDiscover
             | Route::SkillsRepos
@@ -1668,7 +1670,11 @@ pub(crate) fn visible_config_items(filter: &FilterState, app_type: &AppType) -> 
     };
 
     all.into_iter()
-        .filter(|item| item.label().to_lowercase().contains(&q))
+        .filter(|item| {
+            item.label().to_lowercase().contains(&q)
+                || matches!(item, ConfigItem::CloudSync)
+                    && "cloud sync webdav s3 云同步".contains(&q)
+        })
         .collect()
 }
 

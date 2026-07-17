@@ -2,13 +2,13 @@ use crate::cli::i18n::texts;
 use crate::error::AppError;
 use crate::services::SyncDecision;
 use crate::settings::{
-    get_webdav_sync_settings, set_webdav_sync_settings, webdav_jianguoyun_preset,
-    WebDavSyncSettings,
+    get_s3_sync_settings, get_webdav_sync_settings, set_s3_sync_settings, set_webdav_sync_settings,
+    webdav_jianguoyun_preset, WebDavSyncSettings,
 };
 
 use super::super::app::{
-    model_fetch_filter, App, ConfirmAction, ConfirmOverlay, LoadingKind, Overlay, SessionsPane,
-    ToastKind,
+    model_fetch_filter, App, CloudSyncBackend, CloudSyncTransferIntent, ConfirmAction,
+    ConfirmOverlay, LoadingKind, Overlay, SessionsPane, ToastKind,
 };
 use super::super::data::{load_state, UiData};
 use super::super::runtime_actions::app_display_name;
@@ -1198,10 +1198,35 @@ fn is_webdav_loading_overlay(app: &App) -> bool {
     matches!(
         &app.overlay,
         Overlay::Loading {
-            kind: LoadingKind::WebDav,
+            kind: LoadingKind::WebDav | LoadingKind::S3,
             ..
         }
     )
+}
+
+fn webdav_error_message(error: WebDavErr) -> String {
+    match error {
+        WebDavErr::Generic(message)
+        | WebDavErr::QuickSetupSave(message)
+        | WebDavErr::QuickSetupCheck(message) => message,
+    }
+}
+
+fn s3_display_target(data: &UiData, remote_path: Option<&str>) -> String {
+    let Some(settings) = data.config.s3_sync.as_ref() else {
+        return "S3".to_string();
+    };
+    let relative_path = remote_path.map_or_else(
+        || {
+            format!(
+                "{}/v2/db-v6/{}",
+                settings.remote_root.trim_matches('/'),
+                settings.profile.trim_matches('/')
+            )
+        },
+        |path| path.trim_matches('/').to_string(),
+    );
+    format!("{}/{}", settings.bucket.trim_matches('/'), relative_path)
 }
 
 pub(crate) fn handle_webdav_msg(
@@ -1232,6 +1257,8 @@ pub(crate) fn handle_webdav_msg(
                         CacheInvalidation::AppStateRecreated
                     }
                     WebDavDone::V1Migrated { .. } => CacheInvalidation::AppStateRecreated,
+                    WebDavDone::S3Downloaded { .. } => CacheInvalidation::AppStateRecreated,
+                    WebDavDone::S3RemoteInfoFetched { .. } => CacheInvalidation::None,
                     _ => CacheInvalidation::DataReloaded,
                 };
 
@@ -1295,8 +1322,88 @@ pub(crate) fn handle_webdav_msg(
                             ToastKind::Success,
                         );
                     }
+                    WebDavDone::S3ConnectionChecked => {
+                        update_s3_last_error(None);
+                        app.push_toast(texts::tui_toast_s3_connection_ok(), ToastKind::Success);
+                    }
+                    WebDavDone::S3RemoteInfoFetched { intent, info } => {
+                        let confirmation = match intent {
+                            CloudSyncTransferIntent::Upload => Some((
+                                texts::tui_s3_confirm_upload_title(),
+                                texts::tui_s3_confirm_upload_message(
+                                    info.as_ref(),
+                                    &s3_display_target(
+                                        data,
+                                        info.as_ref().map(|remote| remote.remote_path.as_str()),
+                                    ),
+                                ),
+                            )),
+                            CloudSyncTransferIntent::Restore => match info.as_ref() {
+                                None => {
+                                    app.push_toast(
+                                        texts::tui_toast_s3_remote_empty(),
+                                        ToastKind::Warning,
+                                    );
+                                    None
+                                }
+                                Some(remote) if !remote.compatible => {
+                                    app.push_toast(
+                                        texts::tui_toast_s3_remote_incompatible(),
+                                        ToastKind::Error,
+                                    );
+                                    None
+                                }
+                                Some(remote) => Some((
+                                    texts::tui_s3_confirm_restore_title(),
+                                    texts::tui_s3_confirm_restore_message(
+                                        remote,
+                                        &s3_display_target(data, Some(&remote.remote_path)),
+                                    ),
+                                )),
+                            },
+                        };
+                        if let Some((title, message)) = confirmation {
+                            app.overlay = Overlay::Confirm(ConfirmOverlay {
+                                title: title.to_string(),
+                                message,
+                                action: ConfirmAction::CloudSyncTransfer {
+                                    backend: CloudSyncBackend::S3Compatible,
+                                    intent,
+                                },
+                            });
+                        }
+                    }
+                    WebDavDone::S3Uploaded { decision, message } => {
+                        let message = if matches!(decision, SyncDecision::Upload) {
+                            texts::tui_toast_s3_upload_ok().to_string()
+                        } else {
+                            message
+                        };
+                        app.push_toast(message, ToastKind::Success);
+                    }
+                    WebDavDone::S3Downloaded { decision, message } => {
+                        if let Ok(state) = load_state() {
+                            if let Err(error) =
+                                crate::services::provider::ProviderService::sync_current_to_live(
+                                    &state,
+                                )
+                            {
+                                log::warn!(
+                                    "S3 restore completed but live config sync failed: {error}"
+                                );
+                            }
+                        }
+                        let message = if matches!(decision, SyncDecision::Download) {
+                            texts::tui_toast_s3_restore_ok().to_string()
+                        } else {
+                            message
+                        };
+                        app.push_toast(message, ToastKind::Success);
+                    }
                 }
-                *data = UiData::load(&app.app_type)?;
+                if !matches!(done_invalidation, CacheInvalidation::None) {
+                    *data = UiData::load(&app.app_type)?;
+                }
                 Ok(done_invalidation)
             }
             Err(err) => {
@@ -1312,7 +1419,17 @@ pub(crate) fn handle_webdav_msg(
                     | WebDavErr::QuickSetupSave(e)
                     | WebDavErr::QuickSetupCheck(e) => e.clone(),
                 };
-                update_webdav_last_error(Some(error_detail));
+                if matches!(
+                    &req,
+                    WebDavReqKind::S3CheckConnection
+                        | WebDavReqKind::S3FetchRemoteInfo { .. }
+                        | WebDavReqKind::S3Upload
+                        | WebDavReqKind::S3Download
+                ) {
+                    update_s3_last_error(Some(error_detail));
+                } else {
+                    update_webdav_last_error(Some(error_detail));
+                }
                 let msg = match req {
                     WebDavReqKind::CheckConnection => {
                         let detail = match err {
@@ -1369,6 +1486,29 @@ pub(crate) fn handle_webdav_msg(
                             )
                         }
                     },
+                    WebDavReqKind::S3CheckConnection => texts::tui_toast_s3_action_failed(
+                        texts::tui_s3_loading_title_check_connection(),
+                        &webdav_error_message(err),
+                    ),
+                    WebDavReqKind::S3FetchRemoteInfo { intent } => {
+                        let action = match intent {
+                            CloudSyncTransferIntent::Upload => {
+                                texts::tui_s3_loading_title_prepare_upload()
+                            }
+                            CloudSyncTransferIntent::Restore => {
+                                texts::tui_s3_loading_title_prepare_restore()
+                            }
+                        };
+                        texts::tui_toast_s3_action_failed(action, &webdav_error_message(err))
+                    }
+                    WebDavReqKind::S3Upload => texts::tui_toast_s3_action_failed(
+                        texts::tui_s3_loading_title_upload(),
+                        &webdav_error_message(err),
+                    ),
+                    WebDavReqKind::S3Download => texts::tui_toast_s3_action_failed(
+                        texts::tui_s3_loading_title_restore(),
+                        &webdav_error_message(err),
+                    ),
                 };
                 *data = UiData::load(&app.app_type)?;
                 app.push_toast(msg, ToastKind::Error);
@@ -1495,6 +1635,15 @@ fn update_webdav_last_error(last_error: Option<String>) {
     update_webdav_last_error_with(last_error, get_webdav_sync_settings, |cfg| {
         set_webdav_sync_settings(Some(cfg))
     });
+}
+
+fn update_s3_last_error(last_error: Option<String>) {
+    let Some(mut settings) = get_s3_sync_settings() else {
+        return;
+    };
+    settings.status.last_error_source = last_error.as_ref().map(|_| "manual".to_string());
+    settings.status.last_error = last_error;
+    let _ = set_s3_sync_settings(Some(settings));
 }
 
 pub(crate) fn handle_update_msg(app: &mut App, update_check: &mut RequestTracker, msg: UpdateMsg) {
@@ -1632,6 +1781,77 @@ mod tests {
                 ..
             } if indices == &[1, 2]
         ));
+    }
+
+    #[test]
+    fn s3_restore_preflight_confirms_the_resolved_remote_target() {
+        let mut app = App::new(Some(AppType::Claude));
+        app.overlay = Overlay::Loading {
+            kind: LoadingKind::S3,
+            title: "Preparing restore".to_string(),
+            message: String::new(),
+        };
+        let mut data = UiData::default();
+        data.config.s3_sync = Some(crate::settings::S3SyncSettings {
+            enabled: true,
+            region: "us-east-1".to_string(),
+            bucket: "sync-bucket".to_string(),
+            access_key_id: "AKID".to_string(),
+            secret_access_key: "SECRET".to_string(),
+            remote_root: "cc-switch".to_string(),
+            profile: "default".to_string(),
+            ..crate::settings::S3SyncSettings::default()
+        });
+        let mut requests = RequestTracker::default();
+        let request_id = requests.start();
+        let remote = crate::services::S3RemoteInfo {
+            device_name: "test-device".to_string(),
+            created_at: "2026-07-17T12:00:00Z".to_string(),
+            snapshot_id: "snapshot-1".to_string(),
+            version: 2,
+            protocol_version: 2,
+            db_compat_version: Some(6),
+            compatible: true,
+            artifacts: vec!["db.sql".to_string(), "skills.zip".to_string()],
+            layout: "v2/db-v6".to_string(),
+            remote_path: "cc-switch/v2/db-v6/default".to_string(),
+        };
+
+        let invalidation = handle_webdav_msg(
+            &mut app,
+            &mut data,
+            &mut requests,
+            WebDavMsg::Finished {
+                request_id,
+                req: WebDavReqKind::S3FetchRemoteInfo {
+                    intent: CloudSyncTransferIntent::Restore,
+                },
+                result: Ok(WebDavDone::S3RemoteInfoFetched {
+                    intent: CloudSyncTransferIntent::Restore,
+                    info: Some(remote),
+                }),
+            },
+        )
+        .expect("S3 restore preflight result");
+
+        assert!(matches!(invalidation, CacheInvalidation::None));
+        assert!(requests.active.is_none());
+        let Overlay::Confirm(ConfirmOverlay {
+            message,
+            action:
+                ConfirmAction::CloudSyncTransfer {
+                    backend: CloudSyncBackend::S3Compatible,
+                    intent: CloudSyncTransferIntent::Restore,
+                },
+            ..
+        }) = &app.overlay
+        else {
+            panic!("expected S3 restore confirmation, got {:?}", app.overlay);
+        };
+        assert!(message.contains("sync-bucket/cc-switch/v2/db-v6/default"));
+        assert!(message.contains("test-device"));
+        assert!(message.contains("db.sql"));
+        assert!(message.contains("skills.zip"));
     }
 
     #[test]

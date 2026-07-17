@@ -124,6 +124,26 @@ impl App {
                         }
                     }
                     ConfirmAction::WebDavMigrateV1ToV2 => Action::ConfigWebDavMigrateV1ToV2,
+                    ConfirmAction::CloudSyncTransfer { backend, intent } => {
+                        match (backend, intent) {
+                            (CloudSyncBackend::WebDav, CloudSyncTransferIntent::Upload) => {
+                                Action::ConfigWebDavUpload
+                            }
+                            (CloudSyncBackend::WebDav, CloudSyncTransferIntent::Restore) => {
+                                Action::ConfigWebDavDownload
+                            }
+                            (CloudSyncBackend::S3Compatible, CloudSyncTransferIntent::Upload) => {
+                                Action::ConfigS3Upload
+                            }
+                            (CloudSyncBackend::S3Compatible, CloudSyncTransferIntent::Restore) => {
+                                Action::ConfigS3Download
+                            }
+                        }
+                    }
+                    ConfirmAction::CloudSyncReset { backend } => match backend {
+                        CloudSyncBackend::WebDav => Action::ConfigWebDavReset,
+                        CloudSyncBackend::S3Compatible => Action::ConfigS3Reset,
+                    },
                     ConfirmAction::ClaudeModelFillAll { source_idx } => {
                         let source_idx = *source_idx;
                         if let Some(FormState::ProviderAdd(provider)) = self.form.as_mut() {

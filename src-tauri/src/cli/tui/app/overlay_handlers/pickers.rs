@@ -94,6 +94,9 @@ impl App {
         if let Some(action) = self.handle_usage_query_template_picker_key(key) {
             return Some(action);
         }
+        if let Some(action) = self.handle_s3_preset_picker_key(key) {
+            return Some(action);
+        }
         if let Some(action) = self.handle_managed_account_picker_key(key) {
             return Some(action);
         }
@@ -390,6 +393,38 @@ impl App {
         })
     }
 
+    fn handle_s3_preset_picker_key(&mut self, key: KeyEvent) -> Option<Action> {
+        let Overlay::S3PresetPicker { selected } = &mut self.overlay else {
+            return None;
+        };
+        let Some(FormState::S3Sync(form)) = self.form.as_mut() else {
+            self.overlay = Overlay::None;
+            return Some(Action::None);
+        };
+        *selected = (*selected).min(form::S3Preset::ALL.len().saturating_sub(1));
+
+        Some(match key.code {
+            KeyCode::Esc => {
+                self.overlay = Overlay::None;
+                Action::None
+            }
+            KeyCode::Up => {
+                *selected = selected.saturating_sub(1);
+                Action::None
+            }
+            KeyCode::Down => {
+                *selected = (*selected + 1).min(form::S3Preset::ALL.len().saturating_sub(1));
+                Action::None
+            }
+            KeyCode::Enter => {
+                form.apply_preset(form::S3Preset::from_picker_index(*selected));
+                self.overlay = Overlay::None;
+                Action::None
+            }
+            _ => Action::None,
+        })
+    }
+
     fn handle_user_agent_picker_key(&mut self, key: KeyEvent) -> Option<Action> {
         let Overlay::UserAgentPicker { selected } = &mut self.overlay else {
             return None;
@@ -665,7 +700,7 @@ impl App {
                 column,
                 editing,
             } => {
-                *selected = (*selected).min(3);
+                *selected = (*selected).min(2);
                 if !*editing {
                     return Action::None;
                 }
@@ -708,7 +743,7 @@ impl App {
                 column,
                 editing,
             } => {
-                *selected = (*selected).min(3);
+                *selected = (*selected).min(2);
                 if *editing {
                     return Action::None;
                 }
@@ -743,7 +778,7 @@ impl App {
                 Action::None
             }
             KeyCode::Down => {
-                let next = (selected + 1).min(3);
+                let next = (selected + 1).min(2);
                 if let Overlay::ClaudeModelPicker {
                     selected, column, ..
                 } = &mut self.overlay

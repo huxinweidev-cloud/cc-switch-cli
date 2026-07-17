@@ -868,13 +868,24 @@ pub(crate) fn handle_action(
             Ok(())
         }
         Action::ConfigWebDavCheckConnection => config::webdav_check_connection(&mut ctx),
+        Action::ConfigWebDavSave { settings } => config::webdav_save(&mut ctx, settings),
         Action::ConfigWebDavUpload => config::webdav_upload(&mut ctx),
         Action::ConfigWebDavDownload => config::webdav_download(&mut ctx),
         Action::ConfigWebDavMigrateV1ToV2 => config::webdav_migrate_v1_to_v2(&mut ctx),
         Action::ConfigWebDavReset => config::webdav_reset(&mut ctx),
+        Action::ConfigWebDavSetEnabled { enabled } => config::webdav_set_enabled(&mut ctx, enabled),
         Action::ConfigWebDavJianguoyunQuickSetup { username, password } => {
             config::webdav_jianguoyun_quick_setup(&mut ctx, username, password)
         }
+        Action::ConfigS3Save { settings } => config::s3_save(&mut ctx, settings),
+        Action::ConfigS3CheckConnection => config::s3_check_connection(&mut ctx),
+        Action::ConfigS3FetchRemoteInfo { intent } => {
+            config::s3_fetch_remote_info(&mut ctx, intent)
+        }
+        Action::ConfigS3Upload => config::s3_upload(&mut ctx),
+        Action::ConfigS3Download => config::s3_download(&mut ctx),
+        Action::ConfigS3SetEnabled { enabled } => config::s3_set_enabled(&mut ctx, enabled),
+        Action::ConfigS3Reset => config::s3_reset(&mut ctx),
         Action::OpenClawWorkspaceOpenFile { filename } => {
             config::open_openclaw_workspace_file(&mut ctx, filename)
         }

@@ -3,7 +3,9 @@ use super::*;
 mod mcp;
 mod prompt;
 mod provider;
+mod s3;
 mod tab;
+mod webdav;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ActiveTextField {
@@ -20,6 +22,13 @@ struct ActiveTextCommit {
 
 impl App {
     pub(crate) fn on_form_key(&mut self, key: KeyEvent, data: &UiData) -> Action {
+        if matches!(self.form, Some(FormState::S3Sync(_))) {
+            return self.on_s3_sync_form_key(key);
+        }
+        if matches!(self.form, Some(FormState::WebDavSync(_))) {
+            return self.on_webdav_sync_form_key(key);
+        }
+
         if is_save_shortcut(key) {
             self.commit_active_text_edit(data);
             return self.handle_form_save_shortcut(data);
@@ -105,6 +114,8 @@ impl App {
             Some(FormState::ProviderAdd(_)) => self.build_provider_form_save_action(data),
             Some(FormState::McpAdd(_)) => self.build_mcp_form_save_action(),
             Some(FormState::PromptMeta(_)) => self.build_prompt_meta_form_save_action(),
+            Some(FormState::S3Sync(_)) => self.build_s3_sync_form_save_action(),
+            Some(FormState::WebDavSync(_)) => self.build_webdav_sync_form_save_action(),
             None => Action::None,
         }
     }

@@ -3268,6 +3268,13 @@ pub enum ConfirmAction {
     EditorDiscard,
     EditorSaveBeforeClose,
     WebDavMigrateV1ToV2,
+    CloudSyncTransfer {
+        backend: super::CloudSyncBackend,
+        intent: super::CloudSyncTransferIntent,
+    },
+    CloudSyncReset {
+        backend: super::CloudSyncBackend,
+    },
     ClaudeModelFillAll {
         source_idx: usize,
     },
@@ -3374,6 +3381,7 @@ pub enum LoadingKind {
     Generic,
     Proxy,
     WebDav,
+    S3,
     UpdateCheck,
 }
 
@@ -3439,6 +3447,9 @@ pub enum Overlay {
         selected: usize,
     },
     UsageQueryTemplatePicker {
+        selected: usize,
+    },
+    S3PresetPicker {
         selected: usize,
     },
     ManagedAccountPicker {
@@ -3665,6 +3676,7 @@ impl Overlay {
                 | Overlay::ClaudeApiFormatPicker { .. }
                 | Overlay::UserAgentPicker { .. }
                 | Overlay::UsageQueryTemplatePicker { .. }
+                | Overlay::S3PresetPicker { .. }
                 | Overlay::ManagedAccountPicker { .. }
                 | Overlay::ManagedAccountActionPicker { .. }
                 | Overlay::ClaudeModelPicker { editing: false, .. }
@@ -3707,6 +3719,7 @@ impl Overlay {
             | Overlay::ClaudeApiFormatPicker { .. }
             | Overlay::UserAgentPicker { .. }
             | Overlay::UsageQueryTemplatePicker { .. }
+            | Overlay::S3PresetPicker { .. }
             | Overlay::ManagedAccountPicker { .. }
             | Overlay::ManagedAccountActionPicker { .. }
             | Overlay::OpenClawToolsProfilePicker { .. }
