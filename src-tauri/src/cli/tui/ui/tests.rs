@@ -28,7 +28,10 @@ use crate::{
             ProxySnapshot, SkillsSnapshot, UiData, UsageLogRow, UsageProviderStatsRow,
             UsageRangePreset, UsageSnapshot, UsageSummarySnapshot, UsageTrendBucket,
         },
-        form::{FormFocus, FormState, PromptMetaFormState, ProviderAddField, TextInput},
+        form::{
+            ClaudeModelPickerColumn, FormFocus, FormState, PromptMetaFormState, ProviderAddField,
+            TextInput, UsageQueryField,
+        },
         route::{NavItem, Route},
         theme::theme_for,
     },
@@ -169,6 +172,136 @@ fn provider_form_shows_api_key_in_table_value() {
         crate::cli::tui::form::ProviderAddField::ClaudeApiKey,
     );
     assert_eq!(value, "sk-test-1234567890");
+}
+
+#[test]
+fn claude_model_picker_renders_role_scoped_one_m_controls_and_dynamic_keys() {
+    let _lock = lock_env();
+    let _lang = use_test_language(Language::English);
+    let _no_color = EnvGuard::remove("NO_COLOR");
+    let mut app = App::new(Some(AppType::Claude));
+    app.route = Route::Providers;
+    app.focus = Focus::Content;
+    let mut form = crate::cli::tui::form::ProviderAddFormState::new(AppType::Claude);
+    form.claude_reasoning_model.set("reasoning-model");
+    form.claude_haiku_model.set("haiku-model");
+    form.set_claude_model_from_config(2, "sonnet-model[1M]");
+    form.set_claude_model_from_config(3, "opus-model");
+    app.form = Some(FormState::ProviderAdd(form));
+    app.overlay = Overlay::ClaudeModelPicker {
+        selected: 2,
+        column: ClaudeModelPickerColumn::OneM,
+        editing: false,
+    };
+
+    let one_m = all_text(&render_with_size(
+        &app,
+        &minimal_data(&app.app_type),
+        160,
+        32,
+    ));
+    assert!(one_m.contains("Field"), "{one_m}");
+    assert!(one_m.contains("Value"), "{one_m}");
+    assert!(one_m.contains("1M"), "{one_m}");
+    assert!(one_m.contains("[x]"), "{one_m}");
+    assert!(one_m.contains("[ ]"), "{one_m}");
+    assert!(one_m.matches('—').count() >= 2, "{one_m}");
+    assert!(one_m.contains("switch column"), "{one_m}");
+    assert!(one_m.contains("toggle"), "{one_m}");
+    assert!(one_m.contains("Enter toggle"), "{one_m}");
+    assert!(
+        one_m.contains("Press Enter to toggle the 1M declaration."),
+        "{one_m}"
+    );
+    assert!(!one_m.contains("fetch model"), "{one_m}");
+    assert!(!one_m.contains("fill all"), "{one_m}");
+
+    app.overlay = Overlay::ClaudeModelPicker {
+        selected: 2,
+        column: ClaudeModelPickerColumn::Model,
+        editing: false,
+    };
+    let model = all_text(&render_with_size(
+        &app,
+        &minimal_data(&app.app_type),
+        160,
+        32,
+    ));
+    assert!(model.contains("fetch model"), "{model}");
+    assert!(model.contains("edit"), "{model}");
+    assert!(model.contains("Enter edit"), "{model}");
+    assert!(model.contains("Space fetch model"), "{model}");
+    assert!(
+        model.contains("Press Space to auto-fetch models from API."),
+        "{model}"
+    );
+    assert!(!model.contains("fill all"), "{model}");
+}
+
+#[test]
+fn claude_model_picker_keeps_one_m_visible_and_truncates_on_narrow_terminals() {
+    let _lock = lock_env();
+    let _lang = use_test_language(Language::English);
+    let _no_color = EnvGuard::remove("NO_COLOR");
+    let mut app = App::new(Some(AppType::Claude));
+    app.route = Route::Providers;
+    app.focus = Focus::Content;
+    let mut form = crate::cli::tui::form::ProviderAddFormState::new(AppType::Claude);
+    form.set_claude_model_from_config(
+        2,
+        "an-extremely-long-provider-model-name-with-a-tail-that-must-not-show[1M]",
+    );
+    app.form = Some(FormState::ProviderAdd(form));
+    app.overlay = Overlay::ClaudeModelPicker {
+        selected: 2,
+        column: ClaudeModelPickerColumn::OneM,
+        editing: false,
+    };
+
+    let narrow = all_text(&render_with_size(
+        &app,
+        &minimal_data(&app.app_type),
+        64,
+        18,
+    ));
+    assert!(narrow.contains("1M"), "{narrow}");
+    assert!(narrow.contains("[x]"), "{narrow}");
+    assert!(narrow.contains('…'), "{narrow}");
+    assert!(!narrow.contains("must-not-show"), "{narrow}");
+
+    let smoke = render_with_size(&app, &minimal_data(&app.app_type), 40, 12);
+    assert_eq!(smoke.area.width, 40);
+    assert_eq!(smoke.area.height, 12);
+}
+
+#[test]
+fn claude_model_picker_no_color_marks_only_the_focused_cell_as_reversed() {
+    let _lock = lock_env();
+    let _lang = use_test_language(Language::English);
+    let _no_color = EnvGuard::set("NO_COLOR", "1");
+    let mut app = App::new(Some(AppType::Claude));
+    app.route = Route::Providers;
+    app.focus = Focus::Content;
+    let mut form = crate::cli::tui::form::ProviderAddFormState::new(AppType::Claude);
+    form.set_claude_model_from_config(2, "sonnet-model[1M]");
+    app.form = Some(FormState::ProviderAdd(form));
+    app.overlay = Overlay::ClaudeModelPicker {
+        selected: 2,
+        column: ClaudeModelPickerColumn::OneM,
+        editing: false,
+    };
+
+    let buf = render_with_size(&app, &minimal_data(&app.app_type), 160, 32);
+    let (row_y, row) = (0..buf.area.height)
+        .map(|y| (y, line_at(&buf, y)))
+        .find(|(_, line)| line.contains("[x]") && line.contains("sonnet-model"))
+        .unwrap_or_else(|| panic!("missing Sonnet row:\n{}", all_text(&buf)));
+    let check_x = cell_column_of(&buf, row_y, "[x]").expect("checkbox column");
+    let model_x = cell_column_of(&buf, row_y, "sonnet-model").expect("model column");
+    assert!(buf[(check_x, row_y)].modifier.contains(Modifier::REVERSED));
+    assert!(!buf[(model_x, row_y)].modifier.contains(Modifier::REVERSED));
+    assert!(buf[(model_x, row_y)].modifier.contains(Modifier::BOLD));
+    assert!(!row.contains('>'), "{row}");
 }
 
 #[test]
@@ -11072,6 +11205,36 @@ fn provider_form_model_field_hints_enter_edit_and_f_fetch() {
 }
 
 #[test]
+fn form_toggle_key_bars_show_enter_without_space() {
+    let cases = [
+        super::add_form_key_items(
+            FormFocus::Fields,
+            false,
+            Some(ProviderAddField::IncludeCommonConfig),
+        ),
+        super::quick_config_form_key_items(),
+        super::usage_query_form_key_items(
+            FormFocus::Fields,
+            false,
+            Some(UsageQueryField::Enabled),
+            false,
+        ),
+    ];
+
+    for keys in cases {
+        assert!(
+            keys.iter()
+                .any(|(key, label)| { *key == "Enter" && *label == texts::tui_key_toggle() }),
+            "missing Enter toggle hint: {keys:?}"
+        );
+        assert!(
+            keys.iter().all(|(key, _)| *key != "Space"),
+            "form toggle should not advertise Space: {keys:?}"
+        );
+    }
+}
+
+#[test]
 fn openclaw_provider_list_key_bar_shows_test_hint_only() {
     let _lock = lock_env();
     let _no_color = EnvGuard::remove("NO_COLOR");
@@ -11338,7 +11501,8 @@ fn openclaw_provider_list_key_bar_shows_edit_for_tracked_provider() {
     let buf = render(&app, &minimal_data(&app.app_type));
     let all = all_text(&buf);
 
-    assert!(all.contains("e edit"), "{all}");
+    assert!(all.contains("Enter edit"), "{all}");
+    assert!(!all.contains("e edit"), "{all}");
     assert!(all.contains("x set default"), "{all}");
 }
 
@@ -11361,6 +11525,7 @@ fn hermes_provider_list_key_bar_hides_edit_delete_for_read_only_provider() {
 
     let keys = line_with(&all, "Space add/remove");
     assert!(keys.contains("t test"), "{keys}");
+    assert!(!keys.contains("Enter edit"), "{keys}");
     assert!(!keys.contains("e edit"), "{keys}");
     assert!(!keys.contains("d delete"), "{keys}");
 }

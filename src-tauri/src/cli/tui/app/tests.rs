@@ -151,6 +151,7 @@ mod tests {
         .is_editing());
         assert!(!Overlay::ClaudeModelPicker {
             selected: 0,
+            column: ClaudeModelPickerColumn::Model,
             editing: false,
         }
         .is_editing());
@@ -165,6 +166,7 @@ mod tests {
         .is_editing());
         assert!(Overlay::ClaudeModelPicker {
             selected: 0,
+            column: ClaudeModelPickerColumn::Model,
             editing: true,
         }
         .is_editing());
@@ -1549,6 +1551,26 @@ mod tests {
     }
 
     #[test]
+    fn provider_local_proxy_user_agent_picker_space_is_noop() {
+        let mut app = open_local_proxy_settings_page();
+
+        app.on_key(key(KeyCode::Enter), &data());
+        let selected = match app.overlay {
+            Overlay::UserAgentPicker { selected } => selected,
+            ref overlay => panic!("expected UserAgentPicker, got {overlay:?}"),
+        };
+
+        let action = app.on_key(key(KeyCode::Char(' ')), &data());
+        assert!(matches!(action, Action::None));
+        assert!(matches!(
+            app.overlay,
+            Overlay::UserAgentPicker {
+                selected: current
+            } if current == selected
+        ));
+    }
+
+    #[test]
     fn provider_local_proxy_user_agent_u_shortcut_is_not_bound() {
         let mut app = open_local_proxy_settings_page();
         select_local_proxy_settings_field(&mut app, form::LocalProxySettingsField::BodyOverrides);
@@ -2228,6 +2250,23 @@ mod tests {
     }
 
     #[test]
+    fn provider_add_form_hermes_models_picker_space_does_not_start_editing() {
+        let mut app = App::new(Some(AppType::Hermes));
+        let mut form = ProviderAddFormState::new(AppType::Hermes);
+        form.open_hermes_models_picker();
+        form.add_empty_hermes_model();
+        app.form = Some(FormState::ProviderAdd(form));
+        app.overlay = Overlay::HermesModelsPicker { editing: false };
+
+        let action = app.on_key(key(KeyCode::Char(' ')), &data());
+        assert!(matches!(action, Action::None));
+        assert!(matches!(
+            app.overlay,
+            Overlay::HermesModelsPicker { editing: false }
+        ));
+    }
+
+    #[test]
     fn provider_add_form_hermes_models_picker_preserves_edit_cursor() {
         let mut app = App::new(Some(AppType::Hermes));
         app.route = Route::Providers;
@@ -2748,6 +2787,30 @@ mod tests {
         assert!(
             matches!(app.overlay, Overlay::SpeedtestRunning { ref url } if url == "https://example.com")
         );
+    }
+
+    #[test]
+    fn provider_test_menu_space_is_noop() {
+        let mut app = App::new(Some(AppType::Claude));
+        app.route = Route::Providers;
+        app.focus = Focus::Content;
+        app.overlay = Overlay::ProviderTestMenu {
+            provider_id: "p1".to_string(),
+            selected: 0,
+        };
+
+        let mut data = UiData::default();
+        data.providers.rows.push(claude_provider_row("p1"));
+
+        let action = app.on_key(key(KeyCode::Char(' ')), &data);
+        assert!(matches!(action, Action::None));
+        assert!(matches!(
+            app.overlay,
+            Overlay::ProviderTestMenu {
+                ref provider_id,
+                selected: 0
+            } if provider_id == "p1"
+        ));
     }
 
     #[test]
@@ -12405,6 +12468,7 @@ mod tests {
             app.overlay,
             Overlay::ClaudeModelPicker {
                 selected: 0,
+                column: ClaudeModelPickerColumn::Model,
                 editing: false
             }
         ));
@@ -12433,7 +12497,7 @@ mod tests {
         }
 
         app.on_key(key(KeyCode::Enter), &data);
-        app.on_key(key(KeyCode::Char(' ')), &data); // enter editing mode in overlay
+        app.on_key(key(KeyCode::Enter), &data); // enter editing mode in overlay
         app.on_key(key(KeyCode::Char('m')), &data);
         app.on_key(key(KeyCode::Char('1')), &data);
 
@@ -12887,6 +12951,7 @@ mod tests {
         ));
         app.overlay = Overlay::ClaudeModelPicker {
             selected: 0,
+            column: ClaudeModelPickerColumn::Model,
             editing: false,
         };
 
@@ -12896,6 +12961,7 @@ mod tests {
             app.overlay,
             Overlay::ClaudeModelPicker {
                 selected: 1,
+                column: ClaudeModelPickerColumn::Model,
                 editing: false
             }
         ));
@@ -12906,6 +12972,7 @@ mod tests {
             app.overlay,
             Overlay::ClaudeModelPicker {
                 selected: 0,
+                column: ClaudeModelPickerColumn::Model,
                 editing: false
             }
         ));
@@ -12921,6 +12988,7 @@ mod tests {
         ));
         app.overlay = Overlay::ClaudeModelPicker {
             selected: 0,
+            column: ClaudeModelPickerColumn::Model,
             editing: true,
         };
 
@@ -12937,23 +13005,161 @@ mod tests {
             app.overlay,
             Overlay::ClaudeModelPicker {
                 selected: 0,
+                column: ClaudeModelPickerColumn::Model,
                 editing: true
             }
         ));
     }
 
     #[test]
-    fn provider_codex_oauth_model_fetch_uses_managed_auth_even_for_default_account() {
+    fn provider_claude_model_overlay_navigates_columns_and_toggles_one_m() {
+        let mut app = App::new(Some(AppType::Claude));
+        app.route = Route::Providers;
+        app.focus = Focus::Content;
+        let mut form = super::super::form::ProviderAddFormState::new(AppType::Claude);
+        form.claude_sonnet_model.set("model-sonnet");
+        app.form = Some(FormState::ProviderAdd(form));
+        app.overlay = Overlay::ClaudeModelPicker {
+            selected: 2,
+            column: ClaudeModelPickerColumn::Model,
+            editing: false,
+        };
+
+        app.on_key(key(KeyCode::Right), &data());
+        assert!(matches!(
+            app.overlay,
+            Overlay::ClaudeModelPicker {
+                selected: 2,
+                column: ClaudeModelPickerColumn::OneM,
+                editing: false,
+            }
+        ));
+
+        let action = app.on_key(key(KeyCode::Char(' ')), &data());
+        assert!(matches!(action, Action::None));
+        assert!(matches!(
+            app.overlay,
+            Overlay::ClaudeModelPicker {
+                column: ClaudeModelPickerColumn::OneM,
+                ..
+            }
+        ));
+
+        app.on_key(key(KeyCode::Enter), &data());
+        let form = match app.form.as_ref() {
+            Some(FormState::ProviderAdd(form)) => form,
+            _ => panic!("expected ProviderAdd form"),
+        };
+        assert!(form.claude_model_one_m_enabled(2));
+
+        app.on_key(key(KeyCode::Left), &data());
+        app.on_key(key(KeyCode::Enter), &data());
+        assert!(matches!(
+            app.overlay,
+            Overlay::ClaudeModelPicker {
+                selected: 2,
+                column: ClaudeModelPickerColumn::Model,
+                editing: true,
+            }
+        ));
+    }
+
+    #[test]
+    fn provider_claude_model_overlay_skips_disabled_one_m_cells() {
+        let mut app = App::new(Some(AppType::Claude));
+        app.route = Route::Providers;
+        app.focus = Focus::Content;
+        app.form = Some(FormState::ProviderAdd(
+            super::super::form::ProviderAddFormState::new(AppType::Claude),
+        ));
+        app.overlay = Overlay::ClaudeModelPicker {
+            selected: 1,
+            column: ClaudeModelPickerColumn::Model,
+            editing: false,
+        };
+
+        app.on_key(key(KeyCode::Right), &data());
+        assert!(matches!(
+            app.overlay,
+            Overlay::ClaudeModelPicker {
+                selected: 1,
+                column: ClaudeModelPickerColumn::Model,
+                ..
+            }
+        ));
+
+        app.overlay = Overlay::ClaudeModelPicker {
+            selected: 2,
+            column: ClaudeModelPickerColumn::OneM,
+            editing: false,
+        };
+        app.on_key(key(KeyCode::Up), &data());
+        assert!(matches!(
+            app.overlay,
+            Overlay::ClaudeModelPicker {
+                selected: 1,
+                column: ClaudeModelPickerColumn::Model,
+                editing: false,
+            }
+        ));
+    }
+
+    #[test]
+    fn provider_claude_model_edit_preserves_and_normalizes_one_m() {
+        let mut app = App::new(Some(AppType::Claude));
+        app.route = Route::Providers;
+        app.focus = Focus::Content;
+        let mut form = super::super::form::ProviderAddFormState::new(AppType::Claude);
+        form.set_claude_model_from_config(2, "old-model[1M]");
+        app.form = Some(FormState::ProviderAdd(form));
+        app.overlay = Overlay::ClaudeModelPicker {
+            selected: 2,
+            column: ClaudeModelPickerColumn::Model,
+            editing: true,
+        };
+
+        app.on_key(key(KeyCode::Char('x')), &data());
+        app.on_key(key(KeyCode::Enter), &data());
+        let form = match app.form.as_ref() {
+            Some(FormState::ProviderAdd(form)) => form,
+            _ => panic!("expected ProviderAdd form"),
+        };
+        assert_eq!(form.claude_sonnet_model.value, "old-modelx");
+        assert!(form.claude_model_one_m_enabled(2));
+
+        let Some(FormState::ProviderAdd(form)) = app.form.as_mut() else {
+            panic!("expected ProviderAdd form");
+        };
+        assert!(form.toggle_claude_model_one_m(2));
+        form.claude_sonnet_model.set("next-model [1m]  ");
+        app.overlay = Overlay::ClaudeModelPicker {
+            selected: 2,
+            column: ClaudeModelPickerColumn::Model,
+            editing: true,
+        };
+        app.on_key(key(KeyCode::Esc), &data());
+
+        let form = match app.form.as_ref() {
+            Some(FormState::ProviderAdd(form)) => form,
+            _ => panic!("expected ProviderAdd form"),
+        };
+        assert_eq!(form.claude_sonnet_model.value, "next-model");
+        assert!(form.claude_model_one_m_enabled(2));
+    }
+
+    #[test]
+    fn provider_codex_oauth_model_fetch_space_uses_managed_auth_even_for_default_account() {
         let mut app = App::new(Some(AppType::Claude));
         app.route = Route::Providers;
         app.focus = Focus::Content;
         app.form = Some(FormState::ProviderAdd(claude_codex_oauth_form()));
         app.overlay = Overlay::ClaudeModelPicker {
             selected: 0,
+            column: ClaudeModelPickerColumn::Model,
             editing: false,
         };
 
-        let action = app.on_key(key(KeyCode::Enter), &data());
+        let action = app.on_key(key(KeyCode::Char(' ')), &data());
 
         assert!(matches!(
             action,
@@ -14048,6 +14254,50 @@ mod tests {
     }
 
     #[test]
+    fn context_help_claude_one_m_explains_declaration_and_restores_cell() {
+        let _lang = use_test_language(Language::English);
+        let mut app = App::new(Some(AppType::Claude));
+        app.form = Some(FormState::ProviderAdd(ProviderAddFormState::new(
+            AppType::Claude,
+        )));
+        app.overlay = Overlay::ClaudeModelPicker {
+            selected: 2,
+            column: ClaudeModelPickerColumn::OneM,
+            editing: false,
+        };
+
+        app.on_key(key(KeyCode::Char('?')), &UiData::default());
+        let text = help_text(&app);
+        assert!(text.contains("only declares"), "{text}");
+        assert!(
+            text.contains("does not detect upstream capability"),
+            "{text}"
+        );
+        assert!(text.contains("secondary a shortcut"), "{text}");
+        assert!(text.contains("Enter to edit"), "{text}");
+        assert!(text.contains("Space to fetch"), "{text}");
+        assert!(text.contains("Enter to toggle"), "{text}");
+        assert!(matches!(
+            app.pending_overlay,
+            Some(Overlay::ClaudeModelPicker {
+                selected: 2,
+                column: ClaudeModelPickerColumn::OneM,
+                editing: false,
+            })
+        ));
+
+        app.on_key(key(KeyCode::Char('?')), &UiData::default());
+        assert!(matches!(
+            app.overlay,
+            Overlay::ClaudeModelPicker {
+                selected: 2,
+                column: ClaudeModelPickerColumn::OneM,
+                editing: false,
+            }
+        ));
+    }
+
+    #[test]
     fn context_help_codex_upstream_format_shows_format_hint() {
         let _lang = use_test_language(Language::English);
         let mut app = App::new(Some(AppType::Codex));
@@ -14278,6 +14528,41 @@ mod tests {
             Overlay::UsageQueryTemplatePicker { selected: 2 }
         ));
         assert!(app.pending_overlay.is_none());
+    }
+
+    #[test]
+    fn usage_query_template_picker_space_is_noop() {
+        let mut app = App::new(Some(AppType::Claude));
+        let mut form = ProviderAddFormState::new(AppType::Claude);
+        form.open_usage_query_page();
+        form.toggle_usage_query_enabled();
+        app.form = Some(FormState::ProviderAdd(form));
+        app.overlay = Overlay::UsageQueryTemplatePicker { selected: 2 };
+
+        let action = app.on_key(key(KeyCode::Char(' ')), &UiData::default());
+        assert!(matches!(action, Action::None));
+        assert!(matches!(
+            app.overlay,
+            Overlay::UsageQueryTemplatePicker { selected: 2 }
+        ));
+    }
+
+    #[test]
+    fn usage_query_template_picker_enter_applies_selection() {
+        let mut app = App::new(Some(AppType::Claude));
+        let mut form = ProviderAddFormState::new(AppType::Claude);
+        form.open_usage_query_page();
+        form.toggle_usage_query_enabled();
+        app.form = Some(FormState::ProviderAdd(form));
+        app.overlay = Overlay::UsageQueryTemplatePicker { selected: 2 };
+
+        let action = app.on_key(key(KeyCode::Enter), &UiData::default());
+        assert!(matches!(action, Action::None));
+        assert!(matches!(app.overlay, Overlay::None));
+        let Some(FormState::ProviderAdd(form)) = app.form.as_ref() else {
+            panic!("expected provider form");
+        };
+        assert_eq!(form.usage_query_template, UsageQueryTemplate::NewApi);
     }
 
     #[test]
@@ -14963,6 +15248,7 @@ mod tests {
         }
         app.overlay = Overlay::ClaudeModelPicker {
             selected: 0,
+            column: ClaudeModelPickerColumn::Model,
             editing: false,
         };
         app
@@ -15682,6 +15968,7 @@ mod tests {
             app.overlay,
             Overlay::ClaudeModelPicker {
                 selected: 0,
+                column: ClaudeModelPickerColumn::Model,
                 editing: false
             }
         ));
@@ -15712,6 +15999,7 @@ mod tests {
             app.overlay,
             Overlay::ClaudeModelPicker {
                 selected: 0,
+                column: ClaudeModelPickerColumn::Model,
                 editing: false
             }
         ));
@@ -15737,6 +16025,7 @@ mod tests {
             app.overlay,
             Overlay::ClaudeModelPicker {
                 selected: 0,
+                column: ClaudeModelPickerColumn::Model,
                 editing: false
             }
         ));
@@ -15763,6 +16052,7 @@ mod tests {
             app.overlay,
             Overlay::ClaudeModelPicker {
                 selected: 0,
+                column: ClaudeModelPickerColumn::Model,
                 editing: false
             }
         ));
@@ -15787,6 +16077,7 @@ mod tests {
         // All fields are empty by default; selected=0 (Main Model) is empty
         app.overlay = Overlay::ClaudeModelPicker {
             selected: 0,
+            column: ClaudeModelPickerColumn::Model,
             editing: false,
         };
 
@@ -15798,6 +16089,7 @@ mod tests {
             app.overlay,
             Overlay::ClaudeModelPicker {
                 selected: 0,
+                column: ClaudeModelPickerColumn::Model,
                 editing: false
             }
         ));
@@ -15817,6 +16109,7 @@ mod tests {
         // Select the Opus role (now index 3 of the four role rows)
         app.overlay = Overlay::ClaudeModelPicker {
             selected: 3,
+            column: ClaudeModelPickerColumn::Model,
             editing: false,
         };
 
@@ -15843,6 +16136,35 @@ mod tests {
         assert_eq!(form.claude_sonnet_model.value, "claude-opus-4-20250514");
         assert_eq!(form.claude_opus_model.value, "claude-opus-4-20250514");
         assert_eq!(form.claude_model.value, "");
+    }
+
+    #[test]
+    fn claude_model_fill_all_copies_one_m_only_to_supported_roles() {
+        let mut app = App::new(Some(AppType::Claude));
+        app.route = Route::Providers;
+        app.focus = Focus::Content;
+        let mut form = super::super::form::ProviderAddFormState::new(AppType::Claude);
+        form.set_claude_model_from_config(2, "shared-model[1M]");
+        app.form = Some(FormState::ProviderAdd(form));
+        app.overlay = Overlay::ClaudeModelPicker {
+            selected: 2,
+            column: ClaudeModelPickerColumn::Model,
+            editing: false,
+        };
+
+        app.on_key(key(KeyCode::Char('a')), &data());
+        app.on_key(key(KeyCode::Enter), &data());
+
+        let form = match app.form.as_ref() {
+            Some(FormState::ProviderAdd(form)) => form,
+            _ => panic!("expected ProviderAdd form"),
+        };
+        assert_eq!(form.claude_reasoning_model.value, "shared-model");
+        assert_eq!(form.claude_haiku_model.value, "shared-model");
+        assert!(!form.claude_model_one_m_enabled(0));
+        assert!(!form.claude_model_one_m_enabled(1));
+        assert!(form.claude_model_one_m_enabled(2));
+        assert!(form.claude_model_one_m_enabled(3));
     }
 
     // ------------------------------------------------------------------
@@ -15879,6 +16201,7 @@ mod tests {
             app.overlay,
             Overlay::ClaudeModelPicker {
                 selected: 1,
+                column: ClaudeModelPickerColumn::Model,
                 editing: false
             }
         ));
@@ -15889,6 +16212,67 @@ mod tests {
             _ => panic!("expected ProviderAdd form"),
         };
         assert_eq!(form.claude_haiku_model.value, "claude-haiku-4-20250514");
+    }
+
+    #[test]
+    fn model_fetch_picker_claude_preserves_or_enables_one_m() {
+        let mut app = App::new(Some(AppType::Claude));
+        let mut form = super::super::form::ProviderAddFormState::new(AppType::Claude);
+        form.set_claude_model_from_config(2, "old-sonnet[1M]");
+        app.form = Some(FormState::ProviderAdd(form));
+        app.overlay = Overlay::ModelFetchPicker {
+            request_id: 1,
+            field: ProviderAddField::ClaudeModelConfig,
+            claude_idx: Some(2),
+            input: TextInput::new("new-sonnet"),
+            query: String::new(),
+            fetching: false,
+            models: vec!["new-sonnet".to_string()],
+            filtered_indices: None,
+            filter_incomplete: false,
+            error: None,
+            selected_idx: 0,
+            selection_active: false,
+        };
+
+        app.on_key(key(KeyCode::Enter), &data());
+        let form = match app.form.as_ref() {
+            Some(FormState::ProviderAdd(form)) => form,
+            _ => panic!("expected ProviderAdd form"),
+        };
+        assert_eq!(form.claude_sonnet_model.value, "new-sonnet");
+        assert!(form.claude_model_one_m_enabled(2));
+
+        app.overlay = Overlay::ModelFetchPicker {
+            request_id: 2,
+            field: ProviderAddField::ClaudeModelConfig,
+            claude_idx: Some(3),
+            input: TextInput::new("new-opus [1m]"),
+            query: String::new(),
+            fetching: false,
+            models: vec!["new-opus [1m]".to_string()],
+            filtered_indices: None,
+            filter_incomplete: false,
+            error: None,
+            selected_idx: 0,
+            selection_active: false,
+        };
+        app.on_key(key(KeyCode::Enter), &data());
+
+        let form = match app.form.as_ref() {
+            Some(FormState::ProviderAdd(form)) => form,
+            _ => panic!("expected ProviderAdd form"),
+        };
+        assert_eq!(form.claude_opus_model.value, "new-opus");
+        assert!(form.claude_model_one_m_enabled(3));
+        assert!(matches!(
+            app.overlay,
+            Overlay::ClaudeModelPicker {
+                selected: 3,
+                column: ClaudeModelPickerColumn::Model,
+                editing: false,
+            }
+        ));
     }
 
     #[test]
@@ -15920,6 +16304,7 @@ mod tests {
             app.overlay,
             Overlay::ClaudeModelPicker {
                 selected: 3,
+                column: ClaudeModelPickerColumn::Model,
                 editing: false
             }
         ));
@@ -15928,7 +16313,7 @@ mod tests {
             Some(FormState::ProviderAdd(f)) => f,
             _ => panic!("expected ProviderAdd form"),
         };
-        assert_eq!(form.claude_sonnet_model.value, "");
+        assert_eq!(form.claude_opus_model.value, "");
     }
 
     #[test]
@@ -15958,6 +16343,7 @@ mod tests {
             app.overlay,
             Overlay::ClaudeModelPicker {
                 selected: 0,
+                column: ClaudeModelPickerColumn::Model,
                 editing: false
             }
         ));
