@@ -7520,6 +7520,14 @@ pub mod texts {
         }
     }
 
+    pub fn tui_toast_mcp_id_exists() -> &'static str {
+        if is_chinese() {
+            "MCP 服务器 ID 已存在。"
+        } else {
+            "MCP server ID already exists."
+        }
+    }
+
     pub fn tui_toast_mcp_env_key_empty() -> &'static str {
         if is_chinese() {
             "环境变量 Key 不能为空。"

@@ -1017,6 +1017,14 @@ fn submit_mcp_add(ctx: &mut RuntimeActionContext<'_>, content: String) -> Result
     }
 
     let state = load_state()?;
+    if McpService::get_all_servers(&state)?
+        .keys()
+        .any(|id| id == server.id.trim())
+    {
+        ctx.app
+            .push_toast(texts::tui_toast_mcp_id_exists(), ToastKind::Warning);
+        return Ok(());
+    }
     if let Err(err) = McpService::upsert_server(&state, server) {
         ctx.app.push_toast(err.to_string(), ToastKind::Error);
         return Ok(());
