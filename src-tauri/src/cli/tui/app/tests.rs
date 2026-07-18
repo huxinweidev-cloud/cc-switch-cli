@@ -12437,8 +12437,8 @@ mod tests {
     }
 
     #[test]
-    fn mcp_http_form_save_does_not_require_command() {
-        let mut app = App::new(Some(AppType::Claude));
+    fn mcp_http_form_save_accepts_client_url_template_without_command() {
+        let mut app = App::new(Some(AppType::OpenCode));
         app.route = Route::Mcp;
         app.focus = Focus::Content;
 
@@ -12449,7 +12449,7 @@ mod tests {
             form.id.set("docs-langchain");
             form.name.set("LangChain Docs");
             form.server_type = McpTransport::Http;
-            form.url.set("https://docs.langchain.com/mcp");
+            form.url.set("{env:MCP_BASE_URL}/mcp");
         } else {
             panic!("expected McpAdd form");
         }
@@ -12462,7 +12462,7 @@ mod tests {
                 submit: EditorSubmit::McpAdd,
                 content
             } if content.contains("\"type\": \"http\"")
-                && content.contains("\"url\": \"https://docs.langchain.com/mcp\"")
+                && content.contains("\"url\": \"{env:MCP_BASE_URL}/mcp\"")
                 && !content.contains("\"command\"")
         ));
     }
@@ -12493,6 +12493,50 @@ mod tests {
                 if form.focus == FormFocus::Fields
                     && form.fields().get(form.field_idx) == Some(&McpAddField::Url)
                     && form.field_error(McpAddField::Url).is_some()
+        ));
+    }
+
+    #[test]
+    fn mcp_add_form_rejects_duplicate_id_and_focuses_the_field() {
+        let mut app = App::new(Some(AppType::Claude));
+        app.route = Route::Mcp;
+        app.focus = Focus::Content;
+
+        let mut data = UiData::default();
+        data.mcp.rows.push(super::super::data::McpRow {
+            id: "existing".to_string(),
+            server: crate::app_config::McpServer {
+                id: "existing".to_string(),
+                name: "Existing".to_string(),
+                server: json!({"command": "existing-command", "args": []}),
+                apps: crate::app_config::McpApps::default(),
+                description: None,
+                homepage: None,
+                docs: None,
+                tags: vec![],
+            }
+            .into(),
+        });
+        app.on_key(key(KeyCode::Char('a')), &data);
+
+        if let Some(FormState::McpAdd(form)) = app.form.as_mut() {
+            form.id.set("existing");
+            form.name.set("Duplicate");
+            form.command.set("new-command");
+        } else {
+            panic!("expected McpAdd form");
+        }
+
+        app.on_key(key(KeyCode::Esc), &data);
+        let action = app.on_key(key(KeyCode::Enter), &data);
+        assert!(matches!(action, Action::None));
+        assert!(matches!(
+            app.form,
+            Some(FormState::McpAdd(ref form))
+                if form.focus == FormFocus::Fields
+                    && form.fields().get(form.field_idx) == Some(&McpAddField::Id)
+                    && form.field_error(McpAddField::Id)
+                        == Some(texts::tui_toast_mcp_id_exists())
         ));
     }
 

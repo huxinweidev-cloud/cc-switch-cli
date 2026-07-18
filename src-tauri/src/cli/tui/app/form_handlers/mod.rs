@@ -112,7 +112,7 @@ impl App {
     pub(super) fn handle_form_save_shortcut(&mut self, data: &UiData) -> Action {
         match self.form.as_ref() {
             Some(FormState::ProviderAdd(_)) => self.build_provider_form_save_action(data),
-            Some(FormState::McpAdd(_)) => self.build_mcp_form_save_action(),
+            Some(FormState::McpAdd(_)) => self.build_mcp_form_save_action(data),
             Some(FormState::PromptMeta(_)) => self.build_prompt_meta_form_save_action(),
             Some(FormState::S3Sync(_)) => self.build_s3_sync_form_save_action(),
             Some(FormState::WebDavSync(_)) => self.build_webdav_sync_form_save_action(),

@@ -41,7 +41,7 @@ impl App {
         }
     }
 
-    pub(super) fn build_mcp_form_save_action(&mut self) -> Action {
+    pub(super) fn build_mcp_form_save_action(&mut self, data: &UiData) -> Action {
         let args_valid = match self.form.as_mut() {
             Some(FormState::McpAdd(mcp)) if !mcp.server_type.is_remote() => mcp.commit_args_input(),
             _ => true,
@@ -49,6 +49,16 @@ impl App {
         let validation = self.form.as_ref().and_then(|form| match form {
             FormState::McpAdd(mcp) if mcp.id.is_blank() => {
                 Some((McpAddField::Id, texts::tui_toast_mcp_missing_fields()))
+            }
+            FormState::McpAdd(mcp)
+                if matches!(mcp.mode, FormMode::Add)
+                    && data
+                        .mcp
+                        .rows
+                        .iter()
+                        .any(|row| row.id == mcp.id.value.trim()) =>
+            {
+                Some((McpAddField::Id, texts::tui_toast_mcp_id_exists()))
             }
             FormState::McpAdd(mcp) if mcp.name.is_blank() => {
                 Some((McpAddField::Name, texts::tui_toast_mcp_missing_fields()))
