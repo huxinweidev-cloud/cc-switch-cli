@@ -266,6 +266,16 @@ impl App {
                 let Some(row) = visible.get(self.provider_idx) else {
                     return Action::None;
                 };
+                if supports_failover_controls(&self.app_type) && data.proxy.auto_failover_enabled {
+                    self.push_toast(
+                        crate::t!(
+                            "Automatic failover is on. Routing follows queue priority; press f to manage it.",
+                            "自动故障转移已开启，路由由队列优先级决定；按 f 管理队列。"
+                        ),
+                        ToastKind::Info,
+                    );
+                    return Action::None;
+                }
                 self.provider_switch_action(row)
             }
             Intent::SetDefault => {
@@ -312,15 +322,13 @@ impl App {
                 if !supports_failover_controls(&self.app_type) {
                     return Action::None;
                 }
-                let selected = visible
+                let selected_provider_id = visible
                     .get(self.provider_idx)
-                    .and_then(|row| {
-                        failover_queue_rows(data)
-                            .iter()
-                            .position(|provider_row| provider_row.id == row.id)
-                    })
-                    .unwrap_or(0);
-                self.overlay = Overlay::FailoverQueueManager { selected };
+                    .map(|row| row.id.clone())
+                    .or_else(|| failover_queue_rows(data).first().map(|row| row.id.clone()));
+                self.overlay = Overlay::FailoverQueueManager {
+                    selected_provider_id,
+                };
                 Action::None
             }
             Intent::RefreshQuota => {

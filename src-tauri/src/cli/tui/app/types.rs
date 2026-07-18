@@ -3433,7 +3433,7 @@ pub enum Overlay {
         selected: usize,
     },
     FailoverQueueManager {
-        selected: usize,
+        selected_provider_id: Option<String>,
     },
     ClaudeModelPicker {
         selected: usize,

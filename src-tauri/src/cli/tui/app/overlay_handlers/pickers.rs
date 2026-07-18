@@ -1543,7 +1543,10 @@ impl App {
         key: KeyEvent,
         data: &UiData,
     ) -> Option<Action> {
-        let Overlay::FailoverQueueManager { selected } = &mut self.overlay else {
+        let Overlay::FailoverQueueManager {
+            selected_provider_id,
+        } = &mut self.overlay
+        else {
             return None;
         };
 
@@ -1559,44 +1562,70 @@ impl App {
             });
         }
 
-        *selected = (*selected).min(rows.len() - 1);
-        let selected_row = rows[*selected];
+        let selected = failover_queue_selected_index(data, selected_provider_id.as_deref())
+            .unwrap_or_default();
+        let selected_row = rows[selected];
+        let selected_id = selected_row.id.clone();
+        let selected_is_queued = selected_row.provider.in_failover_queue;
+        if selected_provider_id.as_deref() != Some(selected_id.as_str()) {
+            *selected_provider_id = Some(selected_id.clone());
+        }
 
         Some(match key.code {
             KeyCode::Esc => {
                 self.overlay = Overlay::None;
                 Action::None
             }
-            KeyCode::Up => {
-                *selected = selected.saturating_sub(1);
-                Action::None
-            }
-            KeyCode::Down => {
-                *selected = (*selected + 1).min(rows.len() - 1);
-                Action::None
-            }
-            KeyCode::Char('f') => self.request_auto_failover_toggle(data),
-            KeyCode::Char(' ') | KeyCode::Enter => Action::ProviderSetFailoverQueue {
-                id: selected_row.id.clone(),
-                enabled: !selected_row.provider.in_failover_queue,
-            },
-            // Reordering deliberately avoids lowercase `d`/`u`: `d` means
-            // delete on every list screen, and lowercase j/k are already
-            // vim-normalized into selection movement.
-            KeyCode::Char('<') | KeyCode::Char('K') => {
-                if selected_row.provider.in_failover_queue {
+            KeyCode::Up if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                if selected_is_queued {
                     Action::ProviderMoveFailoverQueue {
-                        id: selected_row.id.clone(),
+                        id: selected_id,
                         direction: MoveDirection::Up,
                     }
                 } else {
                     Action::None
                 }
             }
-            KeyCode::Char('>') | KeyCode::Char('J') => {
-                if selected_row.provider.in_failover_queue {
+            KeyCode::Down if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                if selected_is_queued {
                     Action::ProviderMoveFailoverQueue {
-                        id: selected_row.id.clone(),
+                        id: selected_id,
+                        direction: MoveDirection::Down,
+                    }
+                } else {
+                    Action::None
+                }
+            }
+            KeyCode::Up => {
+                *selected_provider_id = Some(rows[selected.saturating_sub(1)].id.clone());
+                Action::None
+            }
+            KeyCode::Down => {
+                *selected_provider_id = Some(rows[(selected + 1).min(rows.len() - 1)].id.clone());
+                Action::None
+            }
+            KeyCode::Char('f') => self.request_auto_failover_toggle(data),
+            KeyCode::Enter => Action::ProviderSetFailoverQueue {
+                id: selected_id,
+                enabled: !selected_is_queued,
+            },
+            // Uppercase J/K are secondary aliases documented only in help.
+            // Lowercase j/k remain normal list navigation after vim-key
+            // normalization, and d retains its usual delete meaning elsewhere.
+            KeyCode::Char('K') => {
+                if selected_is_queued {
+                    Action::ProviderMoveFailoverQueue {
+                        id: selected_id,
+                        direction: MoveDirection::Up,
+                    }
+                } else {
+                    Action::None
+                }
+            }
+            KeyCode::Char('J') => {
+                if selected_is_queued {
+                    Action::ProviderMoveFailoverQueue {
+                        id: selected_id,
                         direction: MoveDirection::Down,
                     }
                 } else {

@@ -24,9 +24,10 @@ use crate::{
         },
         data::{
             ConfigSnapshot, McpSnapshot, ModelPricingRow, ModelPricingSnapshot,
-            OpenClawWorkspaceSnapshot, PromptsSnapshot, ProviderRow, ProvidersSnapshot,
-            ProxySnapshot, SkillsSnapshot, UiData, UsageLogRow, UsageProviderStatsRow,
-            UsageRangePreset, UsageSnapshot, UsageSummarySnapshot, UsageTrendBucket,
+            OpenClawWorkspaceSnapshot, PromptsSnapshot, ProviderHealthSnapshot, ProviderRow,
+            ProvidersSnapshot, ProxySnapshot, ProxyTargetSnapshot, SkillsSnapshot, UiData,
+            UsageLogRow, UsageProviderStatsRow, UsageRangePreset, UsageSnapshot,
+            UsageSummarySnapshot, UsageTrendBucket,
         },
         form::{
             ClaudeModelPickerColumn, FormFocus, FormState, PromptMetaFormState, ProviderAddField,
@@ -5203,6 +5204,7 @@ fn home_shows_proxy_dashboard_when_current_app_proxy_is_on() {
     data.proxy.estimated_output_tokens_total = 4_800;
     data.proxy.current_provider = Some("Claude Test Provider".to_string());
     data.proxy.current_app_target = Some(super::super::data::ProxyTargetSnapshot {
+        provider_id: "claude-test".to_string(),
         provider_name: "Claude Test Provider".to_string(),
     });
     data.proxy.last_error = Some("last upstream failure".to_string());
@@ -5443,6 +5445,7 @@ fn home_proxy_dashboard_shows_idle_baseline_without_header_copy() {
     active.proxy.estimated_output_tokens_total = 0;
     active.proxy.default_cost_multiplier = Some("1.25".to_string());
     active.proxy.current_app_target = Some(super::super::data::ProxyTargetSnapshot {
+        provider_id: "claude-test".to_string(),
         provider_name: "Claude Test Provider".to_string(),
     });
 
@@ -5495,6 +5498,7 @@ fn home_proxy_dashboard_stacks_text_on_narrow_terminals() {
     data.proxy.success_rate = Some(91.7);
     data.proxy.uptime_seconds = 3661;
     data.proxy.current_app_target = Some(super::super::data::ProxyTargetSnapshot {
+        provider_id: "claude-test".to_string(),
         provider_name: "Claude Test Provider With A Very Long Name".to_string(),
     });
     data.proxy.last_error = Some(
@@ -5530,6 +5534,7 @@ fn transition_effect_changes_dashboard_cells_during_proxy_start() {
     on.proxy.claude_takeover = true;
     on.proxy.default_cost_multiplier = None;
     on.proxy.current_app_target = Some(super::super::data::ProxyTargetSnapshot {
+        provider_id: "p1".to_string(),
         provider_name: "Demo Provider".to_string(),
     });
 
@@ -5685,6 +5690,7 @@ fn home_proxy_dashboard_hides_internal_target_identifiers() {
     data.proxy.listen_address = "127.0.0.1".to_string();
     data.proxy.listen_port = 3456;
     data.proxy.current_app_target = Some(super::super::data::ProxyTargetSnapshot {
+        provider_id: "claude-test".to_string(),
         provider_name: "Claude Test Provider".to_string(),
     });
 
@@ -11398,7 +11404,7 @@ fn openclaw_provider_list_key_bar_uses_common_provider_actions() {
 }
 
 #[test]
-fn failover_provider_list_key_bar_hides_move_hint_and_keeps_common_switch_hint() {
+fn failover_provider_list_key_bar_hides_switch_while_queue_controls_routing() {
     let _lock = lock_env();
     let _no_color = EnvGuard::remove("NO_COLOR");
 
@@ -11415,7 +11421,7 @@ fn failover_provider_list_key_bar_hides_move_hint_and_keeps_common_switch_hint()
     data.proxy.auto_failover_enabled = true;
     let enabled_text = all_text(&render_with_size(&app, &data, 180, 40));
     let enabled_keys = line_with(&enabled_text, "manage failover");
-    assert!(enabled_keys.contains("Space"), "{enabled_keys}");
+    assert!(!enabled_keys.contains("Space"), "{enabled_keys}");
     assert!(!enabled_keys.contains("</>"), "{enabled_keys}");
 }
 
@@ -11485,18 +11491,23 @@ fn failover_queue_overlay_renders_enabled_state_and_toggle_hint() {
     let mut app = App::new(Some(AppType::Claude));
     app.route = Route::Providers;
     app.focus = Focus::Content;
-    app.overlay = Overlay::FailoverQueueManager { selected: 0 };
+    app.overlay = Overlay::FailoverQueueManager {
+        selected_provider_id: Some("p1".to_string()),
+    };
     let mut data = minimal_data(&app.app_type);
     data.proxy.auto_failover_enabled = true;
 
     let all = all_text(&render(&app, &data));
 
-    assert!(all.contains("Automatic failover: enabled"), "{all}");
+    assert!(all.contains("Auto: on"), "{all}");
     assert!(all.contains("f auto failover"), "{all}");
-    // The reorder hint must survive the width-degrade logic in English.
-    assert!(all.contains("</>/K/J move"), "{all}");
+    assert!(all.contains("Enter add/remove"), "{all}");
+    assert!(all.contains("Ctrl+↑↓ move"), "{all}");
+    assert!(!all.contains("K/J move"), "{all}");
     assert!(
-        all.contains("Auto failover uses only checked providers"),
+        all.lines().any(|line| line.contains("Demo Provider")
+            && line.contains("not queued")
+            && !line.contains("https://example.com")),
         "{all}"
     );
 }
@@ -11509,15 +11520,110 @@ fn failover_queue_overlay_renders_disabled_state_and_toggle_hint() {
     let mut app = App::new(Some(AppType::Claude));
     app.route = Route::Providers;
     app.focus = Focus::Content;
-    app.overlay = Overlay::FailoverQueueManager { selected: 0 };
+    app.overlay = Overlay::FailoverQueueManager {
+        selected_provider_id: Some("p1".to_string()),
+    };
     let mut data = minimal_data(&app.app_type);
     data.proxy.auto_failover_enabled = false;
 
     let all = all_text(&render(&app, &data));
 
-    assert!(all.contains("Automatic failover: disabled"), "{all}");
+    assert!(all.contains("Auto: off"), "{all}");
     assert!(all.contains("f auto failover"), "{all}");
-    assert!(all.contains("Direct provider selection is used"), "{all}");
+    assert!(all.contains("not queued"), "{all}");
+}
+
+#[test]
+fn failover_queue_overlay_renders_active_target_and_honest_health_states() {
+    let _lock = lock_env();
+    let _no_color = EnvGuard::remove("NO_COLOR");
+
+    let mut app = App::new(Some(AppType::Claude));
+    app.route = Route::Providers;
+    app.focus = Focus::Content;
+    app.overlay = Overlay::FailoverQueueManager {
+        selected_provider_id: Some("active".to_string()),
+    };
+    let mut data = minimal_data(&app.app_type);
+    data.proxy.auto_failover_enabled = true;
+    data.providers.rows = vec![
+        failover_provider_row("active", "Active Provider", false, true, Some(0)),
+        failover_provider_row("unknown", "Unknown Provider", false, true, Some(1)),
+        failover_provider_row("normal", "Normal Provider", false, true, Some(2)),
+        failover_provider_row("warning", "Warning Provider", false, true, Some(3)),
+        failover_provider_row("unhealthy", "Unhealthy Provider", false, true, Some(4)),
+        failover_provider_row("unused", "Unused Provider", false, false, None),
+    ];
+    data.proxy.current_app_target = Some(ProxyTargetSnapshot {
+        provider_id: "active".to_string(),
+        provider_name: "Stale Display Name".to_string(),
+    });
+    std::sync::Arc::make_mut(&mut data.proxy.provider_health).insert(
+        "normal".to_string(),
+        ProviderHealthSnapshot {
+            is_healthy: true,
+            consecutive_failures: 0,
+        },
+    );
+    std::sync::Arc::make_mut(&mut data.proxy.provider_health).insert(
+        "warning".to_string(),
+        ProviderHealthSnapshot {
+            is_healthy: true,
+            consecutive_failures: 2,
+        },
+    );
+    std::sync::Arc::make_mut(&mut data.proxy.provider_health).insert(
+        "unhealthy".to_string(),
+        ProviderHealthSnapshot {
+            is_healthy: false,
+            consecutive_failures: 4,
+        },
+    );
+
+    let all = all_text(&render_with_size(&app, &data, 140, 36));
+
+    assert!(all.contains("Active target: P1 Active Provider"), "{all}");
+    assert!(all.contains("target"), "{all}");
+    assert!(all.contains("no record"), "{all}");
+    assert!(all.contains("normal"), "{all}");
+    assert!(all.contains("failures (2)"), "{all}");
+    assert!(all.contains("unhealthy (4)"), "{all}");
+    assert!(all.contains("not queued"), "{all}");
+}
+
+#[test]
+fn failover_queue_overlay_keeps_priority_name_and_status_on_narrow_terminals() {
+    let _lock = lock_env();
+    let _no_color = EnvGuard::remove("NO_COLOR");
+
+    let mut app = App::new(Some(AppType::Claude));
+    app.route = Route::Providers;
+    app.focus = Focus::Content;
+    app.overlay = Overlay::FailoverQueueManager {
+        selected_provider_id: Some("p1".to_string()),
+    };
+    let mut data = minimal_data(&app.app_type);
+    data.providers.rows[0].provider.in_failover_queue = true;
+    data.providers.rows[0].provider.sort_index = Some(0);
+    std::sync::Arc::make_mut(&mut data.proxy.provider_health).insert(
+        "p1".to_string(),
+        ProviderHealthSnapshot {
+            is_healthy: false,
+            consecutive_failures: 4,
+        },
+    );
+
+    let all = all_text(&render_with_size(&app, &data, 64, 22));
+
+    assert!(all.contains("P1"), "{all}");
+    assert!(all.contains("Demo"), "{all}");
+    assert!(all.contains("unhealthy"), "{all}");
+    assert!(
+        all.lines().any(|line| line.contains("Demo")
+            && line.contains("unhealthy")
+            && !line.contains("https://example.com")),
+        "{all}"
+    );
 }
 
 #[test]

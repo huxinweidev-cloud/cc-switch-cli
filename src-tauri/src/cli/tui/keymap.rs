@@ -124,7 +124,7 @@ pub(crate) mod providers {
             keys: &[KeyCode::Char(' '), KeyCode::Char('s')],
             intent: Intent::Switch,
             label: switch_label,
-            shown: any_visible,
+            shown: switch_shown,
         },
         Binding {
             display: "a",
@@ -207,6 +207,11 @@ pub(crate) mod providers {
 
     fn any_visible(app: &App, data: &UiData) -> bool {
         selected_row(app, data).is_some()
+    }
+
+    fn switch_shown(app: &App, data: &UiData) -> bool {
+        any_visible(app, data)
+            && (!supports_failover_controls(&app.app_type) || !data.proxy.auto_failover_enabled)
     }
 
     fn selected_editable(app: &App, data: &UiData) -> bool {

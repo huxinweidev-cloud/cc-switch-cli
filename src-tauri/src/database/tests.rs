@@ -11,6 +11,59 @@ use rusqlite::{params, Connection};
 use serde_json::json;
 use std::{collections::HashMap, ffi::OsString, path::Path};
 
+#[tokio::test]
+async fn provider_health_batch_query_returns_only_existing_records_for_requested_app() {
+    let db = Database::memory().expect("create memory database");
+    let claude = Provider::with_id(
+        "shared".to_string(),
+        "Claude Provider".to_string(),
+        json!({}),
+        None,
+    );
+    let codex = Provider::with_id(
+        "shared".to_string(),
+        "Codex Provider".to_string(),
+        json!({}),
+        None,
+    );
+    let unobserved = Provider::with_id(
+        "unobserved".to_string(),
+        "No Health Record".to_string(),
+        json!({}),
+        None,
+    );
+    db.save_provider("claude", &claude)
+        .expect("save claude provider");
+    db.save_provider("codex", &codex)
+        .expect("save codex provider");
+    db.save_provider("claude", &unobserved)
+        .expect("save provider without health record");
+
+    db.update_provider_health_with_threshold("shared", "claude", false, None, 4)
+        .await
+        .expect("record claude failure");
+    db.update_provider_health_with_threshold("shared", "codex", true, None, 4)
+        .await
+        .expect("record codex success");
+
+    let claude_health = db
+        .list_provider_health_for_app("claude")
+        .await
+        .expect("load claude health");
+    assert_eq!(claude_health.len(), 1);
+    assert_eq!(claude_health[0].provider_id, "shared");
+    assert_eq!(claude_health[0].app_type, "claude");
+    assert_eq!(claude_health[0].consecutive_failures, 1);
+
+    let codex_health = db
+        .list_provider_health_for_app("codex")
+        .await
+        .expect("load codex health");
+    assert_eq!(codex_health.len(), 1);
+    assert_eq!(codex_health[0].app_type, "codex");
+    assert_eq!(codex_health[0].consecutive_failures, 0);
+}
+
 struct ConfigDirEnvGuard {
     original: Option<OsString>,
 }

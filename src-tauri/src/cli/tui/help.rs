@@ -50,6 +50,7 @@ impl HelpContent {
 enum HelpTarget {
     Global,
     Sessions,
+    FailoverQueue,
     ProviderTemplate,
     ProviderField {
         app_type: AppType,
@@ -111,6 +112,7 @@ fn current_help_target(app: &App) -> HelpTarget {
             Overlay::ManagedAccountPicker { .. } | Overlay::ManagedAccountActionPicker { .. } => {
                 provider_field_overlay_target(app, ProviderAddField::CodexOAuthAccount)
             }
+            Overlay::FailoverQueueManager { .. } => HelpTarget::FailoverQueue,
             Overlay::SessionProjectPicker(_) => HelpTarget::Sessions,
             Overlay::S3PresetPicker { .. } => HelpTarget::S3Field {
                 field: S3SyncField::Preset,
@@ -258,6 +260,13 @@ fn help_for_target(target: HelpTarget, app: &App, data: &UiData) -> HelpContent 
             help_lines(
                 "会话始终只显示当前应用，结果由项目范围 × / 搜索共同决定。\n←/→ 切换列表和详情，h/l 是备用键；↑/↓ 逐项移动，PgUp/PgDn 按页移动。p 打开项目选择器；Home/End 跳到首尾，Shift+←/→ 查看完整目录，Shift+Home/End 直达目录两端。\n“未知目录”位于项目列表末尾，只包含缺少项目目录的旧会话；精确项目按词法规范化后的完整目录匹配。",
                 "Sessions always show the current app; results combine Project scope × / Search.\nUse ←/→ to switch between the list and details; h/l are aliases. Use ↑/↓ to move one item and PgUp/PgDn to move by a page. Press p to choose a project; Home/End jumps to either list end, Shift+←/→ reveals the complete directory, and Shift+Home/End jumps to either path end.\nUnknown directory is last and contains only legacy sessions without a project directory; exact projects match the complete lexically normalized directory.",
+            ),
+        ),
+        HelpTarget::FailoverQueue => HelpContent::new(
+            crate::t!("Failover Queue", "故障转移队列"),
+            help_lines(
+                "Enter 将当前供应商加入或移出队列。Ctrl+↑/↓ 调整已加入供应商的优先级；J/K 是移动的备用键。按 f 开关自动故障转移。\nP1、P2… 就是实际尝试顺序。开启自动故障转移后，供应商主页的普通切换会停用，由此队列控制路由。\n“当前目标”来自正在运行的代理。健康状态来自历史请求结果：“无记录”不代表健康检查失败，“失败”是尚未达到不健康阈值的连续失败；这里不显示实时断路器状态。",
+                "Press Enter to add or remove the focused provider. Ctrl+Up/Down changes the priority of queued providers; J/K are secondary move aliases. Press f to toggle automatic failover.\nP1, P2, and so on are the actual attempt order. While automatic failover is on, ordinary switching on the Providers page is disabled and this queue controls routing.\nActive target comes from the running proxy. Health is passive history from past request attempts: no record is not a failed health check, and failures means consecutive failures below the unhealthy threshold. This view does not claim to show the live circuit-breaker state.",
             ),
         ),
         HelpTarget::ProviderTemplate => HelpContent::new(
