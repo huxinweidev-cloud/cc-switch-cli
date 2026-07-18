@@ -50,15 +50,15 @@ pub(crate) fn render_overlay(
             provider_id,
             *selected,
         ),
-        Overlay::FailoverQueueManager { selected } => {
-            super::pickers::render_failover_queue_manager_overlay(
-                frame,
-                data,
-                content_area,
-                theme,
-                *selected,
-            )
-        }
+        Overlay::FailoverQueueManager {
+            selected_provider_id,
+        } => super::pickers::render_failover_queue_manager_overlay(
+            frame,
+            data,
+            content_area,
+            theme,
+            selected_provider_id.as_deref(),
+        ),
         Overlay::ClaudeModelPicker {
             selected,
             column,
@@ -88,6 +88,15 @@ pub(crate) fn render_overlay(
             theme,
             *selected,
         ),
+        Overlay::ExternalEditorPicker { selected, editors } => {
+            super::pickers::render_external_editor_picker_overlay(
+                frame,
+                content_area,
+                theme,
+                *selected,
+                editors,
+            )
+        }
         Overlay::UsageQueryTemplatePicker { selected } => {
             super::pickers::render_usage_query_template_picker_overlay(
                 frame,

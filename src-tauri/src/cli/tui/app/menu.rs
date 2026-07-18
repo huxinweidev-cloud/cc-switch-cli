@@ -371,7 +371,8 @@ impl App {
     }
 
     pub(crate) fn should_poll_proxy_activity(&self) -> bool {
-        matches!(self.route, Route::Main)
+        (matches!(self.route, Route::Main)
+            || matches!(self.overlay, Overlay::FailoverQueueManager { .. }))
             && self.tick.is_multiple_of(PROXY_ACTIVITY_POLL_INTERVAL_TICKS)
     }
 

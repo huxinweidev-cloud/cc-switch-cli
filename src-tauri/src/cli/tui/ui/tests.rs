@@ -20,13 +20,14 @@ use crate::{
         app,
         app::{
             Action, App, ConfigItem, ConfirmAction, ConfirmOverlay, EditorKind, EditorSubmit,
-            Focus, Overlay, TextInputState, TextSubmit, UsagePane,
+            Focus, Overlay, SettingsItem, TextInputState, TextSubmit, UsagePane,
         },
         data::{
             ConfigSnapshot, McpSnapshot, ModelPricingRow, ModelPricingSnapshot,
-            OpenClawWorkspaceSnapshot, PromptsSnapshot, ProviderRow, ProvidersSnapshot,
-            ProxySnapshot, SkillsSnapshot, UiData, UsageLogRow, UsageProviderStatsRow,
-            UsageRangePreset, UsageSnapshot, UsageSummarySnapshot, UsageTrendBucket,
+            OpenClawWorkspaceSnapshot, PromptsSnapshot, ProviderHealthSnapshot, ProviderRow,
+            ProvidersSnapshot, ProxySnapshot, ProxyTargetSnapshot, SkillsSnapshot, UiData,
+            UsageLogRow, UsageProviderStatsRow, UsageRangePreset, UsageSnapshot,
+            UsageSummarySnapshot, UsageTrendBucket,
         },
         form::{
             ClaudeModelPickerColumn, FormFocus, FormState, PromptMetaFormState, ProviderAddField,
@@ -3322,6 +3323,13 @@ fn line_with<'a>(text: &'a str, needle: &str) -> &'a str {
         .unwrap_or_else(|| panic!("missing `{needle}` in:\n{text}"))
 }
 
+fn contains_continuous_divider_row(line: &str) -> bool {
+    line.split('│').any(|segment| {
+        let divider = segment.trim();
+        divider.contains("────") && divider.chars().all(|ch| ch == '─')
+    })
+}
+
 fn column_in_line(line: &str, needle: &str) -> usize {
     line.find(needle)
         .unwrap_or_else(|| panic!("missing `{needle}` in line:\n{line}"))
@@ -3954,6 +3962,101 @@ fn settings_page_shows_openclaw_config_dir_override_value() {
 }
 
 #[test]
+#[serial(home_settings)]
+fn settings_page_shows_preferred_editor_and_truncates_long_command() {
+    let _lock = lock_env();
+    let _lang = use_test_language(Language::English);
+    let _no_color = EnvGuard::remove("NO_COLOR");
+    let temp_home = TempDir::new().expect("create temp home");
+    let _home = SettingsEnvGuard::set_home(temp_home.path());
+    let command = format!(
+        "code --wait --reuse-window --profile {}UNSEEN_TAIL",
+        "x".repeat(160)
+    );
+    crate::settings::set_preferred_editor(Some(command)).expect("save preferred editor");
+
+    let mut app = App::new(Some(AppType::Claude));
+    app.route = Route::Settings;
+    app.focus = Focus::Content;
+
+    let buf = render_with_size(&app, &minimal_data(&app.app_type), 72, 32);
+    let editor_line = (0..buf.area.height)
+        .map(|y| line_at(&buf, y))
+        .find(|line| line.contains("External Editor"))
+        .expect("settings should render the External Editor row");
+
+    assert!(editor_line.contains('…'), "{editor_line}");
+    assert!(!editor_line.contains("UNSEEN_TAIL"), "{editor_line}");
+}
+
+#[test]
+#[serial(home_settings)]
+fn settings_page_shows_external_editor_as_not_set_by_default() {
+    let _lock = lock_env();
+    let _lang = use_test_language(Language::English);
+    let _no_color = EnvGuard::remove("NO_COLOR");
+    let temp_home = TempDir::new().expect("create temp home");
+    let _home = SettingsEnvGuard::set_home(temp_home.path());
+
+    let mut app = App::new(Some(AppType::Claude));
+    app.route = Route::Settings;
+    app.focus = Focus::Content;
+
+    let buf = render_with_size(&app, &minimal_data(&app.app_type), 96, 32);
+    let editor_line = (0..buf.area.height)
+        .map(|y| line_at(&buf, y))
+        .find(|line| line.contains("External Editor"))
+        .expect("settings should render the External Editor row");
+
+    assert!(editor_line.contains("Not set"), "{editor_line}");
+    assert!(!editor_line.contains("Automatic"), "{editor_line}");
+}
+
+#[test]
+#[serial(home_settings)]
+fn external_editor_picker_renders_detected_and_fallback_options() {
+    let _lock = lock_env();
+    let _lang = use_test_language(Language::English);
+    let _no_color = EnvGuard::set("NO_COLOR", "1");
+    let temp_home = TempDir::new().expect("create temp home");
+    let _home = SettingsEnvGuard::set_home(temp_home.path());
+    crate::settings::set_preferred_editor(Some("code --wait".to_string()))
+        .expect("save preferred editor");
+
+    let mut app = App::new(Some(AppType::Claude));
+    app.route = Route::Settings;
+    app.focus = Focus::Content;
+    app.overlay = Overlay::ExternalEditorPicker {
+        selected: 0,
+        editors: vec![
+            crate::cli::editor::DetectedEditor {
+                label: "Visual Studio Code".to_string(),
+                command: "code --wait".to_string(),
+            },
+            crate::cli::editor::DetectedEditor {
+                label: "Neovim".to_string(),
+                command: "nvim".to_string(),
+            },
+        ],
+    };
+
+    let all = all_text(&render_with_size(
+        &app,
+        &minimal_data(&app.app_type),
+        100,
+        28,
+    ));
+
+    assert!(all.contains("External Editor"), "{all}");
+    assert!(!all.contains("Automatic"), "{all}");
+    assert!(all.contains("Visual Studio Code  ·  code --wait"), "{all}");
+    assert!(all.contains("Neovim  ·  nvim"), "{all}");
+    assert!(all.contains("Custom command…"), "{all}");
+    assert!(all.contains("Enter=apply"), "{all}");
+    assert!(!all.contains("j/k"), "{all}");
+}
+
+#[test]
 fn settings_page_shows_managed_accounts_summary() {
     let _lock = lock_env();
     let _lang = use_test_language(Language::English);
@@ -3971,6 +4074,202 @@ fn settings_page_shows_managed_accounts_summary() {
         "{all}"
     );
     assert!(all.contains("default@example.com"), "{all}");
+}
+
+#[test]
+fn configuration_page_groups_actions_with_three_unlabeled_dividers() {
+    let _lock = lock_env();
+    let _lang = use_test_language(Language::English);
+    let _no_color = EnvGuard::remove("NO_COLOR");
+
+    let mut app = App::new(Some(AppType::Claude));
+    app.route = Route::Config;
+    app.focus = Focus::Content;
+
+    let buf = render_with_size(&app, &minimal_data(&app.app_type), 100, 32);
+    let content = content_text(&app, &buf);
+    let dividers = content
+        .lines()
+        .enumerate()
+        .filter_map(|(idx, line)| contains_continuous_divider_row(line).then_some(idx))
+        .collect::<Vec<_>>();
+    let path = line_index(&content, texts::tui_config_item_show_path());
+    let show_full = line_index(&content, texts::tui_config_item_show_full());
+    let export = line_index(&content, texts::tui_config_item_export());
+    let validate = line_index(&content, texts::tui_config_item_validate());
+    let snippet = line_index(&content, texts::tui_config_item_common_snippet());
+    let cloud_sync = line_index(&content, texts::tui_config_item_cloud_sync());
+    let reset = line_index(&content, texts::tui_config_item_reset());
+
+    assert_eq!(dividers.len(), 3, "{content}");
+    assert!(path < show_full && show_full < dividers[0], "{content}");
+    assert!(dividers[0] < export && validate < dividers[1], "{content}");
+    assert!(
+        dividers[1] < snippet && cloud_sync < dividers[2],
+        "{content}"
+    );
+    assert!(dividers[2] < reset, "{content}");
+}
+
+#[test]
+fn configuration_page_hides_dividers_while_filtering() {
+    let _lock = lock_env();
+    let _lang = use_test_language(Language::English);
+    let _no_color = EnvGuard::remove("NO_COLOR");
+
+    let mut app = App::new(Some(AppType::Claude));
+    app.route = Route::Config;
+    app.focus = Focus::Content;
+    app.filter.input.set("config".to_string());
+
+    let content = content_text(
+        &app,
+        &render_with_size(&app, &minimal_data(&app.app_type), 80, 32),
+    );
+
+    assert!(
+        content.contains(texts::tui_config_item_show_full()),
+        "{content}"
+    );
+    assert!(
+        content.contains(texts::tui_config_item_common_snippet()),
+        "{content}"
+    );
+    assert!(
+        content.contains(texts::tui_config_item_reset()),
+        "{content}"
+    );
+    assert!(
+        !content.lines().any(contains_continuous_divider_row),
+        "filtered results should not contain dividers:\n{content}"
+    );
+}
+
+#[test]
+fn configuration_dividers_do_not_shift_narrow_terminal_selection() {
+    let _lock = lock_env();
+    let _lang = use_test_language(Language::English);
+    let _no_color = EnvGuard::set("NO_COLOR", "1");
+
+    let mut app = App::new(Some(AppType::Claude));
+    app.route = Route::Config;
+    app.focus = Focus::Content;
+    app.config_idx = super::config_items_filtered(&app)
+        .iter()
+        .position(|item| matches!(item, ConfigItem::Reset))
+        .expect("Reset missing from visible config items");
+
+    let buf = render_with_size(&app, &minimal_data(&app.app_type), 50, 18);
+    let reset_y = (0..buf.area.height)
+        .find(|y| line_at(&buf, *y).contains(texts::tui_config_item_reset()))
+        .unwrap_or_else(|| panic!("Reset should scroll into view:\n{}", all_text(&buf)));
+    let divider_y = (0..buf.area.height)
+        .filter(|y| contains_continuous_divider_row(&line_at(&buf, *y)))
+        .next_back()
+        .unwrap_or_else(|| panic!("last divider should stay visible:\n{}", all_text(&buf)));
+
+    assert!(
+        (0..buf.area.width).any(|x| buf[(x, reset_y)].modifier.contains(Modifier::REVERSED)),
+        "Reset should own the highlight:\n{}",
+        all_text(&buf)
+    );
+    assert!(
+        (0..buf.area.width).all(|x| !buf[(x, divider_y)].modifier.contains(Modifier::REVERSED)),
+        "divider rows must not be selectable:\n{}",
+        all_text(&buf)
+    );
+}
+
+#[test]
+fn settings_page_groups_items_with_unlabeled_dividers() {
+    let _lock = lock_env();
+    let _lang = use_test_language(Language::English);
+    let _no_color = EnvGuard::remove("NO_COLOR");
+
+    let mut app = App::new(Some(AppType::Claude));
+    app.route = Route::Settings;
+    app.focus = Focus::Content;
+
+    let buf = render_with_size(&app, &minimal_data(&app.app_type), 100, 32);
+    let content = content_text(&app, &buf);
+    let dividers = content
+        .lines()
+        .enumerate()
+        .filter_map(|(idx, line)| contains_continuous_divider_row(line).then_some(idx))
+        .collect::<Vec<_>>();
+    let managed_accounts = line_index(&content, texts::tui_settings_managed_accounts_title());
+    let editor = line_index(&content, texts::tui_settings_preferred_editor_label());
+    let visible_apps = line_index(&content, texts::tui_settings_visible_apps_mode_label());
+    let openclaw_dir = line_index(&content, texts::tui_settings_openclaw_config_dir_label());
+    let claude_integration = line_index(&content, texts::enable_claude_plugin_integration_label());
+    let codex_history = line_index(&content, texts::codex_unified_session_history_label());
+    let proxy = line_index(&content, texts::tui_config_item_proxy());
+
+    assert_eq!(dividers.len(), 3, "{content}");
+    assert!(
+        managed_accounts < editor && editor < dividers[0],
+        "{content}"
+    );
+    assert!(
+        dividers[0] < visible_apps && openclaw_dir < dividers[1],
+        "{content}"
+    );
+    assert!(
+        dividers[1] < claude_integration && codex_history < dividers[2],
+        "{content}"
+    );
+    assert!(dividers[2] < proxy, "{content}");
+    assert!(
+        !content.lines().any(|line| {
+            line.contains(texts::tui_settings_header_setting())
+                && line.contains(texts::tui_settings_header_value())
+        }),
+        "table header should be absent:\n{content}"
+    );
+    for label in ["General", "Applications", "Integrations", "System"] {
+        assert!(!content.contains(label), "unexpected {label}:\n{content}");
+    }
+}
+
+#[test]
+fn settings_section_rows_do_not_shift_selection_or_break_narrow_scrolling() {
+    let _lock = lock_env();
+    let _lang = use_test_language(Language::English);
+    let _no_color = EnvGuard::set("NO_COLOR", "1");
+
+    let mut app = App::new(Some(AppType::Claude));
+    app.route = Route::Settings;
+    app.focus = Focus::Content;
+    app.settings_idx = SettingsItem::ALL
+        .iter()
+        .position(|item| matches!(item, SettingsItem::CheckForUpdates))
+        .expect("CheckForUpdates missing from SettingsItem::ALL");
+
+    let buf = render_with_size(&app, &minimal_data(&app.app_type), 50, 18);
+    let update_value = format!("v{}", env!("CARGO_PKG_VERSION"));
+    let selected_y = (0..buf.area.height)
+        .find(|y| line_at(&buf, *y).contains(&update_value))
+        .unwrap_or_else(|| {
+            panic!(
+                "selected setting should scroll into view:\n{}",
+                all_text(&buf)
+            )
+        });
+    let divider_y = (0..buf.area.height)
+        .filter(|y| contains_continuous_divider_row(&line_at(&buf, *y)))
+        .next_back()
+        .unwrap_or_else(|| panic!("last divider should stay visible:\n{}", all_text(&buf)));
+
+    assert!(
+        (0..buf.area.width).any(|x| buf[(x, selected_y)].modifier.contains(Modifier::REVERSED)),
+        "selected setting should own the highlight:\n{}",
+        all_text(&buf)
+    );
+    assert!(
+        (0..buf.area.width).all(|x| !buf[(x, divider_y)].modifier.contains(Modifier::REVERSED)),
+        "section rows must not be selectable:\n{}",
+        all_text(&buf)
+    );
 }
 
 #[test]
@@ -5203,6 +5502,7 @@ fn home_shows_proxy_dashboard_when_current_app_proxy_is_on() {
     data.proxy.estimated_output_tokens_total = 4_800;
     data.proxy.current_provider = Some("Claude Test Provider".to_string());
     data.proxy.current_app_target = Some(super::super::data::ProxyTargetSnapshot {
+        provider_id: "claude-test".to_string(),
         provider_name: "Claude Test Provider".to_string(),
     });
     data.proxy.last_error = Some("last upstream failure".to_string());
@@ -5443,6 +5743,7 @@ fn home_proxy_dashboard_shows_idle_baseline_without_header_copy() {
     active.proxy.estimated_output_tokens_total = 0;
     active.proxy.default_cost_multiplier = Some("1.25".to_string());
     active.proxy.current_app_target = Some(super::super::data::ProxyTargetSnapshot {
+        provider_id: "claude-test".to_string(),
         provider_name: "Claude Test Provider".to_string(),
     });
 
@@ -5495,6 +5796,7 @@ fn home_proxy_dashboard_stacks_text_on_narrow_terminals() {
     data.proxy.success_rate = Some(91.7);
     data.proxy.uptime_seconds = 3661;
     data.proxy.current_app_target = Some(super::super::data::ProxyTargetSnapshot {
+        provider_id: "claude-test".to_string(),
         provider_name: "Claude Test Provider With A Very Long Name".to_string(),
     });
     data.proxy.last_error = Some(
@@ -5530,6 +5832,7 @@ fn transition_effect_changes_dashboard_cells_during_proxy_start() {
     on.proxy.claude_takeover = true;
     on.proxy.default_cost_multiplier = None;
     on.proxy.current_app_target = Some(super::super::data::ProxyTargetSnapshot {
+        provider_id: "p1".to_string(),
         provider_name: "Demo Provider".to_string(),
     });
 
@@ -5685,6 +5988,7 @@ fn home_proxy_dashboard_hides_internal_target_identifiers() {
     data.proxy.listen_address = "127.0.0.1".to_string();
     data.proxy.listen_port = 3456;
     data.proxy.current_app_target = Some(super::super::data::ProxyTargetSnapshot {
+        provider_id: "claude-test".to_string(),
         provider_name: "Claude Test Provider".to_string(),
     });
 
@@ -11398,7 +11702,7 @@ fn openclaw_provider_list_key_bar_uses_common_provider_actions() {
 }
 
 #[test]
-fn failover_provider_list_key_bar_hides_move_hint_and_keeps_common_switch_hint() {
+fn failover_provider_list_key_bar_hides_switch_while_queue_controls_routing() {
     let _lock = lock_env();
     let _no_color = EnvGuard::remove("NO_COLOR");
 
@@ -11415,7 +11719,7 @@ fn failover_provider_list_key_bar_hides_move_hint_and_keeps_common_switch_hint()
     data.proxy.auto_failover_enabled = true;
     let enabled_text = all_text(&render_with_size(&app, &data, 180, 40));
     let enabled_keys = line_with(&enabled_text, "manage failover");
-    assert!(enabled_keys.contains("Space"), "{enabled_keys}");
+    assert!(!enabled_keys.contains("Space"), "{enabled_keys}");
     assert!(!enabled_keys.contains("</>"), "{enabled_keys}");
 }
 
@@ -11485,18 +11789,23 @@ fn failover_queue_overlay_renders_enabled_state_and_toggle_hint() {
     let mut app = App::new(Some(AppType::Claude));
     app.route = Route::Providers;
     app.focus = Focus::Content;
-    app.overlay = Overlay::FailoverQueueManager { selected: 0 };
+    app.overlay = Overlay::FailoverQueueManager {
+        selected_provider_id: Some("p1".to_string()),
+    };
     let mut data = minimal_data(&app.app_type);
     data.proxy.auto_failover_enabled = true;
 
     let all = all_text(&render(&app, &data));
 
-    assert!(all.contains("Automatic failover: enabled"), "{all}");
+    assert!(all.contains("Auto: on"), "{all}");
     assert!(all.contains("f auto failover"), "{all}");
-    // The reorder hint must survive the width-degrade logic in English.
-    assert!(all.contains("</>/K/J move"), "{all}");
+    assert!(all.contains("Enter add/remove"), "{all}");
+    assert!(all.contains("Ctrl+↑↓ move"), "{all}");
+    assert!(!all.contains("K/J move"), "{all}");
     assert!(
-        all.contains("Auto failover uses only checked providers"),
+        all.lines().any(|line| line.contains("Demo Provider")
+            && line.contains("not queued")
+            && !line.contains("https://example.com")),
         "{all}"
     );
 }
@@ -11509,15 +11818,110 @@ fn failover_queue_overlay_renders_disabled_state_and_toggle_hint() {
     let mut app = App::new(Some(AppType::Claude));
     app.route = Route::Providers;
     app.focus = Focus::Content;
-    app.overlay = Overlay::FailoverQueueManager { selected: 0 };
+    app.overlay = Overlay::FailoverQueueManager {
+        selected_provider_id: Some("p1".to_string()),
+    };
     let mut data = minimal_data(&app.app_type);
     data.proxy.auto_failover_enabled = false;
 
     let all = all_text(&render(&app, &data));
 
-    assert!(all.contains("Automatic failover: disabled"), "{all}");
+    assert!(all.contains("Auto: off"), "{all}");
     assert!(all.contains("f auto failover"), "{all}");
-    assert!(all.contains("Direct provider selection is used"), "{all}");
+    assert!(all.contains("not queued"), "{all}");
+}
+
+#[test]
+fn failover_queue_overlay_renders_active_target_and_honest_health_states() {
+    let _lock = lock_env();
+    let _no_color = EnvGuard::remove("NO_COLOR");
+
+    let mut app = App::new(Some(AppType::Claude));
+    app.route = Route::Providers;
+    app.focus = Focus::Content;
+    app.overlay = Overlay::FailoverQueueManager {
+        selected_provider_id: Some("active".to_string()),
+    };
+    let mut data = minimal_data(&app.app_type);
+    data.proxy.auto_failover_enabled = true;
+    data.providers.rows = vec![
+        failover_provider_row("active", "Active Provider", false, true, Some(0)),
+        failover_provider_row("unknown", "Unknown Provider", false, true, Some(1)),
+        failover_provider_row("normal", "Normal Provider", false, true, Some(2)),
+        failover_provider_row("warning", "Warning Provider", false, true, Some(3)),
+        failover_provider_row("unhealthy", "Unhealthy Provider", false, true, Some(4)),
+        failover_provider_row("unused", "Unused Provider", false, false, None),
+    ];
+    data.proxy.current_app_target = Some(ProxyTargetSnapshot {
+        provider_id: "active".to_string(),
+        provider_name: "Stale Display Name".to_string(),
+    });
+    std::sync::Arc::make_mut(&mut data.proxy.provider_health).insert(
+        "normal".to_string(),
+        ProviderHealthSnapshot {
+            is_healthy: true,
+            consecutive_failures: 0,
+        },
+    );
+    std::sync::Arc::make_mut(&mut data.proxy.provider_health).insert(
+        "warning".to_string(),
+        ProviderHealthSnapshot {
+            is_healthy: true,
+            consecutive_failures: 2,
+        },
+    );
+    std::sync::Arc::make_mut(&mut data.proxy.provider_health).insert(
+        "unhealthy".to_string(),
+        ProviderHealthSnapshot {
+            is_healthy: false,
+            consecutive_failures: 4,
+        },
+    );
+
+    let all = all_text(&render_with_size(&app, &data, 140, 36));
+
+    assert!(all.contains("Active target: P1 Active Provider"), "{all}");
+    assert!(all.contains("target"), "{all}");
+    assert!(all.contains("no record"), "{all}");
+    assert!(all.contains("normal"), "{all}");
+    assert!(all.contains("failures (2)"), "{all}");
+    assert!(all.contains("unhealthy (4)"), "{all}");
+    assert!(all.contains("not queued"), "{all}");
+}
+
+#[test]
+fn failover_queue_overlay_keeps_priority_name_and_status_on_narrow_terminals() {
+    let _lock = lock_env();
+    let _no_color = EnvGuard::remove("NO_COLOR");
+
+    let mut app = App::new(Some(AppType::Claude));
+    app.route = Route::Providers;
+    app.focus = Focus::Content;
+    app.overlay = Overlay::FailoverQueueManager {
+        selected_provider_id: Some("p1".to_string()),
+    };
+    let mut data = minimal_data(&app.app_type);
+    data.providers.rows[0].provider.in_failover_queue = true;
+    data.providers.rows[0].provider.sort_index = Some(0);
+    std::sync::Arc::make_mut(&mut data.proxy.provider_health).insert(
+        "p1".to_string(),
+        ProviderHealthSnapshot {
+            is_healthy: false,
+            consecutive_failures: 4,
+        },
+    );
+
+    let all = all_text(&render_with_size(&app, &data, 64, 22));
+
+    assert!(all.contains("P1"), "{all}");
+    assert!(all.contains("Demo"), "{all}");
+    assert!(all.contains("unhealthy"), "{all}");
+    assert!(
+        all.lines().any(|line| line.contains("Demo")
+            && line.contains("unhealthy")
+            && !line.contains("https://example.com")),
+        "{all}"
+    );
 }
 
 #[test]

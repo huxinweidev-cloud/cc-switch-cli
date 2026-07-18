@@ -511,6 +511,73 @@ pub(super) fn render_user_agent_picker_overlay(
     frame.render_stateful_widget(list, body_area, &mut state);
 }
 
+pub(super) fn render_external_editor_picker_overlay(
+    frame: &mut Frame<'_>,
+    content_area: Rect,
+    theme: &theme::Theme,
+    selected: usize,
+    editors: &[crate::cli::editor::DetectedEditor],
+) {
+    let body_rows = u16::try_from(editors.len().saturating_add(1)).unwrap_or(u16::MAX);
+    let body_area = overlay_frame(
+        frame,
+        content_area,
+        theme,
+        texts::tui_settings_preferred_editor_label(),
+        &[
+            ("↑↓", texts::tui_key_select()),
+            ("Enter", texts::tui_key_apply()),
+            ("Esc", texts::tui_key_cancel()),
+        ],
+        OverlaySize::FitRows {
+            width: 72,
+            body_rows,
+        },
+        overlay_border_style(theme, false),
+    );
+
+    let configured = crate::settings::get_preferred_editor();
+    let detected_selection = configured
+        .as_deref()
+        .and_then(|command| editors.iter().position(|editor| editor.command == command));
+    let custom_active = configured.is_some() && detected_selection.is_none();
+    let symbol_width =
+        u16::try_from(UnicodeWidthStr::width(highlight_symbol(theme))).unwrap_or(u16::MAX);
+    let available_width = body_area.width.saturating_sub(symbol_width);
+    let option = |active: bool, label: String| {
+        let marker = if active {
+            texts::tui_marker_active()
+        } else {
+            texts::tui_marker_inactive()
+        };
+        ListItem::new(Line::raw(truncate_to_display_width(
+            &format!("{marker}  {label}"),
+            available_width,
+        )))
+    };
+
+    let mut items = Vec::with_capacity(editors.len().saturating_add(1));
+    items.extend(editors.iter().enumerate().map(|(index, editor)| {
+        let label = bounded_trimmed_text_for_display(&editor.label);
+        let command = bounded_trimmed_text_for_display(&editor.command);
+        option(
+            detected_selection == Some(index),
+            format!("{label}  ·  {command}"),
+        )
+    }));
+    items.push(option(
+        custom_active,
+        texts::tui_settings_preferred_editor_custom().to_string(),
+    ));
+
+    let list = List::new(items)
+        .highlight_style(selection_style(theme))
+        .highlight_symbol(highlight_symbol(theme));
+    let mut state = ListState::default();
+    state.select(Some(selected.min(editors.len())));
+    frame.render_stateful_widget(list, body_area, &mut state);
+}
+
 pub(super) fn render_managed_account_picker_overlay(
     frame: &mut Frame<'_>,
     app: &App,
@@ -1915,21 +1982,28 @@ pub(super) fn render_failover_queue_manager_overlay(
     data: &UiData,
     content_area: Rect,
     theme: &theme::Theme,
-    selected: usize,
+    selected_provider_id: Option<&str>,
 ) {
+    let rows = app::failover_queue_rows(data);
+    let queued_count = rows
+        .iter()
+        .filter(|row| row.provider.in_failover_queue)
+        .count();
+    let visible_rows = rows.len().min(10) as u16;
     let body = overlay_frame_at(
         frame,
-        centered_rect_fixed(OVERLAY_FIXED_LG.0, 16, content_area),
+        centered_rect_fixed(
+            78,
+            visible_rows.saturating_add(7).clamp(10, 18),
+            content_area,
+        ),
         theme,
         crate::t!("Failover Queue", "故障转移队列"),
-        // The overlay is fixed at 70 cols; keep these chips short enough
-        // that the reorder hint always fits (Enter still toggles as a
-        // hidden Space alias).
         &[
             ("↑↓", texts::tui_key_select()),
             ("f", crate::t!("auto failover", "自动故障转移")),
-            ("Space", texts::tui_key_toggle()),
-            ("</>/K/J", texts::tui_key_move()),
+            ("Enter", texts::tui_key_add_remove()),
+            ("Ctrl+↑↓", texts::tui_key_move()),
             ("Esc", texts::tui_key_close()),
         ],
         overlay_border_style(theme, false),
@@ -1937,18 +2011,41 @@ pub(super) fn render_failover_queue_manager_overlay(
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(1),
-            Constraint::Min(0),
-            Constraint::Length(2),
-        ])
+        .constraints([Constraint::Length(1), Constraint::Min(0)])
         .split(body);
 
-    let status = if data.proxy.auto_failover_enabled {
-        crate::t!("Automatic failover: enabled", "自动故障转移：已开启")
+    let mode = if data.proxy.auto_failover_enabled {
+        crate::t!("Auto: on", "自动：开")
     } else {
-        crate::t!("Automatic failover: disabled", "自动故障转移：已关闭")
+        crate::t!("Auto: off", "自动：关")
     };
+    let active_target = data.proxy.current_app_target.as_ref().map(|target| {
+        let provider_id = target.provider_id.trim();
+        let display_name = rows
+            .iter()
+            .find(|row| !provider_id.is_empty() && row.id == provider_id)
+            .map(|row| row.provider.name.trim())
+            .filter(|name| !name.is_empty())
+            .or_else(|| {
+                let name = target.provider_name.trim();
+                (!name.is_empty()).then_some(name)
+            })
+            .unwrap_or(provider_id);
+        match app::failover_queue_position(data, provider_id) {
+            Some(priority) => format!("P{priority} {display_name}"),
+            None => display_name.to_string(),
+        }
+    });
+    let status = crate::t!(
+        format!(
+            "{mode} · Active target: {} · {queued_count} queued",
+            active_target.as_deref().unwrap_or("—")
+        ),
+        format!(
+            "{mode} · 当前目标：{} · 队列 {queued_count}",
+            active_target.as_deref().unwrap_or("—")
+        )
+    );
     frame.render_widget(
         Paragraph::new(status)
             .style(Style::default().fg(theme.dim))
@@ -1957,7 +2054,6 @@ pub(super) fn render_failover_queue_manager_overlay(
     );
 
     let body_area = chunks[1];
-    let rows = app::failover_queue_rows(data);
     if rows.is_empty() {
         frame.render_widget(
             Paragraph::new(crate::t!("No providers configured.", "暂无提供商配置。"))
@@ -1968,9 +2064,9 @@ pub(super) fn render_failover_queue_manager_overlay(
     } else {
         let header = Row::new(vec![
             Cell::from(""),
-            Cell::from(crate::t!("Queue", "队列")),
+            Cell::from(crate::t!("Priority", "优先级")),
             Cell::from(texts::header_name()),
-            Cell::from(texts::tui_header_api_url()),
+            Cell::from(crate::t!("Status", "状态")),
         ])
         .style(Style::default().fg(theme.dim).add_modifier(Modifier::BOLD));
 
@@ -1981,25 +2077,73 @@ pub(super) fn render_failover_queue_manager_overlay(
                 texts::tui_marker_inactive()
             };
             let queue = app::failover_queue_position(data, &row.id)
-                .map(|position| format!("#{position}"))
+                .map(|position| format!("P{position}"))
                 .unwrap_or_else(|| "-".to_string());
-            let api_url = row.api_url.as_deref().unwrap_or_else(|| texts::tui_na());
+            let is_active_target = data
+                .proxy
+                .current_app_target
+                .as_ref()
+                .is_some_and(|target| target.provider_id == row.id);
+            let (status, status_style) = if is_active_target {
+                (
+                    crate::t!("target", "当前目标").to_string(),
+                    Style::default().fg(theme.cyan).add_modifier(Modifier::BOLD),
+                )
+            } else if !row.provider.in_failover_queue {
+                (
+                    crate::t!("not queued", "未参与").to_string(),
+                    Style::default().fg(theme.dim),
+                )
+            } else {
+                match data.proxy.provider_health.get(&row.id) {
+                    Some(health) if !health.is_healthy => (
+                        crate::t!(
+                            format!("unhealthy ({})", health.consecutive_failures),
+                            format!("不健康 ({})", health.consecutive_failures)
+                        ),
+                        Style::default().fg(theme.err),
+                    ),
+                    Some(health) if health.consecutive_failures > 0 => (
+                        crate::t!(
+                            format!("failures ({})", health.consecutive_failures),
+                            format!("失败 ({})", health.consecutive_failures)
+                        ),
+                        Style::default().fg(theme.warn),
+                    ),
+                    Some(_) => (
+                        crate::t!("normal", "正常").to_string(),
+                        Style::default().fg(theme.ok),
+                    ),
+                    None => (
+                        crate::t!("no record", "无记录").to_string(),
+                        Style::default().fg(theme.dim),
+                    ),
+                }
+            };
 
             Row::new(vec![
                 Cell::from(marker),
                 Cell::from(queue),
                 Cell::from(row.provider.name.as_str()),
-                Cell::from(api_url.to_string()),
+                Cell::from(status).style(status_style),
             ])
         });
+
+        let status_width = if body_area.width >= 60 {
+            18
+        } else if body_area.width >= 44 {
+            14
+        } else {
+            10
+        };
 
         let table = Table::new(
             table_rows,
             [
                 Constraint::Length(2),
                 Constraint::Length(8),
-                Constraint::Percentage(35),
-                Constraint::Percentage(65),
+                Constraint::Min(8),
+                Constraint::Length(status_width),
             ],
         )
         .header(header)
@@ -2008,27 +2152,12 @@ pub(super) fn render_failover_queue_manager_overlay(
         .highlight_symbol(highlight_symbol(theme));
 
         let mut state = TableState::default();
-        state.select(Some(selected.min(rows.len().saturating_sub(1))));
+        state.select(app::failover_queue_selected_index(
+            data,
+            selected_provider_id,
+        ));
         frame.render_stateful_widget(table, body_area, &mut state);
     }
-
-    frame.render_widget(
-        Paragraph::new(if data.proxy.auto_failover_enabled {
-            crate::t!(
-                "Auto failover uses only checked providers, in queue order.",
-                "自动故障转移仅按队列顺序使用已勾选的提供商。"
-            )
-        } else {
-            crate::t!(
-                "Direct provider selection is used. Enable failover to route by queue priority.",
-                "当前使用直接供应商选择。开启故障转移后将按队列优先级路由。"
-            )
-        })
-        .style(Style::default().fg(theme.dim))
-        .alignment(Alignment::Center)
-        .wrap(Wrap { trim: false }),
-        chunks[2],
-    );
 }
 
 pub(super) fn render_mcp_apps_picker_overlay(

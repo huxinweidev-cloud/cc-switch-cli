@@ -1495,6 +1495,16 @@ pub(crate) fn failover_queue_rows(data: &UiData) -> Vec<&super::data::ProviderRo
     rows
 }
 
+pub(crate) fn failover_queue_selected_index(
+    data: &UiData,
+    selected_provider_id: Option<&str>,
+) -> Option<usize> {
+    let rows = failover_queue_rows(data);
+    selected_provider_id
+        .and_then(|provider_id| rows.iter().position(|row| row.id == provider_id))
+        .or_else(|| (!rows.is_empty()).then_some(0))
+}
+
 pub(crate) fn failover_queue_position(data: &UiData, provider_id: &str) -> Option<usize> {
     failover_queue_rows(data)
         .into_iter()

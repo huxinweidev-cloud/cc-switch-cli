@@ -1372,6 +1372,15 @@ mod tests {
 
         app.tick = 5;
         assert!(app.should_poll_proxy_activity());
+
+        app.route = Route::Providers;
+        app.overlay = Overlay::FailoverQueueManager {
+            selected_provider_id: None,
+        };
+        assert!(app.should_poll_proxy_activity());
+
+        app.overlay = Overlay::None;
+        assert!(!app.should_poll_proxy_activity());
     }
 
     #[test]
@@ -9707,6 +9716,204 @@ mod tests {
     }
 
     #[test]
+    fn settings_menu_places_preferred_editor_after_icons() {
+        let editor_index = SettingsItem::ALL
+            .iter()
+            .position(|item| matches!(item, SettingsItem::PreferredEditor))
+            .expect("PreferredEditor missing from SettingsItem::ALL");
+
+        assert!(editor_index > 0);
+        assert!(matches!(
+            SettingsItem::ALL.get(editor_index - 1),
+            Some(SettingsItem::Icons)
+        ));
+    }
+
+    #[test]
+    fn settings_preferred_editor_has_contextual_help() {
+        let _lang = use_test_language(Language::English);
+        let mut app = App::new(Some(AppType::Claude));
+        app.route = Route::Settings;
+        app.focus = Focus::Content;
+        app.settings_idx = SettingsItem::ALL
+            .iter()
+            .position(|item| matches!(item, SettingsItem::PreferredEditor))
+            .expect("PreferredEditor missing from SettingsItem::ALL");
+
+        let help = crate::cli::tui::help::context_help_for_app(&app, &UiData::default());
+        let body = help.lines.join("\n");
+
+        assert_eq!(help.title, "External Editor");
+        assert!(body.contains("VISUAL"), "{body}");
+        assert!(body.contains("EDITOR"), "{body}");
+        assert!(body.contains("without a shell"), "{body}");
+        assert!(body.contains("code --wait"), "{body}");
+    }
+
+    #[test]
+    #[serial(home_settings)]
+    fn settings_preferred_editor_opens_detected_picker_with_custom_selected() {
+        let temp_home = TempDir::new().expect("create temp home");
+        let _env = TestEnvGuard::isolated(temp_home.path());
+        crate::settings::set_preferred_editor(Some(
+            "cc-switch-unrecognized-editor --wait".to_string(),
+        ))
+        .expect("save custom editor");
+
+        let mut app = App::new(Some(AppType::Claude));
+        app.route = Route::Settings;
+        app.focus = Focus::Content;
+        app.settings_idx = SettingsItem::ALL
+            .iter()
+            .position(|item| matches!(item, SettingsItem::PreferredEditor))
+            .expect("PreferredEditor missing from SettingsItem::ALL");
+
+        let action = app.on_key(key(KeyCode::Enter), &UiData::default());
+
+        assert!(matches!(action, Action::None));
+        assert!(matches!(
+            &app.overlay,
+            Overlay::ExternalEditorPicker { selected, editors }
+                if *selected == editors.len()
+        ));
+    }
+
+    #[test]
+    #[serial(home_settings)]
+    fn opening_external_editor_picker_does_not_choose_an_editor_automatically() {
+        let temp_home = TempDir::new().expect("create temp home");
+        let _env = TestEnvGuard::isolated(temp_home.path());
+        crate::settings::set_preferred_editor(None).expect("clear preferred editor");
+
+        let mut app = App::new(Some(AppType::Claude));
+        app.route = Route::Settings;
+        app.focus = Focus::Content;
+        app.settings_idx = SettingsItem::ALL
+            .iter()
+            .position(|item| matches!(item, SettingsItem::PreferredEditor))
+            .expect("PreferredEditor missing from SettingsItem::ALL");
+
+        assert!(matches!(
+            app.on_key(key(KeyCode::Enter), &UiData::default()),
+            Action::None
+        ));
+        assert!(matches!(
+            app.overlay,
+            Overlay::ExternalEditorPicker { selected: 0, .. }
+        ));
+        assert_eq!(crate::settings::get_preferred_editor(), None);
+    }
+
+    fn detected_editor(label: &str, command: &str) -> crate::cli::editor::DetectedEditor {
+        crate::cli::editor::DetectedEditor {
+            label: label.to_string(),
+            command: command.to_string(),
+        }
+    }
+
+    #[test]
+    #[serial(home_settings)]
+    fn external_editor_picker_applies_only_an_explicit_detected_choice() {
+        let temp_home = TempDir::new().expect("create temp home");
+        let _env = TestEnvGuard::isolated(temp_home.path());
+        crate::settings::set_preferred_editor(Some("nvim".to_string()))
+            .expect("save initial editor");
+
+        let mut app = App::new(Some(AppType::Claude));
+        app.overlay = Overlay::ExternalEditorPicker {
+            selected: 0,
+            editors: vec![detected_editor("Visual Studio Code", "code --wait")],
+        };
+        let action = app.on_key(key(KeyCode::Enter), &UiData::default());
+        assert!(matches!(
+            action,
+            Action::SetPreferredEditor {
+                command: Some(command)
+            } if command == "code --wait"
+        ));
+        assert!(matches!(app.overlay, Overlay::None));
+    }
+
+    #[test]
+    #[serial(home_settings)]
+    fn external_editor_picker_custom_choice_reuses_text_input() {
+        let temp_home = TempDir::new().expect("create temp home");
+        let _env = TestEnvGuard::isolated(temp_home.path());
+        crate::settings::set_preferred_editor(Some("my-editor --block".to_string()))
+            .expect("save initial editor");
+
+        let mut app = App::new(Some(AppType::Claude));
+        app.overlay = Overlay::ExternalEditorPicker {
+            selected: 1,
+            editors: vec![detected_editor("Neovim", "nvim")],
+        };
+
+        let action = app.on_key(key(KeyCode::Enter), &UiData::default());
+        assert!(matches!(action, Action::None));
+        assert!(matches!(
+            app.overlay,
+            Overlay::TextInput(TextInputState {
+                submit: TextSubmit::SettingsPreferredEditor,
+                input,
+                ..
+            }) if input.value == "my-editor --block"
+        ));
+    }
+
+    #[test]
+    fn settings_preferred_editor_custom_submit_validates_and_clears() {
+        let mut app = App::new(Some(AppType::Claude));
+        app.overlay = Overlay::TextInput(TextInputState {
+            title: "External Editor".to_string(),
+            prompt: "command".to_string(),
+            input: TextInput::new("code --wait"),
+            submit: TextSubmit::SettingsPreferredEditor,
+        });
+        assert!(matches!(
+            app.on_key(key(KeyCode::Enter), &UiData::default()),
+            Action::SetPreferredEditor {
+                command: Some(command)
+            } if command == "code --wait"
+        ));
+
+        app.overlay = Overlay::TextInput(TextInputState {
+            title: "External Editor".to_string(),
+            prompt: "command".to_string(),
+            input: TextInput::new("   "),
+            submit: TextSubmit::SettingsPreferredEditor,
+        });
+        assert!(matches!(
+            app.on_key(key(KeyCode::Enter), &UiData::default()),
+            Action::SetPreferredEditor { command: None }
+        ));
+
+        app.overlay = Overlay::TextInput(TextInputState {
+            title: "External Editor".to_string(),
+            prompt: "command".to_string(),
+            input: TextInput::new("\"unterminated"),
+            submit: TextSubmit::SettingsPreferredEditor,
+        });
+        assert!(matches!(
+            app.on_key(key(KeyCode::Enter), &UiData::default()),
+            Action::None
+        ));
+        assert!(matches!(
+            app.overlay,
+            Overlay::TextInput(TextInputState {
+                submit: TextSubmit::SettingsPreferredEditor,
+                ..
+            })
+        ));
+        assert!(matches!(
+            app.toast,
+            Some(Toast {
+                kind: ToastKind::Error,
+                ..
+            })
+        ));
+    }
+
+    #[test]
     fn settings_managed_accounts_item_opens_page_and_refreshes_when_status_missing() {
         let mut app = App::new(Some(AppType::Claude));
         app.route = Route::Settings;
@@ -13545,7 +13752,7 @@ mod tests {
     }
 
     #[test]
-    fn providers_space_switches_provider_when_failover_enabled() {
+    fn providers_space_explains_queue_routing_when_failover_enabled() {
         let mut app = App::new(Some(AppType::Claude));
         app.route = Route::Providers;
         app.focus = Focus::Content;
@@ -13561,11 +13768,16 @@ mod tests {
         ));
 
         let action = app.on_key(key(KeyCode::Char(' ')), &data);
-        assert!(matches!(action, Action::ProviderSwitch { id } if id == "p1"));
+        assert!(matches!(action, Action::None));
+        assert!(matches!(
+            app.toast.as_ref(),
+            Some(toast) if toast.kind == ToastKind::Info
+                && toast.message.contains("queue priority")
+        ));
     }
 
     #[test]
-    fn providers_s_key_switches_provider_as_legacy_shortcut() {
+    fn providers_s_alias_cannot_bypass_failover_queue_routing() {
         let mut app = App::new(Some(AppType::Codex));
         app.route = Route::Providers;
         app.focus = Focus::Content;
@@ -13581,7 +13793,8 @@ mod tests {
         ));
 
         let action = app.on_key(key(KeyCode::Char('s')), &data);
-        assert!(matches!(action, Action::ProviderSwitch { id } if id == "p1"));
+        assert!(matches!(action, Action::None));
+        assert!(matches!(app.toast.as_ref(), Some(toast) if toast.kind == ToastKind::Info));
     }
 
     #[test]
@@ -13612,7 +13825,9 @@ mod tests {
     #[test]
     fn failover_queue_manager_f_toggles_auto_failover() {
         let mut app = App::new(Some(AppType::Claude));
-        app.overlay = Overlay::FailoverQueueManager { selected: 0 };
+        app.overlay = Overlay::FailoverQueueManager {
+            selected_provider_id: Some("p1".to_string()),
+        };
 
         let mut data = UiData::default();
         data.proxy.auto_failover_enabled = true;
@@ -13635,7 +13850,9 @@ mod tests {
     #[test]
     fn failover_queue_manager_f_toggles_auto_failover_when_empty() {
         let mut app = App::new(Some(AppType::Gemini));
-        app.overlay = Overlay::FailoverQueueManager { selected: 0 };
+        app.overlay = Overlay::FailoverQueueManager {
+            selected_provider_id: None,
+        };
 
         let mut data = UiData::default();
         data.proxy.auto_failover_enabled = false;
@@ -13728,14 +13945,18 @@ mod tests {
         assert!(matches!(action, Action::None));
         assert!(matches!(
             app.overlay,
-            Overlay::FailoverQueueManager { selected: 0 }
+            Overlay::FailoverQueueManager {
+                selected_provider_id: Some(ref id)
+            } if id == "p1"
         ));
     }
 
     #[test]
-    fn failover_queue_manager_space_toggles_selected_provider() {
+    fn failover_queue_manager_space_does_not_toggle_selected_provider() {
         let mut app = App::new(Some(AppType::Claude));
-        app.overlay = Overlay::FailoverQueueManager { selected: 0 };
+        app.overlay = Overlay::FailoverQueueManager {
+            selected_provider_id: Some("p1".to_string()),
+        };
 
         let mut data = UiData::default();
         data.providers.rows.push(failover_provider_row(
@@ -13747,16 +13968,15 @@ mod tests {
         ));
 
         let action = app.on_key(key(KeyCode::Char(' ')), &data);
-        assert!(matches!(
-            action,
-            Action::ProviderSetFailoverQueue { id, enabled } if id == "p1" && enabled
-        ));
+        assert!(matches!(action, Action::None));
     }
 
     #[test]
     fn failover_queue_manager_enter_removes_selected_queued_provider() {
         let mut app = App::new(Some(AppType::Codex));
-        app.overlay = Overlay::FailoverQueueManager { selected: 0 };
+        app.overlay = Overlay::FailoverQueueManager {
+            selected_provider_id: Some("p1".to_string()),
+        };
 
         let mut data = UiData::default();
         data.providers.rows.push(failover_provider_row(
@@ -13775,9 +13995,11 @@ mod tests {
     }
 
     #[test]
-    fn failover_queue_manager_move_keys_only_move_queued_provider() {
+    fn failover_queue_manager_ctrl_arrows_only_move_queued_provider() {
         let mut app = App::new(Some(AppType::Codex));
-        app.overlay = Overlay::FailoverQueueManager { selected: 0 };
+        app.overlay = Overlay::FailoverQueueManager {
+            selected_provider_id: Some("p1".to_string()),
+        };
 
         let mut data = UiData::default();
         data.providers.rows.push(failover_provider_row(
@@ -13795,7 +14017,7 @@ mod tests {
             None,
         ));
 
-        let action = app.on_key(key(KeyCode::Char('>')), &data);
+        let action = app.on_key(ctrl(KeyCode::Down), &data);
         assert!(matches!(
             action,
             Action::ProviderMoveFailoverQueue {
@@ -13804,17 +14026,123 @@ mod tests {
             } if id == "p1"
         ));
 
-        app.overlay = Overlay::FailoverQueueManager { selected: 1 };
+        app.overlay = Overlay::FailoverQueueManager {
+            selected_provider_id: Some("p2".to_string()),
+        };
         assert!(matches!(
-            app.on_key(key(KeyCode::Char('>')), &data),
+            app.on_key(ctrl(KeyCode::Down), &data),
             Action::None
+        ));
+    }
+
+    #[test]
+    fn failover_queue_manager_selection_follows_provider_after_membership_reorders_rows() {
+        let mut app = App::new(Some(AppType::Claude));
+        app.overlay = Overlay::FailoverQueueManager {
+            selected_provider_id: Some("p2".to_string()),
+        };
+
+        let mut data = UiData::default();
+        data.providers.rows.push(failover_provider_row(
+            "p1",
+            "Provider One",
+            json!({"env":{"ANTHROPIC_BASE_URL":"https://one.example.com"}}),
+            true,
+            Some(0),
+        ));
+        data.providers.rows.push(failover_provider_row(
+            "p2",
+            "Provider Two",
+            json!({"env":{"ANTHROPIC_BASE_URL":"https://two.example.com"}}),
+            true,
+            Some(1),
+        ));
+        data.providers.rows.push(failover_provider_row(
+            "p3",
+            "Provider Three",
+            json!({"env":{"ANTHROPIC_BASE_URL":"https://three.example.com"}}),
+            false,
+            None,
+        ));
+
+        let remove = app.on_key(key(KeyCode::Enter), &data);
+        assert!(matches!(
+            remove,
+            Action::ProviderSetFailoverQueue { id, enabled: false } if id == "p2"
+        ));
+
+        let p2 = data
+            .providers
+            .rows
+            .iter_mut()
+            .find(|row| row.id == "p2")
+            .expect("p2 fixture");
+        p2.provider.in_failover_queue = false;
+        p2.provider.sort_index = None;
+
+        let add_again = app.on_key(key(KeyCode::Enter), &data);
+        assert!(matches!(
+            add_again,
+            Action::ProviderSetFailoverQueue { id, enabled: true } if id == "p2"
+        ));
+        assert!(matches!(
+            app.overlay,
+            Overlay::FailoverQueueManager {
+                selected_provider_id: Some(ref id)
+            } if id == "p2"
+        ));
+    }
+
+    #[test]
+    fn failover_queue_manager_selection_follows_provider_after_priority_reorder() {
+        let mut app = App::new(Some(AppType::Codex));
+        app.overlay = Overlay::FailoverQueueManager {
+            selected_provider_id: Some("p2".to_string()),
+        };
+
+        let mut data = UiData::default();
+        data.providers.rows.push(failover_provider_row(
+            "p1",
+            "Provider One",
+            json!({"model_provider":{"base_url":"https://one.example.com"}}),
+            true,
+            Some(0),
+        ));
+        data.providers.rows.push(failover_provider_row(
+            "p2",
+            "Provider Two",
+            json!({"model_provider":{"base_url":"https://two.example.com"}}),
+            true,
+            Some(1),
+        ));
+
+        let move_up = app.on_key(ctrl(KeyCode::Up), &data);
+        assert!(matches!(
+            move_up,
+            Action::ProviderMoveFailoverQueue {
+                id,
+                direction: MoveDirection::Up,
+            } if id == "p2"
+        ));
+
+        data.providers.rows[0].provider.sort_index = Some(1);
+        data.providers.rows[1].provider.sort_index = Some(0);
+        let move_down = app.on_key(ctrl(KeyCode::Down), &data);
+        assert!(matches!(
+            move_down,
+            Action::ProviderMoveFailoverQueue {
+                id,
+                direction: MoveDirection::Down,
+            } if id == "p2"
         ));
     }
 
     #[test]
     fn failover_queue_manager_uses_shifted_jk_not_delete_key_for_moves() {
         let mut app = App::new(Some(AppType::Codex));
-        app.overlay = Overlay::FailoverQueueManager { selected: 0 };
+        app.overlay = Overlay::FailoverQueueManager {
+            selected_provider_id: Some("p1".to_string()),
+        };
 
         let mut data = UiData::default();
         data.providers.rows.push(failover_provider_row(
@@ -13855,7 +14183,9 @@ mod tests {
     #[test]
     fn failover_queue_manager_esc_closes_overlay() {
         let mut app = App::new(Some(AppType::Claude));
-        app.overlay = Overlay::FailoverQueueManager { selected: 0 };
+        app.overlay = Overlay::FailoverQueueManager {
+            selected_provider_id: None,
+        };
 
         let action = app.on_key(key(KeyCode::Esc), &UiData::default());
         assert!(matches!(action, Action::None));
@@ -15670,6 +16000,35 @@ mod tests {
             Action::SessionsProjectFilterCancel
         ));
         assert!(matches!(app.overlay, Overlay::None));
+    }
+
+    #[test]
+    fn failover_queue_help_keeps_secondary_keys_and_behavior_off_the_main_surface() {
+        let _lang = use_test_language(Language::English);
+        let mut app = App::new(Some(AppType::Claude));
+        app.route = Route::Providers;
+        app.overlay = Overlay::FailoverQueueManager {
+            selected_provider_id: Some("p1".to_string()),
+        };
+
+        assert!(matches!(
+            app.on_key(key(KeyCode::Char('?')), &data()),
+            Action::None
+        ));
+        let help = help_text(&app);
+        assert!(help.contains("J/K are secondary move aliases"), "{help}");
+        assert!(help.contains("P1, P2"), "{help}");
+        assert!(help.contains("passive history"), "{help}");
+        assert!(matches!(
+            app.pending_overlay,
+            Some(Overlay::FailoverQueueManager { .. })
+        ));
+
+        assert!(matches!(
+            app.on_key(key(KeyCode::Esc), &data()),
+            Action::None
+        ));
+        assert!(matches!(app.overlay, Overlay::FailoverQueueManager { .. }));
     }
 
     #[test]

@@ -91,6 +91,9 @@ impl App {
         if let Some(action) = self.handle_user_agent_picker_key(key) {
             return Some(action);
         }
+        if let Some(action) = self.handle_external_editor_picker_key(key) {
+            return Some(action);
+        }
         if let Some(action) = self.handle_usage_query_template_picker_key(key) {
             return Some(action);
         }
@@ -481,6 +484,53 @@ impl App {
                     self.overlay = Overlay::None;
                 }
                 Action::None
+            }
+            _ => Action::None,
+        })
+    }
+
+    fn handle_external_editor_picker_key(&mut self, key: KeyEvent) -> Option<Action> {
+        let Overlay::ExternalEditorPicker { selected, editors } = &mut self.overlay else {
+            return None;
+        };
+        let max = editors.len();
+        *selected = (*selected).min(max);
+
+        Some(match key.code {
+            KeyCode::Esc => {
+                self.overlay = Overlay::None;
+                Action::None
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                *selected = selected.saturating_sub(1);
+                Action::None
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                *selected = selected.saturating_add(1).min(max);
+                Action::None
+            }
+            KeyCode::Enter => {
+                let configured = crate::settings::get_preferred_editor();
+                let selected = *selected;
+                if let Some(editor) = editors.get(selected) {
+                    let command = editor.command.clone();
+                    self.overlay = Overlay::None;
+                    if configured.as_deref() == Some(command.as_str()) {
+                        Action::None
+                    } else {
+                        Action::SetPreferredEditor {
+                            command: Some(command),
+                        }
+                    }
+                } else {
+                    self.overlay = Overlay::TextInput(TextInputState {
+                        title: texts::tui_settings_preferred_editor_custom().to_string(),
+                        prompt: texts::tui_settings_preferred_editor_prompt().to_string(),
+                        input: TextInput::new(configured.unwrap_or_default()),
+                        submit: TextSubmit::SettingsPreferredEditor,
+                    });
+                    Action::None
+                }
             }
             _ => Action::None,
         })
@@ -1543,7 +1593,10 @@ impl App {
         key: KeyEvent,
         data: &UiData,
     ) -> Option<Action> {
-        let Overlay::FailoverQueueManager { selected } = &mut self.overlay else {
+        let Overlay::FailoverQueueManager {
+            selected_provider_id,
+        } = &mut self.overlay
+        else {
             return None;
         };
 
@@ -1559,44 +1612,70 @@ impl App {
             });
         }
 
-        *selected = (*selected).min(rows.len() - 1);
-        let selected_row = rows[*selected];
+        let selected = failover_queue_selected_index(data, selected_provider_id.as_deref())
+            .unwrap_or_default();
+        let selected_row = rows[selected];
+        let selected_id = selected_row.id.clone();
+        let selected_is_queued = selected_row.provider.in_failover_queue;
+        if selected_provider_id.as_deref() != Some(selected_id.as_str()) {
+            *selected_provider_id = Some(selected_id.clone());
+        }
 
         Some(match key.code {
             KeyCode::Esc => {
                 self.overlay = Overlay::None;
                 Action::None
             }
-            KeyCode::Up => {
-                *selected = selected.saturating_sub(1);
-                Action::None
-            }
-            KeyCode::Down => {
-                *selected = (*selected + 1).min(rows.len() - 1);
-                Action::None
-            }
-            KeyCode::Char('f') => self.request_auto_failover_toggle(data),
-            KeyCode::Char(' ') | KeyCode::Enter => Action::ProviderSetFailoverQueue {
-                id: selected_row.id.clone(),
-                enabled: !selected_row.provider.in_failover_queue,
-            },
-            // Reordering deliberately avoids lowercase `d`/`u`: `d` means
-            // delete on every list screen, and lowercase j/k are already
-            // vim-normalized into selection movement.
-            KeyCode::Char('<') | KeyCode::Char('K') => {
-                if selected_row.provider.in_failover_queue {
+            KeyCode::Up if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                if selected_is_queued {
                     Action::ProviderMoveFailoverQueue {
-                        id: selected_row.id.clone(),
+                        id: selected_id,
                         direction: MoveDirection::Up,
                     }
                 } else {
                     Action::None
                 }
             }
-            KeyCode::Char('>') | KeyCode::Char('J') => {
-                if selected_row.provider.in_failover_queue {
+            KeyCode::Down if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                if selected_is_queued {
                     Action::ProviderMoveFailoverQueue {
-                        id: selected_row.id.clone(),
+                        id: selected_id,
+                        direction: MoveDirection::Down,
+                    }
+                } else {
+                    Action::None
+                }
+            }
+            KeyCode::Up => {
+                *selected_provider_id = Some(rows[selected.saturating_sub(1)].id.clone());
+                Action::None
+            }
+            KeyCode::Down => {
+                *selected_provider_id = Some(rows[(selected + 1).min(rows.len() - 1)].id.clone());
+                Action::None
+            }
+            KeyCode::Char('f') => self.request_auto_failover_toggle(data),
+            KeyCode::Enter => Action::ProviderSetFailoverQueue {
+                id: selected_id,
+                enabled: !selected_is_queued,
+            },
+            // Uppercase J/K are secondary aliases documented only in help.
+            // Lowercase j/k remain normal list navigation after vim-key
+            // normalization, and d retains its usual delete meaning elsewhere.
+            KeyCode::Char('K') => {
+                if selected_is_queued {
+                    Action::ProviderMoveFailoverQueue {
+                        id: selected_id,
+                        direction: MoveDirection::Up,
+                    }
+                } else {
+                    Action::None
+                }
+            }
+            KeyCode::Char('J') => {
+                if selected_is_queued {
+                    Action::ProviderMoveFailoverQueue {
+                        id: selected_id,
                         direction: MoveDirection::Down,
                     }
                 } else {

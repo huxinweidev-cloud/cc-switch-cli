@@ -1,7 +1,99 @@
 use super::*;
 
-use crate::cli::tui::app::LocalProxySettingsItem;
+use crate::cli::tui::app::{LocalProxySettingsItem, SettingsItem};
 use unicode_width::UnicodeWidthStr;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SettingsSection {
+    General,
+    Applications,
+    Integrations,
+    System,
+}
+
+fn settings_section(item: SettingsItem) -> SettingsSection {
+    match item {
+        SettingsItem::ManagedAccounts
+        | SettingsItem::Language
+        | SettingsItem::Theme
+        | SettingsItem::Icons
+        | SettingsItem::PreferredEditor => SettingsSection::General,
+        SettingsItem::VisibleAppsMode
+        | SettingsItem::VisibleApps
+        | SettingsItem::OpenClawConfigDir => SettingsSection::Applications,
+        SettingsItem::SkipClaudeOnboarding
+        | SettingsItem::ClaudePluginIntegration
+        | SettingsItem::CodexUnifiedSessionHistory => SettingsSection::Integrations,
+        SettingsItem::Proxy | SettingsItem::CheckForUpdates => SettingsSection::System,
+    }
+}
+
+fn settings_table_row_index(selected_idx: usize) -> usize {
+    let selected_idx = selected_idx.min(SettingsItem::ALL.len().saturating_sub(1));
+    let mut rendered_idx = 0;
+    let mut current_section = None;
+
+    for (item_idx, item) in SettingsItem::ALL.iter().copied().enumerate() {
+        let section = settings_section(item);
+        if current_section.is_some_and(|current| current != section) {
+            rendered_idx += 1;
+        }
+        current_section = Some(section);
+        if item_idx == selected_idx {
+            return rendered_idx;
+        }
+        rendered_idx += 1;
+    }
+
+    0
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConfigSection {
+    Inspect,
+    Transfer,
+    Integrations,
+    Reset,
+}
+
+fn config_section(item: ConfigItem) -> ConfigSection {
+    match item {
+        ConfigItem::Path | ConfigItem::ShowFull => ConfigSection::Inspect,
+        ConfigItem::Export
+        | ConfigItem::Import
+        | ConfigItem::Backup
+        | ConfigItem::Restore
+        | ConfigItem::Validate => ConfigSection::Transfer,
+        ConfigItem::CommonSnippet
+        | ConfigItem::Proxy
+        | ConfigItem::OpenClawWorkspace
+        | ConfigItem::OpenClawEnv
+        | ConfigItem::OpenClawTools
+        | ConfigItem::OpenClawAgents
+        | ConfigItem::CloudSync => ConfigSection::Integrations,
+        ConfigItem::Reset => ConfigSection::Reset,
+    }
+}
+
+fn config_table_row_index(items: &[ConfigItem], selected_idx: usize, show_dividers: bool) -> usize {
+    let selected_idx = selected_idx.min(items.len().saturating_sub(1));
+    let mut rendered_idx = 0;
+    let mut current_section = None;
+
+    for (item_idx, item) in items.iter().copied().enumerate() {
+        let section = config_section(item);
+        if show_dividers && current_section.is_some_and(|current| current != section) {
+            rendered_idx += 1;
+        }
+        current_section = Some(section);
+        if item_idx == selected_idx {
+            return rendered_idx;
+        }
+        rendered_idx += 1;
+    }
+
+    0
+}
 
 pub(super) fn config_items_filtered(app: &App) -> Vec<ConfigItem> {
     app::visible_config_items(&app.filter, &app.app_type)
@@ -52,10 +144,6 @@ pub(super) fn render_config(
     theme: &super::theme::Theme,
 ) {
     let items = config_items_filtered(app);
-    let rows = items
-        .iter()
-        .map(|item| Row::new(vec![Cell::from(config_item_label(item))]));
-
     let mut keys = vec![("Enter", texts::tui_key_select())];
     if matches!(items.get(app.config_idx), Some(ConfigItem::CommonSnippet)) {
         keys.push(("e", texts::tui_key_edit_snippet()));
@@ -69,6 +157,20 @@ pub(super) fn render_config(
         &keys,
         None,
     );
+    let table_area = inset_left(body, CONTENT_INSET_LEFT);
+    let show_dividers = app.filter.query_lower().is_none();
+    let divider_style = Style::default().fg(theme.dim);
+    let divider_rule = "─".repeat(usize::from(table_area.width));
+    let mut rows = Vec::with_capacity(items.len() + 3);
+    let mut current_section = None;
+    for item in &items {
+        let section = config_section(*item);
+        if show_dividers && current_section.is_some_and(|current| current != section) {
+            rows.push(Row::new(vec![Cell::from(divider_rule.clone())]).style(divider_style));
+        }
+        current_section = Some(section);
+        rows.push(Row::new(vec![Cell::from(config_item_label(item))]));
+    }
 
     let table = Table::new(rows, [Constraint::Min(10)])
         .block(Block::default().borders(Borders::NONE))
@@ -76,8 +178,12 @@ pub(super) fn render_config(
         .highlight_symbol(highlight_symbol(theme));
 
     let mut state = TableState::default();
-    state.select(Some(app.config_idx));
-    frame.render_stateful_widget(table, inset_left(body, CONTENT_INSET_LEFT), &mut state);
+    state.select(Some(config_table_row_index(
+        &items,
+        app.config_idx,
+        show_dividers,
+    )));
+    frame.render_stateful_widget(table, table_area, &mut state);
 }
 
 pub(super) fn render_config_webdav(
@@ -3327,6 +3433,7 @@ pub(super) fn render_settings(
     let skip_claude_onboarding = crate::settings::get_skip_claude_onboarding();
     let claude_plugin_integration = crate::settings::get_enable_claude_plugin_integration();
     let codex_unified_session_history = crate::settings::unify_codex_session_history();
+    let preferred_editor = crate::settings::get_preferred_editor();
 
     let rows_data = super::app::SettingsItem::ALL
         .iter()
@@ -3348,6 +3455,12 @@ pub(super) fn render_settings(
                 texts::tui_settings_icons_label().to_string(),
                 texts::tui_settings_icon_mode_name(crate::cli::tui::icons::configured_icon_mode())
                     .to_string(),
+            ),
+            super::app::SettingsItem::PreferredEditor => (
+                texts::tui_settings_preferred_editor_label().to_string(),
+                preferred_editor
+                    .clone()
+                    .unwrap_or_else(|| texts::tui_settings_preferred_editor_not_set().to_string()),
             ),
             super::app::SettingsItem::VisibleAppsMode => (
                 texts::tui_settings_visible_apps_mode_label().to_string(),
@@ -3412,24 +3525,6 @@ pub(super) fn render_settings(
         })
         .collect::<Vec<_>>();
 
-    let label_col_width = field_label_column_width(
-        rows_data
-            .iter()
-            .map(|(label, _value)| label.as_str())
-            .chain(std::iter::once(texts::tui_settings_header_setting())),
-        0,
-    );
-
-    let header = Row::new(vec![
-        Cell::from(texts::tui_settings_header_setting()),
-        Cell::from(texts::tui_settings_header_value()),
-    ])
-    .style(Style::default().fg(theme.dim).add_modifier(Modifier::BOLD));
-
-    let rows = rows_data
-        .iter()
-        .map(|(label, value)| Row::new(vec![Cell::from(label.clone()), Cell::from(value.clone())]));
-
     let body = render_page_frame(
         frame,
         area,
@@ -3439,19 +3534,56 @@ pub(super) fn render_settings(
         &[("Enter", texts::tui_key_apply())],
         None,
     );
+    let table_area = inset_left(body, CONTENT_INSET_LEFT);
+
+    let raw_label_col_width =
+        field_label_column_width(rows_data.iter().map(|(label, _value)| label.as_str()), 0);
+    let label_col_width = raw_label_col_width.min(table_area.width.saturating_sub(9));
+
+    let section_style = Style::default().fg(theme.dim);
+    let section_rule = "─".repeat(usize::from(table_area.width));
+    let mut rows = Vec::with_capacity(rows_data.len() + 3);
+    let mut current_section = None;
+    for (item, (label, value)) in SettingsItem::ALL.iter().copied().zip(&rows_data) {
+        let section = settings_section(item);
+        if current_section.is_some_and(|current| current != section) {
+            rows.push(
+                Row::new(vec![
+                    Cell::from(section_rule.clone()),
+                    Cell::from(section_rule.clone()),
+                ])
+                .style(section_style),
+            );
+        }
+        current_section = Some(section);
+
+        let value = bounded_trimmed_text_for_display(value);
+        rows.push(Row::new(vec![
+            Cell::from(truncate_to_display_width(label, label_col_width)),
+            Cell::from(truncated_value_cell(
+                &value,
+                table_area.width,
+                label_col_width,
+                theme,
+            )),
+        ]));
+    }
 
     let table = Table::new(
         rows,
-        [Constraint::Length(label_col_width), Constraint::Min(10)],
+        [
+            Constraint::Length(label_col_width.saturating_add(1)),
+            Constraint::Min(10),
+        ],
     )
-    .header(header)
+    .column_spacing(0)
     .block(Block::default().borders(Borders::NONE))
     .row_highlight_style(selection_style(theme))
     .highlight_symbol(highlight_symbol(theme));
 
     let mut state = TableState::default();
-    state.select(Some(app.settings_idx));
-    frame.render_stateful_widget(table, inset_left(body, CONTENT_INSET_LEFT), &mut state);
+    state.select(Some(settings_table_row_index(app.settings_idx)));
+    frame.render_stateful_widget(table, table_area, &mut state);
 }
 
 fn managed_accounts_summary(app: &App) -> String {

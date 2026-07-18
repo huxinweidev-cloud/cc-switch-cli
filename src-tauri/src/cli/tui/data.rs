@@ -275,8 +275,14 @@ pub struct SkillsSnapshot {
 
 #[derive(Debug, Clone, Default)]
 pub struct ProxyTargetSnapshot {
-    #[allow(dead_code)]
+    pub provider_id: String,
     pub provider_name: String,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ProviderHealthSnapshot {
+    pub is_healthy: bool,
+    pub consecutive_failures: u32,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -306,8 +312,8 @@ pub struct ProxySnapshot {
     #[allow(dead_code)]
     pub current_provider: Option<String>,
     pub last_error: Option<String>,
-    #[allow(dead_code)]
     pub current_app_target: Option<ProxyTargetSnapshot>,
+    pub provider_health: Arc<HashMap<String, ProviderHealthSnapshot>>,
 }
 
 impl ProxySnapshot {
@@ -1087,6 +1093,7 @@ impl UiData {
         proxy.auto_failover_enabled = false;
         proxy.default_cost_multiplier = None;
         proxy.current_app_target = None;
+        proxy.provider_health = Arc::default();
 
         Self {
             providers: ProvidersSnapshot {
@@ -2993,13 +3000,24 @@ pub(crate) async fn load_proxy_snapshot_from_state_async(
         .await?
         .enabled;
 
-    let current_app_target = runtime_status
-        .active_targets
-        .iter()
-        .find(|target| target.app_type.eq_ignore_ascii_case(&current_app))
-        .map(|target| ProxyTargetSnapshot {
-            provider_name: target.provider_name.clone(),
-        });
+    let current_app_target = proxy_target_snapshot_for_app(&runtime_status, &current_app);
+    let provider_health = Arc::new(
+        state
+            .db
+            .list_provider_health_for_app(app_type.as_str())
+            .await?
+            .into_iter()
+            .map(|health| {
+                (
+                    health.provider_id,
+                    ProviderHealthSnapshot {
+                        is_healthy: health.is_healthy,
+                        consecutive_failures: health.consecutive_failures,
+                    },
+                )
+            })
+            .collect(),
+    );
     let active_worker_apps = runtime_status
         .active_workers
         .iter()
@@ -3059,7 +3077,22 @@ pub(crate) async fn load_proxy_snapshot_from_state_async(
             .filter(|value| !value.is_empty())
             .map(str::to_string),
         current_app_target,
+        provider_health,
     })
+}
+
+fn proxy_target_snapshot_for_app(
+    runtime_status: &crate::proxy::types::ProxyStatus,
+    app_type: &str,
+) -> Option<ProxyTargetSnapshot> {
+    runtime_status
+        .active_targets
+        .iter()
+        .find(|target| target.app_type.eq_ignore_ascii_case(app_type))
+        .map(|target| ProxyTargetSnapshot {
+            provider_id: target.provider_id.clone(),
+            provider_name: target.provider_name.clone(),
+        })
 }
 
 fn load_skills_snapshot() -> Result<SkillsSnapshot, AppError> {
@@ -4152,11 +4185,53 @@ mod tests {
                 .update_proxy_config_for_app(config)
                 .await
                 .expect("persist claude app proxy config");
+            state
+                .db
+                .update_provider_health_with_threshold(
+                    &provider.id,
+                    "claude",
+                    false,
+                    Some("upstream timeout".to_string()),
+                    4,
+                )
+                .await
+                .expect("record provider health");
         });
 
         let snapshot =
             load_proxy_snapshot_from_state(&state, &AppType::Claude).expect("load proxy snapshot");
         assert!(snapshot.auto_failover_enabled);
+        assert_eq!(
+            snapshot.provider_health.get(&provider.id),
+            Some(&ProviderHealthSnapshot {
+                is_healthy: true,
+                consecutive_failures: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn proxy_target_snapshot_keeps_provider_id_and_filters_by_app() {
+        let status = crate::proxy::types::ProxyStatus {
+            active_targets: vec![
+                crate::proxy::types::ActiveTarget {
+                    app_type: "codex".to_string(),
+                    provider_name: "Codex Target".to_string(),
+                    provider_id: "codex-target".to_string(),
+                },
+                crate::proxy::types::ActiveTarget {
+                    app_type: "Claude".to_string(),
+                    provider_name: "Claude Target".to_string(),
+                    provider_id: "claude-target".to_string(),
+                },
+            ],
+            ..crate::proxy::types::ProxyStatus::default()
+        };
+
+        let target = proxy_target_snapshot_for_app(&status, "claude")
+            .expect("matching active target snapshot");
+        assert_eq!(target.provider_id, "claude-target");
+        assert_eq!(target.provider_name, "Claude Target");
     }
 
     #[test]
@@ -4559,6 +4634,7 @@ mod tests {
             current_provider: Some("Claude Test Provider".to_string()),
             last_error: Some("last upstream failure".to_string()),
             current_app_target: Some(ProxyTargetSnapshot {
+                provider_id: "claude-test".to_string(),
                 provider_name: "Claude Test Provider".to_string(),
             }),
             ..ProxySnapshot::default()
