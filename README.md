@@ -160,7 +160,9 @@ cc-switch provider switch <id>       # Switch provider
 cc-switch use <id>                   # Switch provider (shortcut)
 cc-switch provider export <id>       # Export a Claude provider to a standalone settings file
 cc-switch provider stream-check <id> # Check provider stream health
-cc-switch start <claude|codex> <id> --dry-run # Preview launch
+cc-switch start claude <id>          # Launch Claude with this provider without switching globally
+cc-switch start codex <id>           # Launch Codex with this provider without switching globally
+cc-switch start claude <id> --dry-run # Preview the launch without starting Claude
 cc-switch auth list                  # List managed ChatGPT/Codex OAuth accounts
 cc-switch sessions list --all        # Review saved assistant sessions
 cc-switch sessions sync-usage --all  # Import local session token/cost usage
@@ -178,6 +180,8 @@ cc-switch --app openclaw provider list  # Manage OpenClaw providers
 
 # Supported apps: `claude` (default), `codex`, `gemini`, `opencode`, `hermes`, `openclaw`
 ```
+
+Use `cc-switch start` when you want different providers in multiple terminals. It only affects the Claude or Codex session launched by that command; `provider switch` and `use` still change the global provider. In the TUI, select a provider on the Providers page and press `o` for the same behavior.
 
 See the "Features" section for full command list.
 

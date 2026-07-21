@@ -160,7 +160,9 @@ cc-switch provider switch <id>       # 切换供应商
 cc-switch use <id>                   # 切换供应商（快捷命令）
 cc-switch provider export <id>       # 导出 Claude 供应商为独立 settings 文件
 cc-switch provider stream-check <id> # 检查供应商流式健康
-cc-switch start <claude|codex> <id> --dry-run # 预览启动配置
+cc-switch start claude <id>          # 用指定供应商启动 Claude，不切换全局供应商
+cc-switch start codex <id>           # 用指定供应商启动 Codex，不切换全局供应商
+cc-switch start claude <id> --dry-run # 仅预览启动配置
 cc-switch auth list                  # 查看托管的 ChatGPT/Codex OAuth 账号
 cc-switch sessions list --all        # 查看历史会话
 cc-switch sessions sync-usage --all  # 导入本地会话 token / cost 用量
@@ -178,6 +180,8 @@ cc-switch --app openclaw provider list  # 管理 OpenClaw 供应商
 
 # 支持的应用：`claude`（默认）、`codex`、`gemini`、`opencode`、`hermes`、`openclaw`
 ```
+
+需要在多个终端同时使用不同供应商时，请使用 `cc-switch start`。它只影响由该命令启动的 Claude 或 Codex 会话；`provider switch` 和 `use` 仍会切换全局供应商。在 TUI 的供应商页选中供应商后按 `o`，效果相同。
 
 完整命令列表请参考「功能特性」章节。
 
