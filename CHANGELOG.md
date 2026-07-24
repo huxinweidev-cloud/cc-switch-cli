@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.9.3] - 2026-07-24
+
+### Added
+
+- **Providers / Full URL Mode**: Press `f` on the Claude or Codex API URL field to use the exact upstream request URL through the local proxy. The form shows an inline `Full URL` indicator and warns when the proxy is required. Includes [#360](https://github.com/SaladDay/cc-switch-cli/pull/360).
+- **Codex / Prompt Cache Routing**: Add Auto, Enabled, and Disabled controls for `prompt_cache_key` when the proxy converts Responses requests to Chat Completions. Auto mode sends the key only to known-compatible upstreams. Includes [#361](https://github.com/SaladDay/cc-switch-cli/pull/361).
+- **Codex Desktop / Remote Projects**: Add a setting that preserves an existing official ChatGPT login while third-party providers or proxy takeover use a key from `config.toml`. The proxy now serves the active managed model catalog at `/models` and `/v1/models`, and the TUI prompts users to restart Codex or reconnect an SSH project after switching. Addresses [#364](https://github.com/SaladDay/cc-switch-cli/issues/364).
+
+### Changed
+
+- **CLI / Per-Terminal Launches**: Document `cc-switch start claude|codex <provider>` and the TUI `o` shortcut for launching one session with a provider without changing the global selection. Addresses [#363](https://github.com/SaladDay/cc-switch-cli/issues/363).
+- **Database / Upstream Compatibility**: Advance the local database to schema v16, including upstream-compatible fields and the Codex usage rebuild migration. Addresses [#366](https://github.com/SaladDay/cc-switch-cli/issues/366).
+
 ### Fixed
 
 - **Usage / Codex Forks**: Align the Codex session importer with upstream parent-rollout token-prefix matching, so copied history in forked and subagent sessions is not counted again. Session imports are serialized and emit one refresh notification per cycle.
@@ -18,6 +31,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Schema v16 rebuilds only `codex_session` usage from source JSONL after making the normal pre-migration backup. History whose source log was already deleted cannot be reconstructed.
 - Forks whose parent rollout is missing are deferred instead of guessed; restoring the parent log and using the Usage page's Codex rebuild action imports them later.
 - Existing proxy-source rows are intentionally left untouched.
+
+### Thanks
+
+Thanks to everyone who filed an issue, shared diagnostics, or contributed code during this release cycle:
+
+- PRs: [@kingxzq](https://github.com/kingxzq) ([#360](https://github.com/SaladDay/cc-switch-cli/pull/360)) and [@bigshezhang](https://github.com/bigshezhang) ([#361](https://github.com/SaladDay/cc-switch-cli/pull/361)).
+- Reports and workflow feedback: [@ymj68520](https://github.com/ymj68520) ([#362](https://github.com/SaladDay/cc-switch-cli/issues/362)), [@limm-max](https://github.com/limm-max) ([#363](https://github.com/SaladDay/cc-switch-cli/issues/363)), [@LawrentChen](https://github.com/LawrentChen) ([#364](https://github.com/SaladDay/cc-switch-cli/issues/364)), [@moetayuko](https://github.com/moetayuko) ([#366](https://github.com/SaladDay/cc-switch-cli/issues/366)), [@gabornju](https://github.com/gabornju) ([#367](https://github.com/SaladDay/cc-switch-cli/issues/367)), and [@genmlite](https://github.com/genmlite) ([#368](https://github.com/SaladDay/cc-switch-cli/issues/368)).
+- Upstream credit: [@farion1231](https://github.com/farion1231) and the upstream contributors whose behavior was adapted here, especially [@yovinchen](https://github.com/yovinchen) for full URL routing, [@codeasier](https://github.com/codeasier) for Codex OAuth preservation, and [@CSberlin](https://github.com/CSberlin) for the Codex model reachability endpoint.
 
 ## [5.9.2] - 2026-07-18
 

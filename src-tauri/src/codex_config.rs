@@ -744,6 +744,22 @@ pub fn prepare_codex_config_text_with_model_catalog(
     Ok(prepared.config_text)
 }
 
+/// Project an inline provider model catalog when one is present.
+///
+/// Settings without `modelCatalog` may already carry a live
+/// `model_catalog_json` pointer, so their config text is preserved unchanged.
+pub fn prepare_codex_live_config_text_with_optional_catalog(
+    settings: &Value,
+    config_text: &str,
+    profile: CodexCatalogToolProfile,
+) -> Result<String, AppError> {
+    if settings.get("modelCatalog").is_some() {
+        prepare_codex_config_text_with_model_catalog(settings, config_text, profile)
+    } else {
+        Ok(config_text.to_string())
+    }
+}
+
 pub fn read_codex_model_catalog_simplified_from_live() -> Result<Option<Value>, AppError> {
     let config_text = read_codex_config_text()?;
     let generated_path = get_codex_model_catalog_path();
@@ -772,7 +788,10 @@ pub fn read_codex_live_settings_with_model_catalog() -> Result<Value, AppError> 
     Ok(settings)
 }
 
-fn resolve_cc_switch_catalog_path(config_text: &str, generated_path: &Path) -> Option<PathBuf> {
+pub(crate) fn resolve_cc_switch_catalog_path(
+    config_text: &str,
+    generated_path: &Path,
+) -> Option<PathBuf> {
     if config_text.trim().is_empty() {
         return None;
     }

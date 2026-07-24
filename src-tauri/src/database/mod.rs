@@ -675,7 +675,10 @@ impl Database {
 
     pub(crate) fn existing_database_needs_migration(path: &Path) -> Result<bool, AppError> {
         match std::fs::symlink_metadata(path) {
-            Ok(_) => validate_existing_database_file(path)?,
+            Ok(_) => {
+                #[cfg(unix)]
+                validate_existing_database_file(path)?;
+            }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
             Err(error) => return Err(AppError::io(path, error)),
         }
