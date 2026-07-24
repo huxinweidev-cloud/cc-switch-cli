@@ -788,7 +788,10 @@ pub fn read_codex_live_settings_with_model_catalog() -> Result<Value, AppError> 
     Ok(settings)
 }
 
-fn resolve_cc_switch_catalog_path(config_text: &str, generated_path: &Path) -> Option<PathBuf> {
+pub(crate) fn resolve_cc_switch_catalog_path(
+    config_text: &str,
+    generated_path: &Path,
+) -> Option<PathBuf> {
     if config_text.trim().is_empty() {
         return None;
     }
