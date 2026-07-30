@@ -9734,8 +9734,7 @@ mod tests {
     }
 
     #[test]
-    fn settings_codex_login_preservation_has_remote_context_help() {
-        let _lang = use_test_language(Language::English);
+    fn settings_codex_login_preservation_help_matches_direct_switch_scope() {
         let mut app = App::new(Some(AppType::Codex));
         app.route = Route::Settings;
         app.focus = Focus::Content;
@@ -9744,13 +9743,35 @@ mod tests {
             .position(|item| matches!(item, SettingsItem::PreserveCodexOfficialAuth))
             .expect("PreserveCodexOfficialAuth missing from SettingsItem::ALL");
 
-        let help = crate::cli::tui::help::context_help_for_app(&app, &UiData::default());
-        let body = help.lines.join("\n");
+        {
+            let _lang = use_test_language(Language::English);
+            let help = crate::cli::tui::help::context_help_for_app(&app, &UiData::default());
+            let body = help.lines.join("\n");
 
-        assert_eq!(help.title, "Preserve Codex official login");
-        assert!(body.contains("remote user's CODEX_HOME"), "{body}");
-        assert!(body.contains("reconnect the remote project"), "{body}");
-        assert!(body.contains("does not sign you in"), "{body}");
+            assert_eq!(help.title, "Keep official login for direct switches");
+            assert_eq!(
+                help.lines.first().map(String::as_str),
+                Some(
+                    "Controls third-party switches when local routing is off. Takeover routing always preserves the Codex official login."
+                )
+            );
+            assert!(body.contains("remote user's CODEX_HOME"), "{body}");
+            assert!(body.contains("reconnect the remote project"), "{body}");
+            assert!(body.contains("does not sign you in"), "{body}");
+        }
+
+        {
+            let _lang = use_test_language(Language::Chinese);
+            let help = crate::cli::tui::help::context_help_for_app(&app, &UiData::default());
+
+            assert_eq!(help.title, "非接管切换时保留官方登录");
+            assert_eq!(
+                help.lines.first().map(String::as_str),
+                Some(
+                    "控制未开启路由接管时切换第三方供应商是否保留 Codex 官方登录；路由接管期间始终保留"
+                )
+            );
+        }
     }
 
     #[test]
@@ -16570,9 +16591,7 @@ mod tests {
     }
 
     #[test]
-    fn sessions_page_down_requires_a_second_press_at_the_logical_page_boundary() {
-        use crate::cli::tui::app::paged_list::{PageBoundary, PagedListFocus};
-
+    fn sessions_page_down_crosses_a_logical_page_boundary_seamlessly() {
         let mut app = App::new(Some(AppType::Claude));
         app.route = Route::Sessions;
         app.focus = Focus::Content;
@@ -16596,20 +16615,88 @@ mod tests {
         app.sessions.selected_idx = 90;
 
         app.on_sessions_key(key(KeyCode::PageDown), &data());
-        assert_eq!(app.sessions.selected_idx, 99);
-        assert_eq!(
-            app.sessions.pagination.focus(),
-            PagedListFocus::Boundary(PageBoundary::Next)
-        );
+        assert_eq!(app.sessions.selected_idx, 121);
+        assert!(app.sessions.pagination.is_row_focused());
 
         app.on_sessions_key(key(KeyCode::PageDown), &data());
-        assert_eq!(app.sessions.selected_idx, 100);
+        assert_eq!(app.sessions.selected_idx, 152);
         assert!(app.sessions.pagination.is_row_focused());
     }
 
     #[test]
-    fn sessions_wheel_requires_a_new_gesture_to_cross_page_boundary() {
-        use crate::cli::tui::app::paged_list::{PageBoundary, PagedListFocus};
+    fn transcript_page_keys_keep_current_page_filter_and_cross_full_history() {
+        let temp = tempfile::tempdir().expect("transcript fixture directory");
+        let source = temp.path().join("session.jsonl");
+        let mut body = String::new();
+        for index in 0_usize..205 {
+            body.push_str(
+                &serde_json::json!({
+                    "type": "response_item",
+                    "timestamp": index as i64,
+                    "payload": {
+                        "type": "message",
+                        "role": "user",
+                        "content": [{
+                            "type": "input_text",
+                            "text": format!("message-{index}")
+                        }],
+                    }
+                })
+                .to_string(),
+            );
+            body.push('\n');
+        }
+        std::fs::write(&source, body).expect("write transcript fixture");
+        let (reader, newest) = crate::session_manager::transcript::open_transcript_at(
+            &temp.path().join("config"),
+            "codex",
+            &source.to_string_lossy(),
+        )
+        .expect("open transcript fixture");
+
+        let mut app = App::new(Some(AppType::Codex));
+        app.route = Route::Sessions;
+        app.focus = Focus::Content;
+        app.sessions.pane = SessionsPane::Detail;
+        app.last_size = Size {
+            width: 120,
+            height: 40,
+        };
+        let detail_key = "codex:session:test".to_string();
+        app.sessions.detail_key = Some(detail_key.clone());
+        let request_id = app.sessions.start_message_load(detail_key.clone());
+        assert!(app
+            .sessions
+            .finish_message_load(request_id, &detail_key, reader, newest));
+        app.sessions.message_idx = 4;
+        app.sessions.sync_loaded_message_selection();
+        app.sessions.message_filter.set("message-20");
+
+        app.on_sessions_key(key(KeyCode::Up), &data());
+        assert_eq!(app.sessions.message_idx, 3);
+        assert_eq!(app.sessions.selected_message_absolute(), 203);
+        app.on_sessions_key(key(KeyCode::Down), &data());
+        assert_eq!(app.sessions.message_idx, 4);
+        assert_eq!(
+            app.sessions.selected_message_absolute(),
+            204,
+            "filtered navigation and the absolute transcript pager must stay synchronized"
+        );
+
+        app.sessions.message_filter.set("message-204");
+
+        app.on_sessions_key(key(KeyCode::PageUp), &data());
+
+        assert_eq!(app.sessions.message_filter.value, "message-204");
+        assert_eq!(app.sessions.message_remote.pending_cross_page(), Some(1));
+        assert!(
+            app.sessions.message_remote.input_is_blocked(),
+            "a current-page filter must not disable full-history page navigation"
+        );
+    }
+
+    #[test]
+    fn sessions_wheel_crosses_once_per_gesture_without_boundary_focus() {
         use crate::cli::tui::input::{ScrollDirection, WheelGestureId};
 
         let mut app = App::new(Some(AppType::Claude));
@@ -16631,29 +16718,25 @@ mod tests {
 
         let first = WheelGestureId::from_raw(1);
         app.on_sessions_wheel(ScrollDirection::Down, 10_000, first, &data());
-        assert_eq!(app.sessions.selected_idx, 99);
-        assert_eq!(
-            app.sessions.pagination.focus(),
-            PagedListFocus::Boundary(PageBoundary::Next)
-        );
+        assert_eq!(app.sessions.selected_idx, 199);
+        assert!(app.sessions.pagination.is_row_focused());
 
         app.on_sessions_wheel(ScrollDirection::Down, 10_000, first, &data());
-        assert_eq!(app.sessions.selected_idx, 99);
+        assert_eq!(app.sessions.selected_idx, 199);
 
         let second = WheelGestureId::from_raw(2);
         app.on_sessions_wheel(ScrollDirection::Down, 10_000, second, &data());
-        assert_eq!(app.sessions.selected_idx, 100);
+        assert_eq!(app.sessions.selected_idx, 249);
         assert!(app.sessions.pagination.is_row_focused());
 
         // Remaining reports from the crossing gesture cannot move within the
         // newly entered page, keeping its first row stable.
         app.on_sessions_wheel(ScrollDirection::Down, 10_000, second, &data());
-        assert_eq!(app.sessions.selected_idx, 100);
+        assert_eq!(app.sessions.selected_idx, 249);
     }
 
     #[test]
     fn sessions_wheel_keeps_visible_selection_at_tombstone_page_edge() {
-        use crate::cli::tui::app::paged_list::{PageBoundary, PagedListFocus};
         use crate::cli::tui::input::{ScrollDirection, WheelGestureId};
 
         let mut app = App::new(Some(AppType::Claude));
@@ -16697,8 +16780,8 @@ mod tests {
             assert!(app.sessions.remove_session_by_key(&key));
         }
         assert_eq!(app.sessions.rows.len(), 90);
-        app.sessions.selected_idx = 88;
-        app.sessions.pagination.select(88);
+        app.sessions.selected_idx = 89;
+        app.sessions.pagination.select(99);
         let last_key = crate::cli::tui::app::session_key(
             app.sessions.rows.last().expect("last visible session"),
         );
@@ -16718,14 +16801,12 @@ mod tests {
             last_key
         );
         assert_eq!(app.sessions.detail_key.as_deref(), Some(last_key.as_str()));
-        assert_eq!(
-            app.sessions.pagination.focus(),
-            PagedListFocus::Boundary(PageBoundary::Next)
-        );
+        assert!(app.sessions.pagination.is_row_focused());
+        assert_eq!(app.sessions.remote.pending_cross_page(), Some(1));
     }
 
     #[test]
-    fn sessions_boundary_enter_crosses_without_opening_detail() {
+    fn sessions_pending_seamless_cross_ignores_enter_without_opening_detail() {
         use crate::cli::tui::input::{ScrollDirection, WheelGestureId};
 
         let mut app = App::new(Some(AppType::Claude));
@@ -16780,7 +16861,7 @@ mod tests {
         let action = app.on_sessions_key(key(KeyCode::Enter), &data());
 
         assert!(matches!(action, Action::None));
-        assert_eq!(app.sessions.selected_idx, 99);
+        assert_eq!(app.sessions.selected_idx, 0);
         assert_eq!(app.sessions.remote.pending_cross_page(), Some(1));
         assert!(app.sessions.remote.input_is_blocked());
         assert_eq!(app.sessions.pane, SessionsPane::List);
@@ -17439,6 +17520,88 @@ mod tests {
                 if command == "claude --resume session-1"
                     && cwd.as_deref() == Some("/tmp/project")
         ));
+    }
+
+    #[test]
+    fn copyable_toast_routes_its_shortcut_to_the_clipboard_action() {
+        let mut app = app_with_session_page();
+        app.push_copyable_toast(
+            "Could not open a terminal",
+            ToastKind::Warning,
+            "claude --resume session-1",
+        );
+
+        let action = app.on_key(key(KeyCode::Char('c')), &UiData::default());
+
+        assert!(matches!(
+            action,
+            Action::CopyToClipboard { text }
+                if text == "claude --resume session-1"
+        ));
+    }
+
+    #[test]
+    fn copyable_toast_does_not_capture_text_input() {
+        let mut app = app_with_session_page();
+        app.push_copyable_toast(
+            "Could not open a terminal",
+            ToastKind::Warning,
+            "claude --resume session-1",
+        );
+        app.filter.active = true;
+
+        let action = app.on_key(key(KeyCode::Char('c')), &UiData::default());
+
+        assert!(!matches!(action, Action::CopyToClipboard { .. }));
+        assert_eq!(app.filter.input.value, "c");
+    }
+
+    #[test]
+    fn copyable_toast_does_not_capture_shortcuts_after_context_changes() {
+        let mut app = app_with_session_page();
+        app.push_copyable_toast(
+            "Could not open a terminal",
+            ToastKind::Warning,
+            "claude --resume session-1",
+        );
+
+        let _ = app.set_route_no_history(Route::Providers);
+        assert!(
+            app.toast.is_none(),
+            "leaving the action scope should retire the toast"
+        );
+        let route_action = app.on_key(key(KeyCode::Char('c')), &UiData::default());
+        assert!(!matches!(route_action, Action::CopyToClipboard { .. }));
+
+        app.push_copyable_toast(
+            "Could not open a terminal",
+            ToastKind::Warning,
+            "claude --resume session-1",
+        );
+        app.route = Route::Sessions;
+        app.app_type = AppType::Codex;
+        let app_action = app.on_key(key(KeyCode::Char('c')), &UiData::default());
+        assert!(!matches!(app_action, Action::CopyToClipboard { .. }));
+    }
+
+    #[test]
+    fn copyable_toast_does_not_capture_modal_shortcuts() {
+        let mut app = app_with_session_page();
+        app.push_copyable_toast(
+            "Could not open a terminal",
+            ToastKind::Warning,
+            "claude --resume session-1",
+        );
+        app.overlay = Overlay::Confirm(ConfirmOverlay {
+            title: "Confirm".to_string(),
+            message: "Continue?".to_string(),
+            action: ConfirmAction::Quit,
+        });
+
+        let action = app.on_key(key(KeyCode::Char('c')), &UiData::default());
+
+        assert!(!matches!(action, Action::CopyToClipboard { .. }));
+        assert!(matches!(app.overlay, Overlay::Confirm(_)));
     }
 
     #[test]

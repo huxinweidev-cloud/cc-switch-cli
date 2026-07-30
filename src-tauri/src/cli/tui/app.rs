@@ -31,6 +31,7 @@ mod form_handlers;
 mod helpers;
 mod menu;
 mod overlay_handlers;
+mod page_window;
 pub(crate) mod paged_list;
 #[cfg(test)]
 mod tests;
@@ -53,8 +54,8 @@ pub use types::{
     CodexHistoryConfirmMode, CodexHistoryConfirmState, CommonSnippetViewSource, ConfirmAction,
     ConfirmOverlay, FilterScope, FilterState, Focus, LoadingKind, ManagedAuthLoginState, Overlay,
     PricingState, SessionProjectPickerState, SessionsPane, SessionsState, SkillsDiscoverSource,
-    TextInputState, TextSubmit, TextViewAction, TextViewState, Toast, ToastKind, UsageMetric,
-    UsagePane, UsageState,
+    TextInputState, TextSubmit, TextViewAction, TextViewState, Toast, ToastAction,
+    ToastActionScope, ToastKind, UsageMetric, UsagePane, UsageState,
 };
 #[cfg(test)]
 pub(crate) use types::{McpEnvEditorField, McpEnvEntryEditorState};

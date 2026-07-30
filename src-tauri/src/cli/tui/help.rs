@@ -275,8 +275,8 @@ fn help_for_target(target: HelpTarget, app: &App, data: &UiData) -> HelpContent 
         HelpTarget::Sessions => HelpContent::new(
             texts::tui_sessions_title(),
             help_lines(
-                "会话始终只显示当前应用，结果由项目范围 × / 搜索共同决定。\n←/→ 切换列表和详情，h/l 是备用键；↑/↓ 逐项移动，PgUp/PgDn 按页移动。p 打开项目选择器；Home/End 跳到首尾，Shift+←/→ 查看完整目录，Shift+Home/End 直达目录两端。\n“未知目录”位于项目列表末尾，只包含缺少项目目录的旧会话；精确项目按词法规范化后的完整目录匹配。",
-                "Sessions always show the current app; results combine Project scope × / Search.\nUse ←/→ to switch between the list and details; h/l are aliases. Use ↑/↓ to move one item and PgUp/PgDn to move by a page. Press p to choose a project; Home/End jumps to either list end, Shift+←/→ reveals the complete directory, and Shift+Home/End jumps to either path end.\nUnknown directory is last and contains only legacy sessions without a project directory; exact projects match the complete lexically normalized directory.",
+                "会话始终只显示当前应用，结果由项目范围 × / 搜索共同决定。\n←/→ 切换列表和详情，h/l 是备用键；↑/↓ 逐项移动，PgUp/PgDn 按页移动。p 打开项目选择器；Home/End 在当前会话列表或消息历史中跳到首尾，Shift+←/→ 查看完整目录，Shift+Home/End 直达目录两端。\n详情中的消息按需分页，覆盖完整逻辑历史；为保持响应速度，超长单条正文只显示有界预览。详情内的 / 只过滤当前消息页，保留筛选时仍可用 PgUp/PgDn/Home/End 浏览其他历史页。\n“未知目录”位于项目列表末尾，只包含缺少项目目录的旧会话；精确项目按词法规范化后的完整目录匹配。",
+                "Sessions always show the current app; results combine Project scope × / Search.\nUse ←/→ to switch between the list and details; h/l are aliases. Use ↑/↓ to move one item and PgUp/PgDn to move by a page. Press p to choose a project; Home/End jumps to either end of the active session list or message history, Shift+←/→ reveals the complete directory, and Shift+Home/End jumps to either path end.\nDetail messages are paged on demand across the complete logical history. To stay responsive, an unusually long individual body is shown as a bounded preview. In details, / filters the current message page only; PgUp/PgDn/Home/End still browse other history pages while the filter is retained.\nUnknown directory is last and contains only legacy sessions without a project directory; exact projects match the complete lexically normalized directory.",
             ),
         ),
         HelpTarget::FailoverQueue => HelpContent::new(
@@ -296,8 +296,8 @@ fn help_for_target(target: HelpTarget, app: &App, data: &UiData) -> HelpContent 
         HelpTarget::CodexOfficialAuthPreservation => HelpContent::new(
             texts::codex_preserve_official_auth_label(),
             help_lines(
-                "开启后，切换到第三方 Codex 供应商或由本地代理接管时不会覆盖现有的官方 ChatGPT 登录；第三方密钥会写入 config.toml。此开关不会替你登录，也不会恢复此前被覆盖的凭据。\nCodex Desktop 的 SSH 项目读取远端用户的 CODEX_HOME、凭据和代理。请在远端 cc-switch-cli 开启本项；切换供应商后重新连接远程项目，使远端 app-server 重新加载配置和模型目录。",
-                "When enabled, switching to a third-party Codex provider or enabling local proxy takeover does not overwrite the existing ChatGPT login; the third-party key is written to config.toml. This setting does not sign you in or recover credentials that were already overwritten.\nCodex Desktop SSH projects use the remote user's CODEX_HOME, credentials, and proxy. Enable this setting in the remote cc-switch-cli, then reconnect the remote project after switching providers so its app-server reloads the config and model catalog.",
+                "控制未开启路由接管时切换第三方供应商是否保留 Codex 官方登录；路由接管期间始终保留\n开启后，非接管切换会将第三方密钥写入 config.toml，而不覆盖现有的官方 ChatGPT 登录。此开关不会替你登录，也不会恢复此前被覆盖的凭据。\nCodex Desktop 的 SSH 项目读取远端用户的 CODEX_HOME、凭据和代理。请在远端 cc-switch-cli 开启本项；切换供应商后重新连接远程项目，使远端 app-server 重新加载配置和模型目录。",
+                "Controls third-party switches when local routing is off. Takeover routing always preserves the Codex official login.\nWhen enabled, direct third-party switches write the third-party key to config.toml without overwriting the existing official ChatGPT login. This setting does not sign you in or recover credentials that were already overwritten.\nCodex Desktop SSH projects use the remote user's CODEX_HOME, credentials, and proxy. Enable this setting in the remote cc-switch-cli, then reconnect the remote project after switching providers so its app-server reloads the config and model catalog.",
             ),
         ),
         HelpTarget::CodexUnifiedSessionHistory => HelpContent::new(

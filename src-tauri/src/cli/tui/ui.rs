@@ -21,7 +21,7 @@ use super::{
     app,
     app::{
         App, CloudSyncBackend, ConfigItem, ConfirmAction, Focus, LoadingKind, Overlay,
-        S3ConfigItem, SessionsPane, ToastKind, WebDavConfigItem,
+        S3ConfigItem, SessionsPane, Toast, ToastAction, ToastKind, WebDavConfigItem,
     },
     data::{McpRow, ProviderRow, UiData},
     form::{
@@ -225,7 +225,7 @@ fn render_filter_bar(frame: &mut Frame<'_>, app: &App, area: Rect, theme: &super
         } else {
             Style::default().fg(theme.dim)
         })
-        .title(texts::tui_filter_title());
+        .title(app.displayed_filter_title());
 
     frame.render_widget(outer.clone(), area);
 

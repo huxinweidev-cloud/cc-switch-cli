@@ -268,11 +268,7 @@ pub mod texts {
 
     // Welcome & Headers
     pub fn welcome_title() -> &'static str {
-        if is_chinese() {
-            "🎯 CC-Switch"
-        } else {
-            "🎯 CC-Switch"
-        }
+        "CC-Switch"
     }
 
     pub fn application() -> &'static str {
@@ -369,6 +365,30 @@ pub mod texts {
         " ✗ "
     }
 
+    pub fn tui_toast_clipboard_request_sent() -> &'static str {
+        if is_chinese() {
+            "复制请求已发送到终端。"
+        } else {
+            "Clipboard request sent to the terminal."
+        }
+    }
+
+    pub fn tui_toast_copied_to_clipboard() -> &'static str {
+        if is_chinese() {
+            "已复制到剪贴板。"
+        } else {
+            "Copied to clipboard."
+        }
+    }
+
+    pub fn tui_toast_copy_to_clipboard_failed() -> &'static str {
+        if is_chinese() {
+            "无法复制到剪贴板，请重试。"
+        } else {
+            "Could not copy to the clipboard. Please try again."
+        }
+    }
+
     pub fn tui_toast_invalid_json(details: &str) -> String {
         if is_chinese() {
             format!("JSON 无效：{details}")
@@ -452,6 +472,14 @@ pub mod texts {
             "过滤"
         } else {
             "Filter"
+        }
+    }
+
+    pub fn tui_session_message_page_filter_title() -> &'static str {
+        if is_chinese() {
+            "过滤 · 当前消息页"
+        } else {
+            "Filter · Current message page"
         }
     }
 
@@ -4398,6 +4426,14 @@ pub mod texts {
             "滚动"
         } else {
             "scroll"
+        }
+    }
+
+    pub fn tui_key_page() -> &'static str {
+        if is_chinese() {
+            "翻页"
+        } else {
+            "page"
         }
     }
 
@@ -8417,14 +8453,14 @@ pub mod texts {
     pub fn tui_toast_codex_official_auth_preservation_toggled(enabled: bool) -> String {
         if is_chinese() {
             if enabled {
-                "已启用 Codex 官方登录保护。".to_string()
+                "已开启非接管切换时的官方登录保留。".to_string()
             } else {
-                "已关闭 Codex 官方登录保护。".to_string()
+                "已关闭非接管切换时的官方登录保留。".to_string()
             }
         } else if enabled {
-            "Codex official login preservation enabled.".to_string()
+            "Official login preservation for direct switches enabled.".to_string()
         } else {
-            "Codex official login preservation disabled.".to_string()
+            "Official login preservation for direct switches disabled.".to_string()
         }
     }
 
@@ -9302,22 +9338,6 @@ pub mod texts {
         title
     }
 
-    pub fn tui_sessions_messages_preview_title(truncated: bool) -> String {
-        let mut title = if is_chinese() {
-            "消息 · 有界预览".to_string()
-        } else {
-            "Messages · Bounded preview".to_string()
-        };
-        if truncated {
-            title.push_str(if is_chinese() {
-                " · 已截断"
-            } else {
-                " · Truncated"
-            });
-        }
-        title
-    }
-
     pub fn tui_sessions_empty_title() -> &'static str {
         if is_chinese() {
             "未找到本地会话"
@@ -9547,6 +9567,14 @@ pub mod texts {
         }
     }
 
+    pub fn tui_pagination_load_failed_move_retry() -> &'static str {
+        if is_chinese() {
+            "加载失败 · 再次移动重试"
+        } else {
+            "Load failed · Move again to retry"
+        }
+    }
+
     pub fn tui_pagination_end(total: usize) -> String {
         if is_chinese() {
             format!("已到末尾 · 共 {total} 条")
@@ -9671,9 +9699,9 @@ pub mod texts {
 
     pub fn tui_sessions_messages_filtered_empty() -> &'static str {
         if is_chinese() {
-            "没有符合当前筛选/搜索的消息。"
+            "当前消息页没有符合筛选的消息；PgUp/PgDn 可继续浏览历史。"
         } else {
-            "No messages match the current filters."
+            "No matches on this message page; use PgUp/PgDn to browse history."
         }
     }
 
@@ -9791,11 +9819,11 @@ pub mod texts {
         }
     }
 
-    pub fn tui_sessions_toast_resume_fallback(err: &str) -> String {
+    pub fn tui_sessions_toast_resume_fallback() -> &'static str {
         if is_chinese() {
-            format!("无法自动打开终端，已显示恢复命令：{err}")
+            "无法自动打开终端，已显示恢复命令"
         } else {
-            format!("Could not open a terminal; showing the resume command instead: {err}")
+            "Could not open a terminal; showing the resume command instead."
         }
     }
 
@@ -12034,9 +12062,9 @@ pub mod texts {
 
     pub fn codex_preserve_official_auth_label() -> &'static str {
         if is_chinese() {
-            "保留 Codex 官方登录"
+            "非接管切换时保留官方登录"
         } else {
-            "Preserve Codex official login"
+            "Keep official login for direct switches"
         }
     }
 
@@ -13013,7 +13041,7 @@ mod tests {
             texts::provider_duplicated_success("source", "source-copy"),
             "✓ 已复制供应商 'source' 为 'source-copy'"
         );
-        assert_eq!(texts::welcome_title(), "🎯 CC-Switch");
+        assert_eq!(texts::welcome_title(), "CC-Switch");
         assert_eq!(texts::tui_home_section_connection(), "连接信息");
         assert_eq!(texts::tui_home_status_online(), "在线");
         assert_eq!(texts::tui_home_status_offline(), "离线");
@@ -13079,6 +13107,38 @@ mod tests {
             texts::tui_proxy_dashboard_manual_routing_copy("Claude"),
             "手动路由：Claude 的流量会通过 cc-switch。"
         );
+    }
+
+    #[test]
+    fn session_resume_fallback_omits_backend_error_details() {
+        {
+            let _lang = use_test_language(Language::Chinese);
+            assert_eq!(
+                texts::tui_sessions_toast_resume_fallback(),
+                "无法自动打开终端，已显示恢复命令"
+            );
+            assert_eq!(
+                texts::tui_toast_clipboard_request_sent(),
+                "复制请求已发送到终端。"
+            );
+            assert_eq!(texts::tui_toast_copied_to_clipboard(), "已复制到剪贴板。");
+        }
+
+        {
+            let _lang = use_test_language(Language::English);
+            assert_eq!(
+                texts::tui_sessions_toast_resume_fallback(),
+                "Could not open a terminal; showing the resume command instead."
+            );
+            assert_eq!(
+                texts::tui_toast_clipboard_request_sent(),
+                "Clipboard request sent to the terminal."
+            );
+            assert_eq!(
+                texts::tui_toast_copied_to_clipboard(),
+                "Copied to clipboard."
+            );
+        }
     }
 
     #[test]

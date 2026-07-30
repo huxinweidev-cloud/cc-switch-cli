@@ -2,7 +2,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     backend::TestBackend,
     buffer::Buffer,
-    style::{Color, Modifier},
+    style::{Color, Modifier, Style},
     Terminal,
 };
 use serde_json::{json, Value};
@@ -907,39 +907,11 @@ fn tui_sessions_empty_state_is_localized_and_mentions_runtime_scan() {
     assert!(all.contains("No local sessions found"), "{all}");
     assert!(all.contains("local session files"), "{all}");
     assert!(all.contains("database"), "{all}");
-    assert!(all.contains("←→ switch panel"), "{all}");
+    assert!(all.contains("switch panel"), "{all}");
+    assert!(all.contains("PgUp/PgDn"), "{all}");
+    assert!(all.contains(texts::tui_key_page()), "{all}");
     assert!(!all.contains("←→/h/l"), "{all}");
     assert!(!all.contains("show all"), "{all}");
-}
-
-#[test]
-fn tui_session_project_picker_keeps_secondary_page_keys_out_of_the_key_bar() {
-    let _lang = use_test_language(Language::English);
-    let mut app = App::new(Some(AppType::Claude));
-    app.route = Route::Sessions;
-    app.focus = Focus::Content;
-    app.overlay = Overlay::SessionProjectPicker(app::SessionProjectPickerState {
-        input: crate::cli::tui::text_edit::TextInput::new(""),
-        selected_idx: 0,
-        path_scroll: 0,
-        filtered_indices: None,
-        pinned_scope: None,
-        filter_error: None,
-    });
-
-    let all = all_text(&render_with_size(
-        &app,
-        &minimal_data(&app.app_type),
-        160,
-        40,
-    ));
-
-    assert!(all.contains("↑↓"), "{all}");
-    assert!(all.contains("Shift+←→"), "{all}");
-    assert!(all.contains(texts::tui_key_scroll()), "{all}");
-    assert!(!all.contains('⇧'), "{all}");
-    assert!(!all.contains("PgUp"), "{all}");
-    assert!(!all.contains("PgDn"), "{all}");
 }
 
 #[test]
@@ -1676,7 +1648,108 @@ fn tui_sessions_renders_split_detail_and_message_preview() {
 }
 
 #[test]
-fn tui_sessions_page_boundary_uses_compact_bottom_border_cta() {
+fn tui_sessions_transcript_footer_reports_the_complete_logical_history() {
+    let _lang = use_test_language(Language::English);
+    let temp = tempfile::tempdir().expect("transcript fixture directory");
+    let source = temp.path().join("session.jsonl");
+    let body = (0_usize..205)
+        .map(|index| {
+            serde_json::json!({
+                "type": "response_item",
+                "timestamp": index as i64,
+                "payload": {
+                    "type": "message",
+                    "role": if index.is_multiple_of(2) { "user" } else { "assistant" },
+                    "content": [{
+                        "type": "input_text",
+                        "text": format!("complete-message-{index}")
+                    }]
+                }
+            })
+            .to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(&source, body).expect("write transcript fixture");
+    let source_text = source.to_string_lossy().into_owned();
+    let (reader, _) = crate::session_manager::transcript::open_transcript_at(
+        &temp.path().join("config"),
+        "codex",
+        &source_text,
+    )
+    .expect("open transcript fixture");
+    let first = reader
+        .load_page(0, &|| false)
+        .expect("first transcript page");
+
+    let mut app = App::new(Some(AppType::Codex));
+    app.route = Route::Sessions;
+    app.focus = Focus::Content;
+    app.sessions.loaded_once = true;
+    app.sessions.rows.push(crate::session_manager::SessionMeta {
+        provider_id: "codex".to_string(),
+        session_id: "complete-history".to_string(),
+        title: Some("Complete history".to_string()),
+        source_path: Some(source_text),
+        ..crate::session_manager::SessionMeta::default()
+    });
+    let key = app::session_key(&app.sessions.rows[0]);
+    app.sessions.open_detail(key.clone());
+    app.sessions.pane = app::SessionsPane::Detail;
+    let request_id = app.sessions.start_message_load(key.clone());
+    assert!(app
+        .sessions
+        .finish_message_load(request_id, &key, reader, first));
+    app.sessions.messages_truncated = true;
+    assert_eq!(app.sessions.selected_message_absolute(), 0);
+
+    let all = all_text(&render_with_size(
+        &app,
+        &minimal_data(&app.app_type),
+        180,
+        40,
+    ));
+
+    assert!(all.contains("┌ Messages ─"), "{all}");
+    assert!(!all.contains("Messages ·"), "{all}");
+    assert!(!all.contains("Full history"), "{all}");
+    assert!(!all.contains("Body preview shortened"), "{all}");
+    assert!(all.contains("Page 1 · 1–100 of 205"), "{all}");
+    assert!(!all.contains("End of list · 205 total"), "{all}");
+    assert!(all.contains("complete-message-0"), "{all}");
+    assert!(!all.contains("complete-message-100"), "{all}");
+
+    let previous_gate = app.sessions.message_pagination.clone();
+    app.sessions.message_pagination.select(199);
+    assert!(!app
+        .sessions
+        .begin_message_page_cross(1, previous_gate, None));
+    let (page_request, generation, _refresh_page, _refresh_key, _reader) = app
+        .sessions
+        .next_message_page_request(1)
+        .expect("message page request");
+    assert!(app.sessions.fail_message_page_request(
+        page_request,
+        &key,
+        &generation,
+        1,
+        "offline".to_string(),
+    ));
+    let failed = all_text(&render_with_size(
+        &app,
+        &minimal_data(&app.app_type),
+        180,
+        40,
+    ));
+    assert!(
+        failed.contains("Load failed · Move again to retry"),
+        "{failed}"
+    );
+    assert!(!failed.contains("Enter to retry"), "{failed}");
+}
+
+#[test]
+fn tui_sessions_seamless_page_cross_uses_loading_footer() {
     use crate::cli::tui::input::{ScrollDirection, WheelGestureId};
 
     let _lang = use_test_language(Language::English);
@@ -1730,9 +1803,9 @@ fn tui_sessions_page_boundary_uses_compact_bottom_border_cta() {
         180,
         40,
     ));
-    assert!(all.contains("next page"), "{all}");
-    assert!(all.contains("Enter"), "{all}");
-    assert!(all.contains("Session 99"), "{all}");
+    assert!(all.contains("Loading page 2"), "{all}");
+    assert!(!all.contains("Enter to load"), "{all}");
+    assert!(all.contains("Session 0"), "{all}");
     assert!(!all.contains("Session 100"), "{all}");
 }
 
@@ -6835,7 +6908,7 @@ fn breadcrumb_title_strips_leading_emoji_in_ascii_mode() {
 }
 
 #[test]
-fn nav_drops_emoji_icons_in_ascii_mode() {
+fn nav_respects_icon_mode_and_home_title_stays_plain() {
     let _lock = lock_env();
     let _icons_lock = lock_test_home_and_settings();
     let _lang = use_test_language(Language::English);
@@ -6850,8 +6923,8 @@ fn nav_drops_emoji_icons_in_ascii_mode() {
         "emoji mode should render the nav provider icon: {emoji_view}"
     );
     assert!(
-        emoji_view.contains('🎯'),
-        "emoji mode should render the home title icon: {emoji_view}"
+        !emoji_view.contains('🎯'),
+        "the home title should stay plain in emoji mode: {emoji_view}"
     );
 
     let _ascii = EnvGuard::set("CC_SWITCH_ICONS", "ascii");
@@ -7780,6 +7853,169 @@ fn toast_renders_as_centered_overlay() {
 }
 
 #[test]
+fn copyable_toast_keeps_command_and_action_inside_compact_toast_layout() {
+    let _lock = lock_env();
+    let _no_color = EnvGuard::remove("NO_COLOR");
+
+    let mut app = App::new(Some(AppType::Codex));
+    app.route = Route::Sessions;
+    app.focus = Focus::Content;
+    let command = "codex resume session-1";
+    app.push_copyable_toast(
+        "Could not open a terminal",
+        crate::cli::tui::app::ToastKind::Warning,
+        command,
+    );
+    let data = minimal_data(&app.app_type);
+
+    let buf = render(&app, &data);
+    let rendered = all_text(&buf);
+    assert!(rendered.contains(command), "{rendered}");
+    assert!(
+        rendered.contains(&format!("c {}", texts::tui_key_copy())),
+        "{rendered}"
+    );
+
+    let theme = theme_for(&app.app_type);
+    let content = super::content_pane_rect(buf.area, &theme);
+    let toast = app.toast.as_ref().expect("copyable toast");
+    let message = format!(
+        "{} {}",
+        texts::tui_toast_prefix_warning().trim(),
+        toast.message
+    );
+    let layout_text = super::toast_layout_text(toast, &message);
+    let area = super::toast_rect(content, &layout_text);
+    assert_eq!(area.height, 6, "copyable toast should stay compact");
+
+    let action_label = format!("c {}", texts::tui_key_copy());
+    let action_row = line_index(&rendered, &action_label) as u16;
+    let message_row = line_index(&rendered, "Could not open a terminal") as u16;
+    let command_row = line_index(&rendered, command) as u16;
+    assert_eq!(
+        action_row,
+        area.y + area.height - 2,
+        "toast action should occupy the final row inside the border"
+    );
+    assert!(
+        message_row < command_row && command_row + 1 < action_row,
+        "toast action should render below the body with a blank row between:\n{rendered}"
+    );
+
+    assert_ne!(
+        theme.accent, theme.warn,
+        "Codex accent should differ from the warning color"
+    );
+    let border_cell = &buf[(area.x, area.y + area.height / 2)];
+    assert_eq!(border_cell.fg, theme.accent);
+    let action_cell = (area.x..area.x.saturating_add(area.width))
+        .map(|x| &buf[(x, action_row)])
+        .find(|cell| cell.symbol() == "c")
+        .expect("copy shortcut cell");
+    assert_eq!(action_cell.bg, theme.accent);
+}
+
+#[test]
+fn copyable_toast_layout_keeps_the_complete_action_text() {
+    let mut app = App::new(Some(AppType::Codex));
+    let command = format!("codex resume {}", "session-segment-".repeat(12));
+    app.push_copyable_toast(
+        "Could not open a terminal",
+        crate::cli::tui::app::ToastKind::Warning,
+        command.clone(),
+    );
+    let toast = app.toast.as_ref().expect("copyable toast");
+
+    let layout = super::toast_layout_text(toast, "Could not open a terminal");
+
+    assert!(layout.contains(&command), "{layout}");
+    assert!(!layout.contains('…'), "{layout}");
+}
+
+#[test]
+fn copyable_toast_keeps_action_single_row_and_prioritizes_command_when_narrow() {
+    let mut app = App::new(Some(AppType::Codex));
+    app.push_copyable_toast(
+        "Could not open a terminal",
+        crate::cli::tui::app::ToastKind::Warning,
+        "codex resume session-1",
+    );
+    let toast = app.toast.as_ref().expect("copyable toast");
+    let theme = theme_for(&app.app_type);
+
+    let lines = super::toast_content_lines(
+        toast,
+        "Could not open a terminal",
+        6,
+        3,
+        &theme,
+        Style::default(),
+    );
+    let text = lines
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(text.len(), 3, "{text:?}");
+    assert!(text.iter().all(|line| line.width() <= 6), "{text:?}");
+    assert!(text[2].starts_with(" c"), "{text:?}");
+    assert!(text[0].contains("codex"), "{text:?}");
+    assert!(text[1].is_empty(), "{text:?}");
+    assert!(
+        !text[..2].join("").contains("Could"),
+        "the recovery command should win a constrained body budget: {text:?}"
+    );
+}
+
+#[test]
+fn copyable_toast_is_hidden_while_its_action_is_unavailable() {
+    let mut app = App::new(Some(AppType::Codex));
+    app.route = Route::Sessions;
+    app.push_copyable_toast(
+        "Could not open a terminal",
+        crate::cli::tui::app::ToastKind::Warning,
+        "codex resume session-1",
+    );
+    app.filter.active = true;
+    let data = minimal_data(&app.app_type);
+
+    let rendered = all_text(&render(&app, &data));
+
+    assert!(
+        !rendered.contains("Could not open a terminal"),
+        "{rendered}"
+    );
+    assert!(!rendered.contains("codex resume session-1"), "{rendered}");
+}
+
+#[test]
+fn copyable_toast_is_not_rendered_outside_its_origin_context() {
+    let mut app = App::new(Some(AppType::Codex));
+    app.route = Route::Sessions;
+    let command = "codex resume session-1";
+    app.push_copyable_toast(
+        "Could not open a terminal",
+        crate::cli::tui::app::ToastKind::Warning,
+        command,
+    );
+    app.route = Route::Providers;
+    let data = minimal_data(&app.app_type);
+
+    let rendered = all_text(&render(&app, &data));
+
+    assert!(!rendered.contains(command), "{rendered}");
+    assert!(
+        !rendered.contains("Could not open a terminal"),
+        "{rendered}"
+    );
+}
+
+#[test]
 fn info_toast_uses_app_accent_border_color() {
     let _lock = lock_env();
     let _no_color = EnvGuard::remove("NO_COLOR");
@@ -8455,7 +8691,6 @@ fn openclaw_tools_route_shows_edit_and_delete_shortcuts_for_structured_rows() {
     let all = all_text(&render(&app, &minimal_data(&app.app_type)));
 
     assert!(all.contains("Enter"), "{all}");
-    assert!(all.contains("e"), "{all}");
     assert!(all.contains("Del/Backspace"), "{all}");
     assert!(all.contains(texts::tui_key_edit()), "{all}");
     assert!(all.contains(texts::tui_key_delete()), "{all}");
@@ -12687,7 +12922,8 @@ fn home_usage_chart_renders_title_bars_and_legend() {
     assert!(opus_row.contains('%'), "{opus_row}");
     assert!(opus_row.contains('$'), "{opus_row}");
 
-    // 120 columns leaves the list 40 wide, under the detail line's floor: the
+    // Near the split floor the expanded list yields enough room to keep the
+    // chart readable, remaining under the detail line's floor: the
     // rows stay one-liners.
     assert!(!card.contains("In: "), "{card}");
 }
@@ -12705,7 +12941,7 @@ fn home_usage_chart_lists_the_token_breakdown_under_each_model() {
     let mut data = minimal_data(&app.app_type);
     data.usage = usage_with_daily_models(&HOME_CHART_MODELS);
 
-    // 160 columns leaves the list its 52-column cap: wide enough for detail.
+    // 160 columns leaves the list its revised 59-column cap: ample detail room.
     let card = usage_card_inner_text(&render_with_size(&app, &data, 160, 45));
 
     let opus = card
@@ -12752,7 +12988,7 @@ fn home_usage_chart_drops_only_the_detail_lines_when_the_list_is_short() {
     let mut data = minimal_data(&app.app_type);
     data.usage = usage_with_daily_models(&HOME_CHART_MODELS);
 
-    // Wide enough for the detail line (52 columns), one card row too short for
+    // Wide enough for the detail line, one card row too short for
     // the header plus two rows per model. Main no longer reserves a blank row
     // above the connection card, so the terminal fixture is one row shorter.
     let card = usage_card_inner_text(&render_with_size(&app, &data, 160, 32));
@@ -12792,8 +13028,8 @@ fn home_usage_chart_bars_span_the_whole_card_width() {
     assert_eq!(rule, 1, "the list rule spans the card height:\n{card}");
     let drawn = axis.chars().filter(|ch| *ch == '─').count();
     assert!(
-        drawn >= 60,
-        "a 160-column terminal should give the bars ~67 columns, got {drawn}:\n{card}"
+        drawn >= 58,
+        "a 160-column terminal should leave the revised-list chart ~60 columns, got {drawn}:\n{card}"
     );
 }
 
