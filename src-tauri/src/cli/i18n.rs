@@ -3324,6 +3324,14 @@ pub mod texts {
         }
     }
 
+    pub fn tui_usage_query_official_subscription_hint() -> &'static str {
+        if is_chinese() {
+            "读取本机 CLI 的 OAuth 凭据，并调用官方接口查询订阅额度。默认关闭，只有启用后才会请求。"
+        } else {
+            "Reads the local CLI OAuth credentials and calls the official API to query subscription quota. Disabled by default and only requests after you enable it."
+        }
+    }
+
     pub fn tui_usage_query_script_empty() -> &'static str {
         if is_chinese() {
             "脚本配置不能为空"
@@ -8851,6 +8859,28 @@ pub mod texts {
             format!("{app} now routes through cc-switch.")
         } else {
             format!("{app} restored to its live config.")
+        }
+    }
+
+    pub fn tui_toast_proxy_managed_updated_refresh_failed(
+        app: &str,
+        enabled: bool,
+        err: &str,
+    ) -> String {
+        if is_chinese() {
+            if enabled {
+                format!("{app} 已走 cc-switch 代理，但状态刷新失败：{err}")
+            } else {
+                format!("{app} 已恢复 live 配置，但状态刷新失败：{err}")
+            }
+        } else if enabled {
+            format!(
+                "{app} now routes through cc-switch, but its status could not be refreshed: {err}"
+            )
+        } else {
+            format!(
+                "{app} restored to its live config, but its status could not be refreshed: {err}"
+            )
         }
     }
 

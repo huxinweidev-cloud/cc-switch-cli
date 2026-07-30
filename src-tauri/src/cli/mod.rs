@@ -402,6 +402,51 @@ mod tests {
     }
 
     #[test]
+    fn parses_settings_codex_auth_preservation_subcommands() {
+        let show = Cli::parse_from([
+            "cc-switch",
+            "settings",
+            "codex-auth-preservation",
+            "show",
+            "--json",
+        ]);
+        assert!(matches!(
+            show.command,
+            Some(Commands::Settings(
+                super::commands::settings::SettingsCommand::CodexAuthPreservation(
+                    super::commands::settings::CodexAuthPreservationCommand::Show { json: true },
+                ),
+            ))
+        ));
+
+        let enable =
+            Cli::parse_from(["cc-switch", "settings", "codex-auth-preservation", "enable"]);
+        assert!(matches!(
+            enable.command,
+            Some(Commands::Settings(
+                super::commands::settings::SettingsCommand::CodexAuthPreservation(
+                    super::commands::settings::CodexAuthPreservationCommand::Enable,
+                ),
+            ))
+        ));
+
+        let disable = Cli::parse_from([
+            "cc-switch",
+            "settings",
+            "codex-auth-preservation",
+            "disable",
+        ]);
+        assert!(matches!(
+            disable.command,
+            Some(Commands::Settings(
+                super::commands::settings::SettingsCommand::CodexAuthPreservation(
+                    super::commands::settings::CodexAuthPreservationCommand::Disable,
+                ),
+            ))
+        ));
+    }
+
+    #[test]
     fn parses_settings_codex_history_disable_restore_subcommand() {
         let cli = Cli::parse_from([
             "cc-switch",
@@ -1181,6 +1226,34 @@ mod tests {
                 assert_eq!(command.user_id.as_deref(), Some("user-demo"));
             }
             _ => panic!("expected provider usage-query set command"),
+        }
+    }
+
+    #[test]
+    fn parses_provider_usage_query_official_subscription_template() {
+        let cli = Cli::parse_from([
+            "cc-switch",
+            "provider",
+            "usage-query",
+            "set",
+            "official",
+            "--enabled",
+            "--template",
+            "official-subscription",
+        ]);
+
+        match cli.command {
+            Some(Commands::Provider(super::commands::provider::ProviderCommand::UsageQuery(
+                super::commands::provider_usage_query::ProviderUsageQueryCommand::Set(command),
+            ))) => {
+                assert_eq!(
+                    command.template,
+                    Some(
+                        super::commands::provider_usage_query::UsageQueryTemplate::OfficialSubscription
+                    )
+                );
+            }
+            _ => panic!("expected official subscription usage-query command"),
         }
     }
 

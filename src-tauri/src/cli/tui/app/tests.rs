@@ -403,6 +403,11 @@ mod tests {
         }
     }
 
+    fn mark_claude_usage_query_provider_non_official(form: &mut ProviderAddFormState) {
+        assert_eq!(form.app_type, AppType::Claude);
+        form.claude_base_url.set("https://relay.example.test");
+    }
+
     fn help_text(app: &App) -> String {
         let Overlay::Help(help) = &app.overlay else {
             panic!("expected Help overlay, got {:?}", app.overlay);
@@ -1368,17 +1373,57 @@ mod tests {
     }
 
     #[test]
-    fn proxy_activity_poll_interval_stays_at_one_second_with_200ms_tick() {
+    fn proxy_activity_poll_interval_is_route_aware() {
+        let fast_poll_interval_ticks = 1_000 / 200;
+        let usage_poll_interval_ticks = 10 * 1_000 / 200;
         let mut app = App::new(Some(AppType::Claude));
         app.route = Route::Main;
 
-        app.tick = 4;
+        app.tick = fast_poll_interval_ticks - 1;
         assert!(!app.should_poll_proxy_activity());
 
-        app.tick = 5;
+        app.tick = fast_poll_interval_ticks;
         assert!(app.should_poll_proxy_activity());
 
+        app.route = Route::Usage;
+        app.tick = fast_poll_interval_ticks;
+        assert!(
+            !app.should_poll_proxy_activity(),
+            "Usage does not need the home's one-second snapshot cadence"
+        );
+        app.tick = usage_poll_interval_ticks - 1;
+        assert!(!app.should_poll_proxy_activity());
+        app.tick = usage_poll_interval_ticks;
+        assert!(
+            app.should_poll_proxy_activity(),
+            "fixed Usage polls at its ten-second refresh cadence"
+        );
+
+        for route in [Route::UsageLogs, Route::UsageLogDetail { rowid: 7 }] {
+            app.route = route;
+            assert!(
+                !app.should_poll_proxy_activity(),
+                "nested log routes must not interrupt interactive log queries"
+            );
+        }
+
+        app.usage.range = data::UsageRangePreset::Custom(data::UsageCustomRange {
+            start: 100,
+            end: 200,
+        });
+        assert!(
+            !app.should_poll_proxy_activity(),
+            "custom Usage windows stay outside the fast proxy polling loop"
+        );
+
+        app.route = Route::Pricing;
+        assert!(
+            !app.should_poll_proxy_activity(),
+            "Pricing keeps the existing upstream refresh policy"
+        );
+
         app.route = Route::Providers;
+        app.tick = usage_poll_interval_ticks + fast_poll_interval_ticks;
         app.overlay = Overlay::FailoverQueueManager {
             selected_provider_id: None,
         };
@@ -1386,6 +1431,64 @@ mod tests {
 
         app.overlay = Overlay::None;
         assert!(!app.should_poll_proxy_activity());
+    }
+
+    #[test]
+    fn usage_projection_is_owned_by_the_current_consumer_route() {
+        let mut app = App::new(Some(AppType::Claude));
+        let custom = data::UsageRangePreset::Custom(data::UsageCustomRange {
+            start: 100,
+            end: 200,
+        });
+        app.usage.range = custom;
+
+        app.route = Route::Main;
+        assert_eq!(
+            app.usage_projection_for_current_route(),
+            Some(data::UsageRangePreset::ThirtyDays)
+        );
+        assert_eq!(
+            app.proxy_refreshed_usage_projection_for_current_route(),
+            Some(data::UsageRangePreset::ThirtyDays)
+        );
+
+        for route in [
+            Route::Usage,
+            Route::UsageLogs,
+            Route::UsageLogDetail { rowid: 7 },
+        ] {
+            app.route = route;
+            assert_eq!(app.usage_projection_for_current_route(), Some(custom));
+            assert_eq!(
+                app.proxy_refreshed_usage_projection_for_current_route(),
+                None
+            );
+        }
+
+        app.route = Route::Usage;
+        app.usage.range = data::UsageRangePreset::Today;
+        assert_eq!(
+            app.proxy_refreshed_usage_projection_for_current_route(),
+            Some(data::UsageRangePreset::Today)
+        );
+        for route in [Route::UsageLogs, Route::UsageLogDetail { rowid: 7 }] {
+            app.route = route;
+            assert_eq!(
+                app.proxy_refreshed_usage_projection_for_current_route(),
+                None
+            );
+        }
+
+        app.route = Route::Pricing;
+        assert_eq!(app.usage_projection_for_current_route(), None);
+        assert_eq!(
+            app.usage_pricing_load_range_for_current_route(),
+            Some(data::UsageRangePreset::SevenDays)
+        );
+
+        app.route = Route::Providers;
+        assert_eq!(app.usage_projection_for_current_route(), None);
+        assert_eq!(app.usage_pricing_load_range_for_current_route(), None);
     }
 
     #[test]
@@ -2667,6 +2770,22 @@ mod tests {
             None,
         );
         provider.category = Some("official".to_string());
+        provider.meta = Some(crate::provider::ProviderMeta {
+            usage_script: Some(crate::provider::UsageScript {
+                enabled: true,
+                language: "javascript".to_string(),
+                code: String::new(),
+                timeout: Some(10),
+                api_key: None,
+                base_url: None,
+                access_token: None,
+                user_id: None,
+                template_type: Some("official_subscription".to_string()),
+                auto_query_interval: Some(5),
+                coding_plan_provider: None,
+            }),
+            ..Default::default()
+        });
         data.providers.rows.push(super::super::data::ProviderRow {
             id: "official".to_string(),
             provider,
@@ -15330,6 +15449,7 @@ mod tests {
             AppType::Claude,
         )));
         if let Some(FormState::ProviderAdd(form)) = app.form.as_mut() {
+            mark_claude_usage_query_provider_non_official(form);
             form.open_usage_query_page();
             form.toggle_usage_query_enabled();
         }
@@ -15358,6 +15478,7 @@ mod tests {
             AppType::Claude,
         )));
         if let Some(FormState::ProviderAdd(form)) = app.form.as_mut() {
+            mark_claude_usage_query_provider_non_official(form);
             form.open_usage_query_page();
             form.toggle_usage_query_enabled();
             form.set_usage_query_template(UsageQueryTemplate::Custom);
@@ -15397,6 +15518,7 @@ mod tests {
             AppType::Claude,
         )));
         if let Some(FormState::ProviderAdd(form)) = app.form.as_mut() {
+            mark_claude_usage_query_provider_non_official(form);
             form.open_usage_query_page();
             form.toggle_usage_query_enabled();
             form.focus = FormFocus::Content;
@@ -15431,6 +15553,7 @@ mod tests {
             AppType::Claude,
         )));
         if let Some(FormState::ProviderAdd(form)) = app.form.as_mut() {
+            mark_claude_usage_query_provider_non_official(form);
             form.open_usage_query_page();
             form.toggle_usage_query_enabled();
         }
@@ -15459,6 +15582,7 @@ mod tests {
     fn usage_query_template_picker_space_is_noop() {
         let mut app = App::new(Some(AppType::Claude));
         let mut form = ProviderAddFormState::new(AppType::Claude);
+        mark_claude_usage_query_provider_non_official(&mut form);
         form.open_usage_query_page();
         form.toggle_usage_query_enabled();
         app.form = Some(FormState::ProviderAdd(form));
@@ -15476,6 +15600,7 @@ mod tests {
     fn usage_query_template_picker_enter_applies_selection() {
         let mut app = App::new(Some(AppType::Claude));
         let mut form = ProviderAddFormState::new(AppType::Claude);
+        mark_claude_usage_query_provider_non_official(&mut form);
         form.open_usage_query_page();
         form.toggle_usage_query_enabled();
         app.form = Some(FormState::ProviderAdd(form));
@@ -15839,6 +15964,7 @@ mod tests {
         app.on_key(key(KeyCode::Enter), &data);
 
         if let Some(FormState::ProviderAdd(form)) = app.form.as_mut() {
+            mark_claude_usage_query_provider_non_official(form);
             form.open_usage_query_page();
             form.toggle_usage_query_enabled();
         } else {
@@ -15915,6 +16041,7 @@ mod tests {
         app.on_key(key(KeyCode::Enter), &data);
 
         if let Some(FormState::ProviderAdd(form)) = app.form.as_mut() {
+            mark_claude_usage_query_provider_non_official(form);
             form.open_usage_query_page();
             form.toggle_usage_query_enabled();
             form.focus = FormFocus::JsonPreview;
@@ -15943,6 +16070,7 @@ mod tests {
         app.on_key(key(KeyCode::Enter), &data);
 
         if let Some(FormState::ProviderAdd(form)) = app.form.as_mut() {
+            mark_claude_usage_query_provider_non_official(form);
             form.open_usage_query_page();
             form.toggle_usage_query_enabled();
             form.focus = FormFocus::Content;
@@ -15977,6 +16105,7 @@ mod tests {
 
         if let Some(FormState::ProviderAdd(form)) = app.form.as_mut() {
             form.name.set("Provider One");
+            mark_claude_usage_query_provider_non_official(form);
             form.open_usage_query_page();
         } else {
             panic!("expected ProviderAdd form");
@@ -16104,6 +16233,7 @@ mod tests {
         let Some(FormState::ProviderAdd(form)) = app.form.as_mut() else {
             panic!("expected ProviderAdd form");
         };
+        mark_claude_usage_query_provider_non_official(form);
         form.open_usage_query_page();
 
         select_usage_query_field(&mut app, UsageQueryField::Enabled);
@@ -16136,6 +16266,7 @@ mod tests {
         app.on_key(key(KeyCode::Enter), &data);
 
         if let Some(FormState::ProviderAdd(form)) = app.form.as_mut() {
+            mark_claude_usage_query_provider_non_official(form);
             form.open_usage_query_page();
             form.toggle_usage_query_enabled();
             form.focus = FormFocus::JsonPreview;
