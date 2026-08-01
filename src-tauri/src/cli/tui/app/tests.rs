@@ -16521,8 +16521,10 @@ mod tests {
             summary: Some("Review routing".to_string()),
             project_dir: Some(project_dir.to_string()),
             created_at: Some(1_735_689_600_000),
+            source_mtime_ns: None,
             last_active_at: Some(1_735_732_800_000),
             source_path: Some(source_path.to_string()),
+            usage: None,
             resume_command: Some(resume_command.to_string()),
         }
     }

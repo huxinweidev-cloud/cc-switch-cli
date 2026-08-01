@@ -1033,7 +1033,9 @@ fn tui_sessions_empty_state_is_localized_and_mentions_runtime_scan() {
 
     assert!(all.contains("No local sessions found"), "{all}");
     assert!(all.contains("local session files"), "{all}");
-    assert!(all.contains("database"), "{all}");
+    assert!(all.contains("usage database"), "{all}");
+    assert!(all.contains("Cost"), "{all}");
+    assert!(!all.contains("without using the database"), "{all}");
     assert!(all.contains("switch panel"), "{all}");
     assert!(all.contains("PgUp/PgDn"), "{all}");
     assert!(all.contains(texts::tui_key_page()), "{all}");
@@ -1739,8 +1741,16 @@ fn tui_sessions_renders_split_detail_and_message_preview() {
         summary: Some("Tighten worker routing".to_string()),
         project_dir: Some("/tmp/demo-project".to_string()),
         created_at: Some(1_735_689_600_000),
+        source_mtime_ns: None,
         last_active_at: Some(1_735_689_900_000),
         source_path: Some("/tmp/session.jsonl".to_string()),
+        usage: Some(crate::session_manager::SessionUsageSummary {
+            input_tokens: 4_800,
+            output_tokens: 1_900_000,
+            cache_read_tokens: 347_700_000,
+            cache_creation_tokens: 12_200_000,
+            estimated_cost_usd: Some(0.42),
+        }),
         resume_command: Some("codex resume abcdef123456".to_string()),
     });
     app.sessions
@@ -1766,6 +1776,25 @@ fn tui_sessions_renders_split_detail_and_message_preview() {
     assert!(all.contains("Time"), "{all}");
     assert!(all.contains("Work Dir"), "{all}");
     assert!(all.contains("Title"), "{all}");
+    // Tokens and Cost each own a labelled Overview row, aligned with the rest
+    // of the pane instead of sharing one bare line.
+    let tokens_line = line_with(&all, "In: 4.8k");
+    assert!(tokens_line.contains("Tokens"), "{tokens_line}");
+    for value in ["Out: 1.9M", "CR: 347.7M"] {
+        assert!(
+            tokens_line.contains(value),
+            "{value} missing in {tokens_line}"
+        );
+    }
+    assert!(
+        !tokens_line.contains("$0.42"),
+        "the Cost value now lives on its own row: {tokens_line}"
+    );
+    let cost_line = all
+        .lines()
+        .find(|line| line.contains("Cost") && line.contains("$0.42"))
+        .unwrap_or_else(|| panic!("missing labelled Overview Cost row in:\n{all}"));
+    assert!(cost_line.contains("$0.42"), "{cost_line}");
     assert!(all.contains("Resume Command"), "{all}");
     assert!(all.contains("Refactor proxy routing"), "{all}");
     assert!(!all.contains("Tighten worker routing"), "{all}");
@@ -1901,8 +1930,10 @@ fn tui_sessions_seamless_page_cross_uses_loading_footer() {
                 summary: None,
                 project_dir: Some("/tmp/project".to_string()),
                 created_at: Some(1_735_689_600_000 - index),
+                source_mtime_ns: None,
                 last_active_at: Some(1_735_689_900_000 - index),
                 source_path: Some(format!("/tmp/session-{index}.jsonl")),
+                usage: None,
                 resume_command: Some(format!("claude --resume session-{index}")),
             })
             .expect("manifest fixture row");
@@ -2104,8 +2135,10 @@ fn tui_sessions_list_time_column_uses_relative_time_before_date() {
         summary: None,
         project_dir: Some("/tmp/demo-project".to_string()),
         created_at: Some(1_735_689_600_000),
+        source_mtime_ns: None,
         last_active_at: Some(1_735_689_600_000),
         source_path: Some("/tmp/recent.jsonl".to_string()),
+        usage: None,
         resume_command: Some("claude --resume abcdef123456".to_string()),
     });
     app.sessions.rows.push(crate::session_manager::SessionMeta {
@@ -2115,25 +2148,31 @@ fn tui_sessions_list_time_column_uses_relative_time_before_date() {
         summary: None,
         project_dir: Some("/tmp/demo-project".to_string()),
         created_at: Some(1_735_084_800_000),
+        source_mtime_ns: None,
         last_active_at: Some(1_735_084_800_000),
         source_path: Some("/tmp/old.jsonl".to_string()),
+        usage: None,
         resume_command: Some("claude --resume old-session".to_string()),
     });
 
-    let content = content_text(
+    let content = all_text(&render_with_size(
         &app,
-        &render_with_size(&app, &minimal_data(&app.app_type), 160, 40),
-    );
+        &minimal_data(&app.app_type),
+        160,
+        40,
+    ));
     let header_row = line_with(&content, "Title");
     assert!(
-        header_row.contains("│ Title") && header_row.contains("Time │"),
-        "session columns should have matching left and right padding: {header_row}"
+        header_row.contains("│ Title")
+            && header_row.contains("Time")
+            && header_row.contains("Cost │"),
+        "session table should render Title, Time, and Cost columns:\n{content}"
     );
     let recent_row = line_with(&content, "Recent session");
     assert!(recent_row.contains("5 min ago"), "{recent_row}");
     assert!(
-        recent_row.contains("5 min ago │"),
-        "relative time should keep the same right padding as the left side: {recent_row}"
+        recent_row.contains(" - │"),
+        "a session without metrics should render an empty Cost marker: {recent_row}"
     );
 
     let old_row = line_with(&content, "Old session");
@@ -2147,6 +2186,66 @@ fn tui_sessions_list_time_column_uses_relative_time_before_date() {
     assert!(
         !old_row.contains(&expected.format("%Y/%m/%d %H:%M").to_string()),
         "{old_row}"
+    );
+}
+
+#[test]
+fn tui_sessions_cost_column_keeps_the_title_visible_at_eighty_columns() {
+    let _lang = use_test_language(Language::English);
+
+    let mut app = App::new(Some(AppType::Codex));
+    app.route = Route::Sessions;
+    app.focus = Focus::Content;
+    app.sessions.loaded_once = true;
+    app.sessions.rows.push(crate::session_manager::SessionMeta {
+        provider_id: "codex".to_string(),
+        session_id: "session-1".to_string(),
+        title: Some("Fix routing".to_string()),
+        usage: Some(crate::session_manager::SessionUsageSummary {
+            input_tokens: 1_000,
+            output_tokens: 500,
+            estimated_cost_usd: Some(1.25),
+            ..crate::session_manager::SessionUsageSummary::default()
+        }),
+        ..crate::session_manager::SessionMeta::default()
+    });
+
+    let rendered = all_text(&render_with_size(
+        &app,
+        &minimal_data(&app.app_type),
+        80,
+        24,
+    ));
+    // Title outranks every other column, so an 80-column pane spends its width
+    // on the whole Title instead of squeezing it next to Cost.
+    let session_row = line_with(&rendered, "Fix routing");
+    assert!(
+        session_row.contains("Fix routing"),
+        "the 80-column session row should retain the complete Title: {session_row}"
+    );
+    let header_row = line_with(&rendered, "Title");
+    let list_header = header_row
+        .split('│')
+        .find(|segment| segment.contains("Title"))
+        .unwrap_or_else(|| panic!("missing session list header in:\n{rendered}"));
+    assert!(
+        list_header.contains("Time"),
+        "Time outranks Cost when the list narrows: {header_row}"
+    );
+    assert!(
+        !list_header.contains("Cost"),
+        "Cost is the first column to yield: {header_row}"
+    );
+    // The exact amount stays one pane away, on its own Overview row.
+    let overview_tokens = line_with(&rendered, "In:");
+    assert!(
+        overview_tokens.contains("In:"),
+        "the Overview keeps a token breakdown even when narrow: {overview_tokens}"
+    );
+    let overview_cost = line_with(&rendered, "$1.25");
+    assert!(
+        overview_cost.contains("$1.25"),
+        "the Overview keeps the exact cost: {overview_cost}"
     );
 }
 
@@ -2165,8 +2264,10 @@ fn tui_sessions_filters_rows_by_current_app() {
         summary: None,
         project_dir: Some("/tmp/claude-project".to_string()),
         created_at: Some(1_735_689_600_000),
+        source_mtime_ns: None,
         last_active_at: Some(1_735_689_900_000),
         source_path: Some("/tmp/claude.jsonl".to_string()),
+        usage: None,
         resume_command: Some("claude --resume claude-session".to_string()),
     });
     app.sessions.rows.push(crate::session_manager::SessionMeta {
@@ -2176,8 +2277,10 @@ fn tui_sessions_filters_rows_by_current_app() {
         summary: None,
         project_dir: Some("/tmp/codex-project".to_string()),
         created_at: Some(1_735_689_600_000),
+        source_mtime_ns: None,
         last_active_at: Some(1_735_689_900_000),
         source_path: Some("/tmp/codex.jsonl".to_string()),
+        usage: None,
         resume_command: Some("codex resume codex-session".to_string()),
     });
 
@@ -2206,8 +2309,10 @@ fn tui_sessions_slash_search_filters_user_role_messages() {
         summary: None,
         project_dir: Some("/tmp/demo-project".to_string()),
         created_at: Some(1_735_689_600_000),
+        source_mtime_ns: None,
         last_active_at: Some(1_735_689_900_000),
         source_path: Some("/tmp/session.jsonl".to_string()),
+        usage: None,
         resume_command: Some("claude --resume abcdef123456".to_string()),
     });
     app.sessions
@@ -2267,8 +2372,10 @@ fn tui_sessions_search_filters_loaded_message_content() {
         summary: None,
         project_dir: Some("/tmp/demo-project".to_string()),
         created_at: Some(1_735_689_600_000),
+        source_mtime_ns: None,
         last_active_at: Some(1_735_689_900_000),
         source_path: Some("/tmp/session.jsonl".to_string()),
+        usage: None,
         resume_command: Some("claude --resume abcdef123456".to_string()),
     });
     app.sessions
@@ -2313,8 +2420,10 @@ fn tui_sessions_search_matches_localized_user_role_label() {
         summary: None,
         project_dir: Some("/tmp/demo-project".to_string()),
         created_at: Some(1_735_689_600_000),
+        source_mtime_ns: None,
         last_active_at: Some(1_735_689_900_000),
         source_path: Some("/tmp/session.jsonl".to_string()),
+        usage: None,
         resume_command: Some("claude --resume abcdef123456".to_string()),
     });
     app.sessions
@@ -2359,8 +2468,10 @@ fn tui_sessions_session_and_message_filters_are_independent() {
         summary: None,
         project_dir: Some("/tmp/ai-project".to_string()),
         created_at: Some(1_735_689_600_000),
+        source_mtime_ns: None,
         last_active_at: Some(1_735_689_900_000),
         source_path: Some("/tmp/ai.jsonl".to_string()),
+        usage: None,
         resume_command: Some("claude --resume ai-session".to_string()),
     });
     app.sessions.rows.push(crate::session_manager::SessionMeta {
@@ -2370,8 +2481,10 @@ fn tui_sessions_session_and_message_filters_are_independent() {
         summary: None,
         project_dir: Some("/tmp/billing-project".to_string()),
         created_at: Some(1_735_689_600_000),
+        source_mtime_ns: None,
         last_active_at: Some(1_735_689_800_000),
         source_path: Some("/tmp/billing.jsonl".to_string()),
+        usage: None,
         resume_command: Some("claude --resume billing-session".to_string()),
     });
     app.sessions

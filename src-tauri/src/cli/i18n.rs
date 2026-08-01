@@ -9414,6 +9414,14 @@ pub mod texts {
         }
     }
 
+    pub fn tui_sessions_overview_tokens_label() -> &'static str {
+        if is_chinese() {
+            "Token"
+        } else {
+            "Tokens"
+        }
+    }
+
     pub fn tui_sessions_messages_title() -> &'static str {
         if is_chinese() {
             "消息"
@@ -9444,9 +9452,9 @@ pub mod texts {
 
     pub fn tui_sessions_empty_subtitle() -> &'static str {
         if is_chinese() {
-            "进入此页会从本机会话文件扫描，不需要数据库。"
+            "会话元数据来自本地会话文件；可用的费用和 token 小计会从本地用量数据库异步加载。"
         } else {
-            "This page scans local session files without using the database."
+            "Session metadata comes from local session files; available Cost and token subtotals load asynchronously from local usage databases."
         }
     }
 
@@ -9700,6 +9708,14 @@ pub mod texts {
             "时间"
         } else {
             "Time"
+        }
+    }
+
+    pub fn tui_sessions_header_cost() -> &'static str {
+        if is_chinese() {
+            "费用"
+        } else {
+            "Cost"
         }
     }
 
